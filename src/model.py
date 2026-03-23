@@ -7,7 +7,7 @@ from importlib import import_module
 import torch
 import torch.nn.functional as F
 from torch import nn
-from transformers import BertConfig, BertModel, ViTConfig, ViTModel
+from transformers import BertConfig, BertModel
 from transformers.activations import get_activation
 
 from .utils import bootstrap_paths
@@ -275,118 +275,6 @@ class TrajectoryBertBackbone(nn.Module):
         }
 
 
-@dataclass
-class SceneViTEncoderConfig:
-    image_size: int = 96
-    patch_size: int = 16
-    num_channels: int = 1
-    hidden_size: int = 256
-    num_hidden_layers: int = 6
-    num_attention_heads: int = 8
-    intermediate_size: int = 1024
-    dropout_prob: float = 0.0
-    attention_dropout_prob: float = 0.0
-    layer_norm_eps: float = 1.0e-12
-    initializer_range: float = 0.02
-    output_dim: int | None = None
-
-
-class SceneViTEncoder(nn.Module):
-    def __init__(self, cfg: SceneViTEncoderConfig):
-        super().__init__()
-        vit_cfg = ViTConfig(
-            image_size=cfg.image_size,
-            patch_size=cfg.patch_size,
-            num_channels=cfg.num_channels,
-            hidden_size=cfg.hidden_size,
-            num_hidden_layers=cfg.num_hidden_layers,
-            num_attention_heads=cfg.num_attention_heads,
-            intermediate_size=cfg.intermediate_size,
-            hidden_dropout_prob=cfg.dropout_prob,
-            attention_probs_dropout_prob=cfg.attention_dropout_prob,
-            layer_norm_eps=cfg.layer_norm_eps,
-            initializer_range=cfg.initializer_range,
-        )
-        self.model = ViTModel(vit_cfg, add_pooling_layer=True)
-        target_dim = cfg.output_dim or cfg.hidden_size
-        self.output_dim = target_dim
-        self.proj = None if target_dim == cfg.hidden_size else nn.Linear(cfg.hidden_size, target_dim)
-
-    def forward(self, pixel_values, output_attentions=False):
-        if pixel_values.dim() == 5:
-            batch_size, num_views, channels, height, width = pixel_values.shape
-            flat_pixels = pixel_values.reshape(batch_size * num_views, channels, height, width)
-        else:
-            batch_size = pixel_values.size(0)
-            num_views = 1
-            flat_pixels = pixel_values
-
-        outputs = self.model(
-            pixel_values=flat_pixels,
-            output_attentions=output_attentions,
-            return_dict=True,
-        )
-        scene_tokens = outputs.pooler_output
-        if scene_tokens is None:
-            scene_tokens = outputs.last_hidden_state[:, 0]
-        if self.proj is not None:
-            scene_tokens = self.proj(scene_tokens)
-
-        scene_tokens = scene_tokens.reshape(batch_size, num_views, self.output_dim)
-        return {
-            "scene_tokens": scene_tokens,
-            "attentions": outputs.attentions,
-            "last_hidden_state": outputs.last_hidden_state,
-        }
-
-
-class OccupancyMapTokenizer(nn.Module):
-    def __init__(self, num_splits: int = 9, image_size: int = 96, interpolation_mode: str = "bilinear"):
-        super().__init__()
-        side = int(math.sqrt(num_splits))
-        if side * side != num_splits:
-            raise ValueError(f"num_splits must be a perfect square, got {num_splits}")
-        self.num_splits = num_splits
-        self.grid_side = side
-        self.image_size = image_size
-        self.interpolation_mode = interpolation_mode
-
-    def forward(self, envs: torch.Tensor) -> torch.Tensor:
-        if envs is None:
-            raise ValueError("envs is required for OccupancyMapTokenizer")
-
-        if envs.dim() == 3:
-            envs = envs.unsqueeze(1)
-        elif envs.dim() == 4 and envs.size(1) != 1 and envs.size(-1) == 1:
-            envs = envs.permute(0, 3, 1, 2)
-        elif envs.dim() != 4:
-            raise ValueError(f"Unsupported env tensor shape: {tuple(envs.shape)}")
-
-        envs = envs.float()
-        target_hw = self.grid_side * self.image_size
-        interpolate_kwargs = {"size": (target_hw, target_hw), "mode": self.interpolation_mode}
-        if self.interpolation_mode in {"linear", "bilinear", "bicubic", "trilinear"}:
-            interpolate_kwargs["align_corners"] = False
-        resized = F.interpolate(envs, **interpolate_kwargs)
-        batch_size, channels, _, _ = resized.shape
-        crops = resized.reshape(
-            batch_size,
-            channels,
-            self.grid_side,
-            self.image_size,
-            self.grid_side,
-            self.image_size,
-        )
-        crops = crops.permute(0, 2, 4, 1, 3, 5).reshape(
-            batch_size,
-            self.num_splits,
-            channels,
-            self.image_size,
-            self.image_size,
-        )
-        return crops
-
-
 class TrajectoryEncoder(nn.Module):
     def __init__(self, cfgs):
         super().__init__()
@@ -417,14 +305,26 @@ class TrajectoryEncoder(nn.Module):
         )
 
 
+class ScenePatchEmbedding(nn.Module):
+    def __init__(self, patch_size=16, embedding_dim=512, act_fn="relu"):
+        super().__init__()
+        self.linear1 = nn.Linear(patch_size * patch_size, embedding_dim)
+        self.act_fn = _activation(act_fn)
+
+    def forward(self, x):
+        return self.act_fn(self.linear1(x.float()))
+
+
 class SceneTrajectoryEncoder(nn.Module):
     def __init__(self, cfgs):
         super().__init__()
         self.cfgs = cfgs
         self.scene_enabled = bool(getattr(cfgs, "scene", False))
-        self.scene_token_count = int(getattr(cfgs, "scene_num_splits", 9))
+        self.scene_token_count = int(getattr(cfgs, "num_patch", 0)) if self.scene_enabled else 0
         self.spatial_embeddings = SpatialEmbedding(cfgs.input_dim, cfgs.hidden_size, cfgs.act_fn)
-        self.modal_embeddings = ModalEmbedding(modal_size=2, embedding_dim=cfgs.hidden_size) if self.scene_enabled else None
+        self.scene_patch_embeddings = (
+            ScenePatchEmbedding(cfgs.patch_size, cfgs.hidden_size, cfgs.act_fn) if self.scene_enabled else None
+        )
         self.backbone = TrajectoryBertBackbone(
             TrajectoryBertBackboneConfig(
                 hidden_size=cfgs.hidden_size,
@@ -440,69 +340,49 @@ class SceneTrajectoryEncoder(nn.Module):
             )
         )
 
-        if self.scene_enabled:
-            interpolation_mode = "nearest" if getattr(cfgs, "binary_scene", False) else "bilinear"
-            self.scene_tokenizer = OccupancyMapTokenizer(
-                num_splits=self.scene_token_count,
-                image_size=getattr(cfgs, "scene_image_size", 96),
-                interpolation_mode=interpolation_mode,
-            )
-            self.scene_encoder = SceneViTEncoder(
-                SceneViTEncoderConfig(
-                    image_size=getattr(cfgs, "scene_image_size", 96),
-                    patch_size=getattr(cfgs, "scene_patch_size", 16),
-                    num_channels=getattr(cfgs, "scene_num_channels", 1),
-                    hidden_size=getattr(cfgs, "scene_hidden_size", cfgs.hidden_size),
-                    num_hidden_layers=getattr(cfgs, "scene_num_hidden_layers", 6),
-                    num_attention_heads=getattr(cfgs, "scene_num_attention_heads", 8),
-                    intermediate_size=getattr(cfgs, "scene_intermediate_size", cfgs.hidden_size * 4),
-                    dropout_prob=cfgs.dropout_prob,
-                    attention_dropout_prob=cfgs.dropout_prob,
-                    layer_norm_eps=cfgs.layer_norm_eps,
-                    initializer_range=cfgs.initializer_range,
-                    output_dim=cfgs.hidden_size,
-                )
-            )
-            scene_segment_ids = torch.arange(cfgs.num_nbr + 1, cfgs.num_nbr + self.scene_token_count + 1, dtype=torch.long)
-            scene_temporal_ids = torch.full((self.scene_token_count,), cfgs.obs_len, dtype=torch.long)
-            self.register_buffer("scene_segment_ids", scene_segment_ids, persistent=False)
-            self.register_buffer("scene_temporal_ids", scene_temporal_ids, persistent=False)
-        else:
-            self.scene_tokenizer = None
-            self.scene_encoder = None
+    def _trajectory_embeds(self, spatial_ids):
+        return self.spatial_embeddings(spatial_ids)
 
-    def _trajectory_embeds(self, spatial_ids, segment_ids):
-        traj_embeds = self.spatial_embeddings(spatial_ids)
-        if self.modal_embeddings is not None:
-            traj_embeds = traj_embeds + self.modal_embeddings(torch.zeros_like(segment_ids))
-        return traj_embeds
+    def _scene_embeds(self, env_spatial_ids, env_temporal_ids, env_segment_ids, env_attn_mask):
+        if env_spatial_ids is None:
+            raise ValueError("env_spatial_ids is required for scene encoding")
+        if env_temporal_ids is None or env_segment_ids is None or env_attn_mask is None:
+            raise ValueError("env temporal, segment, and attention ids are required for scene encoding")
 
-    def _scene_embeds(self, envs, batch_size, device):
-        if envs is None:
-            raise ValueError("envs is required for scene encoding")
+        scene_tokens = self.scene_patch_embeddings(env_spatial_ids)
+        return (
+            scene_tokens,
+            env_segment_ids.long(),
+            env_temporal_ids.long(),
+            env_attn_mask.float(),
+        )
 
-        pixel_values = self.scene_tokenizer(envs)
-        scene_out = self.scene_encoder(pixel_values=pixel_values)
-        scene_tokens = scene_out["scene_tokens"]
-        if self.modal_embeddings is not None:
-            scene_tokens = scene_tokens + self.modal_embeddings(torch.ones(scene_tokens.shape[:2], dtype=torch.long, device=device))
-
-        scene_segment_ids = self.scene_segment_ids.unsqueeze(0).expand(batch_size, -1).to(device)
-        scene_temporal_ids = self.scene_temporal_ids.unsqueeze(0).expand(batch_size, -1).to(device)
-        scene_attn_mask = torch.ones(batch_size, scene_tokens.size(1), dtype=torch.float, device=device)
-        return scene_tokens, scene_segment_ids, scene_temporal_ids, scene_attn_mask, scene_out
-
-    def forward(self, spatial_ids, temporal_ids, segment_ids, attn_mask, envs=None, output_attentions=False):
-        batch_size = spatial_ids.size(0)
-        device = spatial_ids.device
-        inputs_embeds = self._trajectory_embeds(spatial_ids, segment_ids)
+    def forward(
+        self,
+        spatial_ids,
+        temporal_ids,
+        segment_ids,
+        attn_mask,
+        env_spatial_ids=None,
+        env_temporal_ids=None,
+        env_segment_ids=None,
+        env_attn_mask=None,
+        envs=None,
+        output_attentions=False,
+    ):
+        inputs_embeds = self._trajectory_embeds(spatial_ids)
         token_type_ids = segment_ids
         position_ids = temporal_ids
         attention_mask = attn_mask
-        scene_out = None
+        scene_tokens = None
 
         if self.scene_enabled:
-            scene_tokens, scene_segment_ids, scene_temporal_ids, scene_attn_mask, scene_out = self._scene_embeds(envs, batch_size, device)
+            scene_tokens, scene_segment_ids, scene_temporal_ids, scene_attn_mask = self._scene_embeds(
+                env_spatial_ids,
+                env_temporal_ids,
+                env_segment_ids,
+                env_attn_mask,
+            )
             inputs_embeds = torch.cat([inputs_embeds, scene_tokens], dim=1)
             token_type_ids = torch.cat([token_type_ids, scene_segment_ids], dim=1)
             position_ids = torch.cat([position_ids, scene_temporal_ids], dim=1)
@@ -515,8 +395,8 @@ class SceneTrajectoryEncoder(nn.Module):
             position_ids=position_ids,
             output_attentions=output_attentions,
         )
-        enc_out["scene_tokens"] = None if scene_out is None else scene_out["scene_tokens"]
-        enc_out["scene_attentions"] = None if scene_out is None else scene_out["attentions"]
+        enc_out["scene_tokens"] = scene_tokens
+        enc_out["scene_attentions"] = None
         return enc_out
 
 
@@ -570,9 +450,6 @@ __all__ = [
     "GoalEncoder",
     "TrajectoryBertBackboneConfig",
     "TrajectoryBertBackbone",
-    "SceneViTEncoderConfig",
-    "SceneViTEncoder",
-    "OccupancyMapTokenizer",
     "TrajectoryEncoder",
     "SceneTrajectoryEncoder",
 ] + sorted(_LAZY_EXPORTS)

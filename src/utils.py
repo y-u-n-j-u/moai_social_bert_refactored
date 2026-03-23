@@ -214,9 +214,8 @@ def estimate_map_length(map_range, map_resol):
 
 
 def estimate_num_patch(map_length, patch_size):
-    if map_length % patch_size == 0:
-        return (map_length // patch_size) ** 2
-    return ((map_length // patch_size) + 2) ** 2
+    num_side_patch = (map_length + patch_size - 1) // patch_size
+    return num_side_patch ** 2
 
 
 class CyclicScherduler:

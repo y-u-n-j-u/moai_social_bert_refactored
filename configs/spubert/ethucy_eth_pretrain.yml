@@ -23,7 +23,6 @@ scene:
   env_range: 10.0
   env_resol: 0.1
   patch_size: 32
-  num_splits: 9
 
 model:
   backbone:
@@ -32,13 +31,6 @@ model:
     num_hidden_layers: 4
     num_attention_heads: 4
     dropout_prob: 0.1
-  scene_encoder:
-    type: vit
-    num_splits: 9
-    image_size: 96
-    patch_size: 32
-    num_channels: 1
-    hidden_size: 256
   heads:
     social:
       sip: false

@@ -38,7 +38,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         'env_resol': 0.2,
         'patch_size': 16,
         'binary': False,
-        'num_splits': 9,
     },
     'model': {
         'backbone': {
@@ -54,17 +53,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
             'use_temporal_embedding': True,
             'use_segment_embedding': True,
             'use_modal_embedding': True,
-        },
-        'scene_encoder': {
-            'type': 'vit',
-            'num_splits': 9,
-            'image_size': 96,
-            'patch_size': 16,
-            'num_channels': 1,
-            'hidden_size': 256,
-            'num_hidden_layers': 6,
-            'num_attention_heads': 8,
-            'intermediate_size': 1024,
         },
         'heads': {
             'social': {
@@ -196,17 +184,8 @@ def _validate_config(cfg: dict[str, Any], config_path: str) -> None:
         )
     if cfg['model']['backbone']['type'] != 'bert':
         raise SystemExit(f"Unsupported model.backbone.type in {config_path}: {cfg['model']['backbone']['type']}")
-    if cfg['scene']['enabled'] and cfg['model']['scene_encoder']['type'] != 'vit':
-        raise SystemExit(f"Unsupported model.scene_encoder.type in {config_path}: {cfg['model']['scene_encoder']['type']}")
     if cfg['experiment']['framework'] == 'sbert' and cfg['scene']['enabled']:
         raise SystemExit(f'Social-BERT does not use a scene branch: {config_path}')
-    if cfg['scene']['enabled']:
-        num_splits = int(cfg['model']['scene_encoder']['num_splits'])
-        side = int(num_splits ** 0.5)
-        if side * side != num_splits:
-            raise SystemExit(
-                f'model.scene_encoder.num_splits must be a perfect square in {config_path}, got {num_splits}'
-            )
 
 
 def _resolved_act_fn(cfg: dict[str, Any]) -> str:
@@ -229,7 +208,6 @@ def _to_namespace(cfg: dict[str, Any], config_path: str, cli_dry_run: bool) -> a
     scene = cfg['scene']
     model = cfg['model']
     backbone = model['backbone']
-    scene_encoder = model['scene_encoder']
     heads = model['heads']
     loss = cfg['loss']
     train = cfg['train']
@@ -264,7 +242,6 @@ def _to_namespace(cfg: dict[str, Any], config_path: str, cli_dry_run: bool) -> a
         env_resol=scene['env_resol'],
         patch_size=scene['patch_size'],
         binary_scene=scene['binary'],
-        scene_num_splits=scene_encoder.get('num_splits', scene['num_splits']),
         backbone_type=backbone['type'],
         hidden=backbone['hidden_size'],
         layer=backbone['num_hidden_layers'],
@@ -272,14 +249,6 @@ def _to_namespace(cfg: dict[str, Any], config_path: str, cli_dry_run: bool) -> a
         intermediate_size=backbone['intermediate_size'],
         dropout_prob=backbone['dropout_prob'],
         act_fn=_resolved_act_fn(cfg),
-        scene_encoder_type=scene_encoder['type'],
-        scene_image_size=scene_encoder['image_size'],
-        scene_patch_size=scene_encoder['patch_size'],
-        scene_num_channels=scene_encoder['num_channels'],
-        scene_hidden_size=scene_encoder['hidden_size'],
-        scene_num_hidden_layers=scene_encoder['num_hidden_layers'],
-        scene_num_attention_heads=scene_encoder['num_attention_heads'],
-        scene_intermediate_size=scene_encoder['intermediate_size'],
         sip=heads['social']['sip'],
         share=heads['spubert']['share_backbone'],
         goal_hidden=heads['spubert']['goal_hidden'],

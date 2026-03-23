@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from matplotlib.patches import Circle, Wedge
 
 from src.utils import bootstrap_paths
 
@@ -237,6 +238,44 @@ def _prepare_plus_inputs_from_spatial(item, args):
     }
 
 
+def _transform_params(raw_sample: np.ndarray, obs_len: int):
+    return transform_to_target(
+        trajs=np.array(raw_sample, dtype=np.float32, copy=True),
+        obs_len=obs_len,
+        traj_dim=raw_sample.shape[2],
+    )
+
+
+def _local_to_world(raw_sample: np.ndarray, pred_local: np.ndarray, obs_len: int):
+    _, center, theta = _transform_params(raw_sample, obs_len)
+    pred_world = rotate_trajs(
+        trajs=np.expand_dims(np.array(pred_local, dtype=np.float32, copy=True), axis=0),
+        theta=-theta,
+        traj_dim=2,
+    )[0] - center[np.newaxis, :]
+    return pred_world
+
+
+def _local_trajs_to_world(raw_sample: np.ndarray, trajs_local: np.ndarray, obs_len: int):
+    trajs_local = np.array(trajs_local, dtype=np.float32, copy=True)
+    if trajs_local.size == 0:
+        return trajs_local.reshape(0, obs_len, 2)
+    _, center, theta = _transform_params(raw_sample, obs_len)
+    world = rotate_trajs(trajs=trajs_local, theta=-theta, traj_dim=2)
+    world[:, :, :2] = world[:, :, :2] - center[np.newaxis, np.newaxis, :]
+    return world
+
+
+def _local_points_to_world(raw_sample: np.ndarray, points_local: np.ndarray, obs_len: int):
+    points_local = np.array(points_local, dtype=np.float32, copy=True)
+    if points_local.size == 0:
+        return points_local.reshape(0, 2)
+    _, center, theta = _transform_params(raw_sample, obs_len)
+    world = rotate_trajs(trajs=points_local[:, None, :], theta=-theta, traj_dim=2)[:, 0, :]
+    world[:, :2] = world[:, :2] - center[np.newaxis, :]
+    return world
+
+
 def _pick_best(pred_trajs: np.ndarray, gt_local: np.ndarray, mode: str):
     if mode == "first":
         return 0
@@ -246,18 +285,99 @@ def _pick_best(pred_trajs: np.ndarray, gt_local: np.ndarray, mode: str):
     return int(np.argmin(d.mean(axis=1)))
 
 
-def _local_to_world(raw_sample: np.ndarray, pred_local: np.ndarray, obs_len: int):
-    _, center, theta = transform_to_target(
-        trajs=np.array(raw_sample, dtype=np.float32, copy=True),
-        obs_len=obs_len,
-        traj_dim=raw_sample.shape[2],
+def _target_center_heading_world(raw_sample: np.ndarray, obs_len: int):
+    center = np.array(raw_sample[0, obs_len - 1, :2], dtype=np.float32)
+    if np.any(np.isnan(raw_sample[0, obs_len - 2 : obs_len, :2])):
+        theta = 0.0
+    else:
+        diff = raw_sample[0, obs_len - 1, :2] - raw_sample[0, obs_len - 2, :2]
+        theta = float(np.arctan2(diff[1], diff[0]))
+    return center, theta
+
+
+def _select_neighbors_local(local_sample: np.ndarray, args):
+    nbr_trajs = np.array(local_sample[1:, : args.obs_len + args.pred_len, :2], dtype=np.float32, copy=True)
+    if len(nbr_trajs) == 0:
+        return np.empty((0, args.obs_len, 2), dtype=np.float32)
+
+    valid_obs = ~np.all(np.isnan(nbr_trajs[:, : args.obs_len, 0]), axis=1)
+    nbr_trajs = nbr_trajs[valid_obs]
+    if len(nbr_trajs) == 0:
+        return np.empty((0, args.obs_len, 2), dtype=np.float32)
+
+    nbr_dist = np.linalg.norm(nbr_trajs[:, :, :2], axis=2)
+    nbr_dist[np.isnan(nbr_dist)] = args.view_range
+    nbr_trajs[nbr_dist >= args.view_range] = np.nan
+
+    nbr_curr_pos = nbr_trajs[:, args.obs_len - 1].copy()
+    nbr_curr_dist = nbr_dist[:, args.obs_len - 1].copy()
+    nbr_angles = np.abs(np.arctan2(nbr_curr_pos[:, 1], nbr_curr_pos[:, 0]))
+    nbr_angles[np.isnan(nbr_angles)] = args.view_angle
+
+    in_interest = (nbr_curr_dist <= args.social_range) | (nbr_angles <= args.view_angle / 2.0)
+    in_interest &= ~np.isnan(nbr_curr_pos[:, 0])
+    nbr_trajs = nbr_trajs[in_interest]
+    nbr_curr_dist = nbr_curr_dist[in_interest]
+    if len(nbr_trajs) == 0:
+        return np.empty((0, args.obs_len, 2), dtype=np.float32)
+
+    order = np.argsort(nbr_curr_dist)
+    nbr_trajs = nbr_trajs[order][: args.num_nbr]
+    return nbr_trajs[:, : args.obs_len, :2]
+
+
+def _last_valid_point(traj: np.ndarray):
+    valid = ~np.isnan(traj[:, 0])
+    if not np.any(valid):
+        return None
+    return traj[np.where(valid)[0][-1], :2]
+
+
+def _draw_context(ax, center, heading, view_range, view_angle, social_range):
+    wedge = Wedge(
+        center=tuple(center),
+        r=view_range,
+        theta1=np.degrees(heading - view_angle / 2.0),
+        theta2=np.degrees(heading + view_angle / 2.0),
+        fill=False,
+        linestyle=(0, (4, 4)),
+        linewidth=1.2,
+        edgecolor="dimgray",
+        alpha=0.7,
+        zorder=1,
     )
-    pred_world = rotate_trajs(
-        trajs=np.expand_dims(pred_local, axis=0),
-        theta=-theta,
-        traj_dim=2,
-    )[0] - center[np.newaxis, :]
-    return pred_world
+    circle = Circle(
+        xy=tuple(center),
+        radius=social_range,
+        fill=False,
+        linestyle=(0, (4, 4)),
+        linewidth=1.2,
+        edgecolor="darkslategray",
+        alpha=0.7,
+        zorder=1,
+    )
+    ax.add_patch(wedge)
+    ax.add_patch(circle)
+
+
+def _plot_neighbors(ax, neighbors):
+    cmap = plt.get_cmap("tab10")
+    for nbr_idx, traj in enumerate(neighbors, start=1):
+        color = cmap((nbr_idx - 1) % 10)
+        ax.plot(
+            traj[:, 0],
+            traj[:, 1],
+            color=color,
+            linewidth=1.6,
+            linestyle="-",
+            marker="o",
+            markersize=2.5,
+            alpha=0.9,
+            label=f"Neighbor {nbr_idx}",
+        )
+        last_pt = _last_valid_point(traj)
+        if last_pt is not None:
+            ax.text(last_pt[0], last_pt[1], f"N{nbr_idx}", color=color, fontsize=7, weight="bold")
 
 
 def _collect_samples(args):
@@ -281,15 +401,16 @@ def _collect_samples(args):
             raw_tgt = raw_sample[0].copy()
             obs_world = raw_tgt[: args.obs_len].copy()
             gt_world = raw_tgt[args.obs_len : args.obs_len + args.pred_len].copy()
-            local_sample, _, _ = transform_to_target(
-                trajs=np.array(raw_sample, dtype=np.float32, copy=True),
-                obs_len=args.obs_len,
-                traj_dim=raw_sample.shape[2],
-            )
+            local_sample, _, _ = _transform_params(raw_sample, args.obs_len)
             local_tgt = local_sample[0].copy()
             scale = float(item["scales"].item())
             obs_local = local_tgt[: args.obs_len].copy() * scale
             gt_local_plot = local_tgt[args.obs_len : args.obs_len + args.pred_len].copy() * scale
+
+            neighbors_local_unscaled = _select_neighbors_local(local_sample, args)
+            neighbors_local_plot = neighbors_local_unscaled * scale
+            neighbors_world_plot = _local_trajs_to_world(raw_sample, neighbors_local_plot, args.obs_len)
+            context_center_world, context_heading_world = _target_center_heading_world(raw_sample, args.obs_len)
 
             if "mgp_spatial_ids" in item:
                 plus_inputs = {
@@ -329,9 +450,11 @@ def _collect_samples(args):
             )
 
             pred_local_all = outputs["pred_trajs"][0].detach().cpu().numpy() * scale
+            pred_goal_local_all = outputs["pred_goals"][0].detach().cpu().numpy() * scale
             gt_local = item["traj_lbl"].detach().cpu().numpy() * scale
             best_idx = _pick_best(pred_local_all, gt_local, args.best_by)
             pred_world = _local_to_world(raw_sample, pred_local_all[best_idx], args.obs_len)
+            pred_goal_world_all = _local_points_to_world(raw_sample, pred_goal_local_all, args.obs_len)
 
             pred_all_world = None
             if args.plot_k:
@@ -344,6 +467,13 @@ def _collect_samples(args):
             gt_plot = gt_world
             pred_plot = pred_world
             pred_all_plot = pred_all_world
+            mgp_goal_plot = pred_goal_world_all[best_idx]
+            mgp_goals_plot = pred_goal_world_all if args.plot_k else None
+            neighbors_plot = neighbors_world_plot
+            context_center = context_center_world
+            context_heading = context_heading_world
+            view_range = args.view_range
+            social_range = args.social_range
             gridmap = None
             grid_extent = None
             if args.plot_gridmap:
@@ -361,6 +491,13 @@ def _collect_samples(args):
                 gt_plot = gt_local_plot
                 pred_plot = pred_local_all[best_idx]
                 pred_all_plot = [pred_local_all[k] for k in range(pred_local_all.shape[0])] if args.plot_k else None
+                mgp_goal_plot = pred_goal_local_all[best_idx]
+                mgp_goals_plot = pred_goal_local_all if args.plot_k else None
+                neighbors_plot = neighbors_local_plot
+                context_center = np.zeros(2, dtype=np.float32)
+                context_heading = 0.0
+                view_range = args.view_range * scale
+                social_range = args.social_range * scale
 
             scene_id = dataset.all_scenes[idx] if idx < len(dataset.all_scenes) else "unknown_scene"
             title = f"spubert | {args.dataset_name} | scene={scene_id} | idx={idx}"
@@ -372,6 +509,14 @@ def _collect_samples(args):
                     "gt": gt_plot,
                     "pred": pred_plot,
                     "pred_all": pred_all_plot,
+                    "mgp_goal": mgp_goal_plot,
+                    "mgp_goals": mgp_goals_plot,
+                    "neighbors": neighbors_plot,
+                    "context_center": context_center,
+                    "context_heading": context_heading,
+                    "view_range": view_range,
+                    "view_angle": args.view_angle,
+                    "social_range": social_range,
                     "gridmap": gridmap,
                     "grid_extent": grid_extent,
                     "title": title,
@@ -384,7 +529,7 @@ def plot_samples(samples, out_path: Path):
     n = len(samples)
     cols = min(3, max(1, n))
     rows = math.ceil(n / cols)
-    fig, axes = plt.subplots(rows, cols, figsize=(5.0 * cols, 4.5 * rows))
+    fig, axes = plt.subplots(rows, cols, figsize=(5.3 * cols, 4.9 * rows))
     if rows == 1 and cols == 1:
         axes = [axes]
     elif rows == 1:
@@ -398,6 +543,8 @@ def plot_samples(samples, out_path: Path):
         gt = sample["gt"]
         pred = sample["pred"]
         pred_all = sample.get("pred_all")
+        mgp_goal = sample.get("mgp_goal")
+        mgp_goals = sample.get("mgp_goals")
         gridmap = sample.get("gridmap")
         grid_extent = sample.get("grid_extent")
 
@@ -413,19 +560,39 @@ def plot_samples(samples, out_path: Path):
                 vmax=2.0,
                 zorder=0,
             )
+            center_x = 0.5 * (grid_extent[0] + grid_extent[1])
+            center_y = 0.5 * (grid_extent[2] + grid_extent[3])
+            ax.axvline(center_x, color="black", linewidth=0.8, linestyle="--", alpha=0.35, zorder=1)
+            ax.axhline(center_y, color="black", linewidth=0.8, linestyle="--", alpha=0.35, zorder=1)
+
+        _draw_context(
+            ax,
+            center=sample["context_center"],
+            heading=sample["context_heading"],
+            view_range=sample["view_range"],
+            view_angle=sample["view_angle"],
+            social_range=sample["social_range"],
+        )
+        _plot_neighbors(ax, sample["neighbors"])
 
         ax.plot(obs[:, 0], obs[:, 1], color="royalblue", linewidth=2.0, marker="o", markersize=3, label="Obs")
         ax.plot(gt[:, 0], gt[:, 1], color="crimson", linewidth=2.0, marker="o", markersize=3, label="GT Future")
 
         if pred_all is not None:
             for j, traj in enumerate(pred_all):
-                label = "K samples" if j == 0 else None
-                ax.plot(traj[:, 0], traj[:, 1], color="gray", alpha=0.2, linewidth=1.0, label=label)
+                label = "K trajectories" if j == 0 else None
+                ax.plot(traj[:, 0], traj[:, 1], color="gray", alpha=0.18, linewidth=1.0, label=label)
+
+        if mgp_goals is not None:
+            ax.scatter(mgp_goals[:, 0], mgp_goals[:, 1], color="dimgray", alpha=0.65, marker="x", s=36, linewidths=1.3, label="MGP goals")
 
         ax.plot(pred[:, 0], pred[:, 1], color="black", linewidth=2.0, marker="o", markersize=3, label="Prediction")
         ax.scatter([obs[0, 0]], [obs[0, 1]], color="royalblue", s=35)
+        ax.scatter([obs[-1, 0]], [obs[-1, 1]], color="gold", edgecolors="black", linewidths=0.7, s=46, zorder=6, label="Target @ t_obs")
         ax.scatter([gt[-1, 0]], [gt[-1, 1]], color="crimson", s=35)
         ax.scatter([pred[-1, 0]], [pred[-1, 1]], color="black", s=35)
+        if mgp_goal is not None:
+            ax.scatter([mgp_goal[0]], [mgp_goal[1]], color="black", marker="x", s=90, linewidths=2.0, zorder=7, label="Chosen MGP goal")
 
         ax.set_title(sample["title"], fontsize=9)
         ax.set_aspect("equal", adjustable="box")

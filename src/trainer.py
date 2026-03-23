@@ -15,6 +15,8 @@ from .utils import (
     bootstrap_paths,
     ensure_runtime_dirs,
     epoch_checkpoint_path,
+    estimate_map_length,
+    estimate_num_patch,
     format_metric_message,
     normalize_framework,
     resolve_checkpoint_path,
@@ -31,7 +33,10 @@ def _base_stream_length(obs_len: int, pred_len: int, num_nbr: int) -> int:
 def _scene_tokens(args) -> int:
     if not getattr(args, "scene", False):
         return 0
-    return int(getattr(args, "scene_num_splits", 9))
+    if hasattr(args, "num_patch"):
+        return int(getattr(args, "num_patch"))
+    map_length = estimate_map_length(float(args.env_range) * 2.0, float(args.env_resol))
+    return int(estimate_num_patch(map_length, int(args.patch_size)))
 
 
 def format_token_contract_report(args) -> str:
@@ -63,14 +68,14 @@ def format_token_contract_report(args) -> str:
         [
             f"framework=spubert mode={args.mode}",
             f"base_stream_tokens={base_stream_len}",
-            f"scene_tokens={_scene_tokens(args)}",
+            f"scene_patch_tokens={_scene_tokens(args)}",
         ]
     )
     if args.mode == "pretrain":
         lines.extend(
             [
-                "stream_count=1 (+ optional scene tokens)",
-                "current_stream=[SOT] + target + neighbors([SEP] + obs) + scene_tokens",
+                "stream_count=1 (+ optional scene patch tokens)",
+                "current_stream=[SOT] + target + neighbors([SEP] + obs) + scene_patch_tokens",
             ]
         )
     else:
@@ -86,8 +91,8 @@ def format_token_contract_report(args) -> str:
     if args.scene:
         lines.extend(
             [
-                "scene_input_source=envs occupancy grid",
-                "scene_encoder_path=3x3 map splits -> ViT -> 9 scene tokens",
+                "scene_input_source=flattened occupancy-map patches",
+                "scene_encoder_path=flattened map patches -> linear patch embedding -> shared BERT",
             ]
         )
     lines.append("trajectory_encoder_path=spatial linear -> shared BERT")

@@ -85,34 +85,10 @@ class SBertModelBase(nn.Module):
 
 
 
-def _apply_hf_runtime_fields(
-    cfg,
-    *,
-    backbone_type="bert",
-    scene_encoder_type="vit",
-    scene_num_splits=9,
-    scene_image_size=96,
-    scene_patch_size=None,
-    scene_num_channels=1,
-    scene_hidden_size=None,
-    scene_num_hidden_layers=6,
-    scene_num_attention_heads=8,
-    scene_intermediate_size=None,
-    binary_scene=False,
-):
+def _apply_runtime_fields(cfg, *, backbone_type="bert", binary_scene=False):
     cfg.backbone_type = backbone_type
-    cfg.scene_encoder_type = scene_encoder_type
-    cfg.scene_num_splits = scene_num_splits
-    cfg.scene_image_size = scene_image_size
-    cfg.scene_patch_size = cfg.patch_size if scene_patch_size is None else scene_patch_size
-    cfg.scene_num_channels = scene_num_channels
-    cfg.scene_hidden_size = cfg.hidden_size if scene_hidden_size is None else scene_hidden_size
-    cfg.scene_num_hidden_layers = scene_num_hidden_layers
-    cfg.scene_num_attention_heads = scene_num_attention_heads
-    cfg.scene_intermediate_size = cfg.hidden_size * 4 if scene_intermediate_size is None else scene_intermediate_size
     cfg.binary_scene = binary_scene
-    cfg.segment_vocab_size = cfg.num_nbr + max(cfg.num_patch, cfg.scene_num_splits) + 2
-
+    cfg.segment_vocab_size = cfg.num_nbr + cfg.num_patch + 2
 
 
 class SBertPlusPTConfig:
@@ -142,15 +118,6 @@ class SBertPlusPTConfig:
         initializer_range=0.02,
         sip=False,
         backbone_type="bert",
-        scene_encoder_type="vit",
-        scene_num_splits=9,
-        scene_image_size=96,
-        scene_patch_size=None,
-        scene_num_channels=1,
-        scene_hidden_size=None,
-        scene_num_hidden_layers=6,
-        scene_num_attention_heads=8,
-        scene_intermediate_size=None,
         binary_scene=False,
     ):
         self.input_dim = input_dim
@@ -178,20 +145,7 @@ class SBertPlusPTConfig:
         self.chunk_size_feed_forward = 0
         self.initializer_range = initializer_range
         self.sip = sip
-        _apply_hf_runtime_fields(
-            self,
-            backbone_type=backbone_type,
-            scene_encoder_type=scene_encoder_type,
-            scene_num_splits=scene_num_splits,
-            scene_image_size=scene_image_size,
-            scene_patch_size=scene_patch_size,
-            scene_num_channels=scene_num_channels,
-            scene_hidden_size=scene_hidden_size,
-            scene_num_hidden_layers=scene_num_hidden_layers,
-            scene_num_attention_heads=scene_num_attention_heads,
-            scene_intermediate_size=scene_intermediate_size,
-            binary_scene=binary_scene,
-        )
+        _apply_runtime_fields(self, backbone_type=backbone_type, binary_scene=binary_scene)
 
 
 class SBertPlusTGPConfig:
@@ -220,15 +174,6 @@ class SBertPlusTGPConfig:
         layer_norm_eps=1e-12,
         initializer_range=0.02,
         backbone_type="bert",
-        scene_encoder_type="vit",
-        scene_num_splits=9,
-        scene_image_size=96,
-        scene_patch_size=None,
-        scene_num_channels=1,
-        scene_hidden_size=None,
-        scene_num_hidden_layers=6,
-        scene_num_attention_heads=8,
-        scene_intermediate_size=None,
         binary_scene=False,
     ):
         self.input_dim = input_dim
@@ -255,20 +200,7 @@ class SBertPlusTGPConfig:
         self.pad_token_id = pad_token_id
         self.chunk_size_feed_forward = 0
         self.initializer_range = initializer_range
-        _apply_hf_runtime_fields(
-            self,
-            backbone_type=backbone_type,
-            scene_encoder_type=scene_encoder_type,
-            scene_num_splits=scene_num_splits,
-            scene_image_size=scene_image_size,
-            scene_patch_size=scene_patch_size,
-            scene_num_channels=scene_num_channels,
-            scene_hidden_size=scene_hidden_size,
-            scene_num_hidden_layers=scene_num_hidden_layers,
-            scene_num_attention_heads=scene_num_attention_heads,
-            scene_intermediate_size=scene_intermediate_size,
-            binary_scene=binary_scene,
-        )
+        _apply_runtime_fields(self, backbone_type=backbone_type, binary_scene=binary_scene)
 
 
 class SBertPlusMGPConfig:
@@ -305,15 +237,6 @@ class SBertPlusMGPConfig:
         share=False,
         normal=False,
         backbone_type="bert",
-        scene_encoder_type="vit",
-        scene_num_splits=9,
-        scene_image_size=96,
-        scene_patch_size=None,
-        scene_num_channels=1,
-        scene_hidden_size=None,
-        scene_num_hidden_layers=6,
-        scene_num_attention_heads=8,
-        scene_intermediate_size=None,
         binary_scene=False,
     ):
         self.input_dim = input_dim
@@ -348,20 +271,7 @@ class SBertPlusMGPConfig:
         self.cvae_sigma = cvae_sigma
         self.kld_clamp = kld_clamp
         self.normal = normal
-        _apply_hf_runtime_fields(
-            self,
-            backbone_type=backbone_type,
-            scene_encoder_type=scene_encoder_type,
-            scene_num_splits=scene_num_splits,
-            scene_image_size=scene_image_size,
-            scene_patch_size=scene_patch_size,
-            scene_num_channels=scene_num_channels,
-            scene_hidden_size=scene_hidden_size,
-            scene_num_hidden_layers=scene_num_hidden_layers,
-            scene_num_attention_heads=scene_num_attention_heads,
-            scene_intermediate_size=scene_intermediate_size,
-            binary_scene=binary_scene,
-        )
+        _apply_runtime_fields(self, backbone_type=backbone_type, binary_scene=binary_scene)
 
 
 class SBertPlusFTConfig:
@@ -402,15 +312,6 @@ class SBertPlusFTConfig:
         self.normal = goal_cfgs.normal
         self.share = share
         self.backbone_type = traj_cfgs.backbone_type
-        self.scene_encoder_type = traj_cfgs.scene_encoder_type
-        self.scene_num_splits = traj_cfgs.scene_num_splits
-        self.scene_image_size = traj_cfgs.scene_image_size
-        self.scene_patch_size = traj_cfgs.scene_patch_size
-        self.scene_num_channels = traj_cfgs.scene_num_channels
-        self.scene_hidden_size = traj_cfgs.scene_hidden_size
-        self.scene_num_hidden_layers = traj_cfgs.scene_num_hidden_layers
-        self.scene_num_attention_heads = traj_cfgs.scene_num_attention_heads
-        self.scene_intermediate_size = traj_cfgs.scene_intermediate_size
         self.binary_scene = traj_cfgs.binary_scene
         self.segment_vocab_size = traj_cfgs.segment_vocab_size
         if share:
@@ -443,6 +344,10 @@ class SBertPlusModel(SBertModelBase):
             temporal_ids=temporal_ids,
             segment_ids=segment_ids,
             attn_mask=attn_mask,
+            env_spatial_ids=env_spatial_ids,
+            env_temporal_ids=env_temporal_ids,
+            env_segment_ids=env_segment_ids,
+            env_attn_mask=env_attn_mask,
             envs=envs,
             output_attentions=output_attentions,
         )

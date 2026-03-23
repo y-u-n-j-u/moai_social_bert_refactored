@@ -227,7 +227,7 @@ class moai_social_bertDataset(Dataset):
             traj_mask += [self.s_ind.false_id] * near_lbl_ext_len * self.args.obs_len
             if self.args.scene:
                 if tgt_env.width % self.args.patch_size != 0: # add padding
-                    pad_size = self.args.patch_size - (tgt_env.width % self.args.patch_size) // 2
+                    pad_size = (self.args.patch_size - (tgt_env.width % self.args.patch_size)) // 2
                     tgt_env = expand_map_with_pad(tgt_env, 0, pad_size)
                     # if 'ethucy' in self.args.dataset_name:
                     #     tgt_env, attn_mask = expand_map_with_pad(tgt_env, 0, pad_size)
@@ -245,7 +245,7 @@ class moai_social_bertDataset(Dataset):
                 else:
                     binary = None
                 env_spatial_ids, env_attn_mask = extract_patch_from_map(tgt_env, self.args.patch_size, binary=binary)
-                env_segment_ids = np.arange(start=self.args.num_nbr+1, stop=self.args.num_nbr+len(env_spatial_ids)+1)
+                env_segment_ids = np.arange(start=self.args.num_nbr + 2, stop=self.args.num_nbr + len(env_spatial_ids) + 2)
                 env_temporal_ids = np.ones(len(env_spatial_ids)) * self.args.obs_len
                 # env_attn_mask = env_attn_mask # np.ones(len(env_spatial_ids))
                 envs_params = [tgt_env.min_x, tgt_env.min_y, tgt_env.width, tgt_env.height, tgt_env.resolution, 2.0]
@@ -418,7 +418,7 @@ class moai_social_bertDataset(Dataset):
             # plt.show()
             if self.args.scene:
                 if tgt_env.width % self.args.patch_size != 0: # add padding
-                    pad_size = self.args.patch_size - (tgt_env.width % self.args.patch_size) // 2
+                    pad_size = (self.args.patch_size - (tgt_env.width % self.args.patch_size)) // 2
                     tgt_env = expand_map_with_pad(tgt_env, 0, pad_size)
 
                 if self.args.binary_scene is True:
@@ -432,7 +432,7 @@ class moai_social_bertDataset(Dataset):
                     binary = None
 
                 env_spatial_ids, env_attn_mask  = extract_patch_from_map(tgt_env, self.args.patch_size, binary=binary)
-                env_segment_ids = np.arange(start=self.args.num_nbr+1, stop=self.args.num_nbr+len(env_spatial_ids)+1)
+                env_segment_ids = np.arange(start=self.args.num_nbr + 2, stop=self.args.num_nbr + len(env_spatial_ids) + 2)
                 env_temporal_ids = np.ones(len(env_spatial_ids)) * self.args.obs_len
                 # env_attn_mask = np.ones(len(env_spatial_ids))
                 envs_params = [tgt_env.min_x, tgt_env.min_y, tgt_env.width, tgt_env.height, tgt_env.resolution, 2]

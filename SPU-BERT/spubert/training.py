@@ -58,15 +58,6 @@ def _spubert_shared_cfg_kwargs(args):
         "view_angle": args.view_angle,
         "social_range": args.social_range,
         "backbone_type": args.backbone_type,
-        "scene_encoder_type": args.scene_encoder_type,
-        "scene_num_splits": args.scene_num_splits,
-        "scene_image_size": args.scene_image_size,
-        "scene_patch_size": args.scene_patch_size,
-        "scene_num_channels": args.scene_num_channels,
-        "scene_hidden_size": args.scene_hidden_size,
-        "scene_num_hidden_layers": args.scene_num_hidden_layers,
-        "scene_num_attention_heads": args.scene_num_attention_heads,
-        "scene_intermediate_size": args.scene_intermediate_size,
         "binary_scene": args.binary_scene,
     }
 
