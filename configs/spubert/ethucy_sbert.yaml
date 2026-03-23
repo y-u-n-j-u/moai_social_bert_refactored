@@ -1,0 +1,58 @@
+experiment:
+  name: spubert_ethucy_univ_finetune
+  framework: spubert
+  task: finetune
+  seed: 20
+
+data:
+  dataset_name: ethucy_sbert
+  dataset_path: ./data/processed
+  dataset_split: univ
+  obs_len: 8
+  pred_len: 12
+  num_nbr: 4
+
+scene:
+  enabled: true
+  env_range: 10.0
+  env_resol: 0.2
+  patch_size: 16
+  num_splits: 9
+
+model:
+  backbone:
+    type: bert
+    hidden_size: 256
+    num_hidden_layers: 4
+    num_attention_heads: 4
+    dropout_prob: 0.1
+  scene_encoder:
+    type: vit
+    num_splits: 9
+    image_size: 96
+    patch_size: 16
+    num_channels: 1
+    hidden_size: 256
+    num_hidden_layers: 6
+    num_attention_heads: 8
+    intermediate_size: 1024
+  heads:
+    spubert:
+      k_sample: 20
+      d_sample: 400
+      goal_hidden: 64
+      goal_latent: 32
+
+train:
+  batch_size: 32
+  test_batch_size: 32
+  epoch: 200
+  eval_interval: 10
+  checkpoint_interval: 20
+  optimizer:
+    lr: 1.0e-4
+  evaluate_on_test: false
+
+runtime:
+  cuda: true
+  model_dir: ./output
