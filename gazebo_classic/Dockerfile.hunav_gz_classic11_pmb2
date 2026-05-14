@@ -48,6 +48,8 @@ RUN apt-get update && apt-get install -y \
 # other required ROS packages  
 RUN apt-get update && apt-get install -y \
   ros-humble-nav2-* ros-dev-tools ros-humble-filters \
+  ros-humble-robot-localization \
+  ros-humble-imu-filter-madgwick ros-humble-interactive-marker-twist-server \
   ros-humble-teleop-twist-joy ros-humble-urdf ros-humble-xacro \
   ros-humble-gazebo-ros ros-humble-gazebo-plugins \
   ros-humble-gazebo-ros-pkgs ros-humble-teleop-twist-keyboard ros-humble-laser-proc \
@@ -69,6 +71,27 @@ RUN apt-get install python3-rosdep -y
 # required for HuNavEvaluator
 RUN pip3 install pandas
 
+# Runtime dependencies for the optional MOAI/SPU-BERT trajectory predictor.
+RUN pip3 install \
+  huggingface-hub==0.11.0 \
+  numpy==1.23.5 \
+  opencv-python==4.6.0.66 \
+  pandas==1.5.1 \
+  PyYAML==6.0 \
+  torch==1.13.0+cu116 \
+  torchaudio==0.13.0+cu116 \
+  torchvision==0.14.0+cu116 \
+  tqdm==4.64.1 \
+  transformers==4.17.0 \
+  typing_extensions==4.4.0 \
+  gdown \
+  --extra-index-url https://download.pytorch.org/whl/cu116
+
+RUN pip3 install \
+  dill==0.3.4 \
+  scikit-learn==1.0.2 \
+  tensorboard==2.8.0
+
 # install the lightsfm library
 RUN git clone https://github.com/robotics-upo/lightsfm.git \
   && cd lightsfm && make && make install
@@ -89,7 +112,7 @@ RUN apt-get update && apt-get install -y \
   ros-humble-pal-urdf-utils \
   && rm -rf /var/lib/apt/lists/*
 # required by pmb2 robot simulation	
-ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 
 
 # Create workspace
@@ -112,6 +135,8 @@ RUN git clone -b humble-devel https://github.com/pal-robotics/pmb2_simulation.gi
 # get last versions of these packages
 RUN git clone -b humble https://github.com/ros-controls/ros2_control.git
 RUN git clone -b humble https://github.com/ros-controls/gazebo_ros2_control.git
+RUN perl -0pi -e 's@\\n\\s*// set the robot description parameter\\n\\s*// to propagate it among controller manager and controllers\\n\\s*std::string rb_arg = std::string\\(\"robot_description:=\"\\) \\+ urdf_string;\\n\\s*arguments.push_back\\(RCL_PARAM_FLAG\\);\\n\\s*arguments.push_back\\(rb_arg\\);@@s' /home/pmb2_ws/src/gazebo_ros2_control/gazebo_ros2_control/src/gazebo_ros2_control_plugin.cpp
+RUN perl -0pi -e 's@impl_->executor_->add_node\\(impl_->controller_manager_\\);@impl_->executor_->add_node(impl_->controller_manager_);\\n\\n  if (!impl_->controller_manager_->has_parameter(\"robot_description\")) {\\n    impl_->controller_manager_->declare_parameter(\"robot_description\", urdf_string);\\n  }\\n  impl_->controller_manager_->set_parameter(\\n    rclcpp::Parameter(\"robot_description\", rclcpp::ParameterValue(urdf_string)));@s' /home/pmb2_ws/src/gazebo_ros2_control/gazebo_ros2_control/src/gazebo_ros2_control_plugin.cpp
 
 # get people
 RUN git clone -b ros2 https://github.com/wg-perception/people.git
@@ -152,11 +177,9 @@ RUN echo "source /home/pmb2_ws/install/setup.bash" >> /root/.bashrc
 RUN echo '# Add Groot2 to PATH' >> /etc/bash.bashrc && \
     echo 'export PATH="/opt/Groot2/bin:$PATH"' >> /etc/bash.bashrc
 
+RUN echo "source /root/jackal_ws/install/setup.bash" >> /root/.bashrc
+
 COPY entrypoint.bash /entrypoint.bash
 RUN chmod +x /entrypoint.bash
 ENTRYPOINT ["/entrypoint.bash"]
 CMD ["bash"]
-
-
-
-

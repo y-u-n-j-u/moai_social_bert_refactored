@@ -8,7 +8,11 @@ echo -e "\e[36m_-⁻-_-⁻-_-⁻-_-⁻-_-⁻-_-⁻-_-⁻-_-⁻-_-⁻-__-⁻-_-�
 # Source ROS and the workspace inside the docker container
 source /opt/ros/humble/setup.bash
 source /home/pmb2_ws/install/setup.bash
+if [ -f /root/jackal_ws/install/setup.bash ]; then
+    source /root/jackal_ws/install/setup.bash
+fi
 source /usr/share/gazebo/setup.sh
+export GAZEBO_PLUGIN_PATH="/home/pmb2_ws/install/gazebo_ros2_control/lib:/home/pmb2_ws/install/lib:${GAZEBO_PLUGIN_PATH:-}"
 error=false
 # Compile the workspace
 echo "Compiling the workspace..."
@@ -22,6 +26,11 @@ fi
 
 # source the workspace
 source /home/hunav_gz_classic_ws/install/setup.bash
+
+HUNAV_ROBOT_TYPE="${HUNAV_ROBOT_TYPE:-pmb2}"
+HUNAV_ROBOT_NAME="${HUNAV_ROBOT_NAME:-$HUNAV_ROBOT_TYPE}"
+HUNAV_AGENT_MOTION_MODEL="${HUNAV_AGENT_MOTION_MODEL:-hunav}"
+HUNAV_NAVIGATION="${HUNAV_NAVIGATION:-False}"
 
 echo -e "\e[31mNOTE: First execution may fail if Gazebo takes long time. Stop the system (crtl+c) and re-run from the menu\e[0m"
 # Menu loop
@@ -64,9 +73,9 @@ while true; do
             yaml_name=$(basename "$selected_yaml")
             echo ""
             echo "Launching..."
-            echo -e "\e[33mros2 launch hunav_gazebo_wrapper simulation.launch.py environment_name:=$map_name configuration_file:=$yaml_name\e[0m"
+            echo -e "\e[33mros2 launch hunav_gazebo_wrapper simulation.launch.py environment_name:=$map_name configuration_file:=$yaml_name robot_type:=$HUNAV_ROBOT_TYPE robot_name:=$HUNAV_ROBOT_NAME agent_motion_model:=$HUNAV_AGENT_MOTION_MODEL navigation:=$HUNAV_NAVIGATION update_rate:=${HUNAV_UPDATE_RATE:-50.0}\e[0m"
             echo ""
-            ros2 launch hunav_gazebo_wrapper simulation.launch.py environment_name:=$map_name configuration_file:=$yaml_name
+            ros2 launch hunav_gazebo_wrapper simulation.launch.py environment_name:=$map_name configuration_file:=$yaml_name robot_type:=$HUNAV_ROBOT_TYPE robot_name:=$HUNAV_ROBOT_NAME agent_motion_model:=$HUNAV_AGENT_MOTION_MODEL navigation:=$HUNAV_NAVIGATION update_rate:=${HUNAV_UPDATE_RATE:-50.0}
         elif [ "$opt" -eq "$bash_option" ]; then
             echo -e "\e[33mTo open a new terminal inside this Docker container, open a new terminal on your host and run:\e[0m"
             echo -e "\e[3m\e[32mdocker exec -it hunavsim_pmb2 bash\e[0m"
@@ -93,4 +102,3 @@ while true; do
         echo -e "\e[31mInvalid selection.\e[0m"
     fi
 done
-
