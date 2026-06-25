@@ -2,7 +2,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution, PythonExpression
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
@@ -15,21 +15,9 @@ def generate_launch_description():
     predictor = LaunchConfiguration("predictor")
     spubert_model_path = LaunchConfiguration("spubert_model_path")
     moai_spubert_repo_path = LaunchConfiguration("moai_spubert_repo_path")
-    spubert_map_yaml_path = LaunchConfiguration("spubert_map_yaml_path")
-    spubert_use_map_collision_filter = LaunchConfiguration("spubert_use_map_collision_filter")
-    spubert_map_collision_radius = LaunchConfiguration("spubert_map_collision_radius")
-    spubert_map_collision_weight = LaunchConfiguration("spubert_map_collision_weight")
-    spubert_debug_scene_patch_dir = LaunchConfiguration("spubert_debug_scene_patch_dir")
-    spubert_debug_scene_patch_agent_id = LaunchConfiguration("spubert_debug_scene_patch_agent_id")
-    spubert_debug_scene_patch_every = LaunchConfiguration("spubert_debug_scene_patch_every")
-    debug_focus_agent_id = LaunchConfiguration("debug_focus_agent_id")
-    debug_show_all_candidate_paths = LaunchConfiguration("debug_show_all_candidate_paths")
-    debug_show_all_model_io = LaunchConfiguration("debug_show_all_model_io")
     use_rviz = LaunchConfiguration("use_rviz")
     save_training_pkl = LaunchConfiguration("save_training_pkl")
     training_pkl_path = LaunchConfiguration("training_pkl_path")
-    save_jackal_training_pkl = LaunchConfiguration("save_jackal_training_pkl")
-    jackal_training_pkl_path = LaunchConfiguration("jackal_training_pkl_path")
 
     return LaunchDescription(
         [
@@ -57,62 +45,6 @@ def generate_launch_description():
                 "spubert_d_sample",
                 default_value="20",
                 description="Number of SPU-BERT goal samples. Lower values are faster for crowded scenarios.",
-            ),
-            DeclareLaunchArgument(
-                "spubert_map_yaml_path",
-                default_value=PathJoinSubstitution(
-                    [
-                        FindPackageShare("hunav_gazebo_wrapper"),
-                        "maps",
-                        PythonExpression(["'", environment_name, ".yaml'"]),
-                    ]
-                ),
-                description="ROS map YAML used as local occupancy crop input for SPU-BERT pedestrians.",
-            ),
-            DeclareLaunchArgument(
-                "spubert_use_map_collision_filter",
-                default_value="true",
-                description="Penalize SPU-BERT candidate paths that collide with the occupancy map.",
-            ),
-            DeclareLaunchArgument(
-                "spubert_map_collision_radius",
-                default_value="0.35",
-                description="Pedestrian radius used for map collision checking of SPU-BERT candidates.",
-            ),
-            DeclareLaunchArgument(
-                "spubert_map_collision_weight",
-                default_value="100.0",
-                description="Penalty per colliding waypoint when selecting a SPU-BERT candidate path.",
-            ),
-            DeclareLaunchArgument(
-                "spubert_debug_scene_patch_dir",
-                default_value="",
-                description="If non-empty, save target-centered SPU-BERT occupancy crop patch-grid images here.",
-            ),
-            DeclareLaunchArgument(
-                "spubert_debug_scene_patch_agent_id",
-                default_value="1",
-                description="Agent id whose SPU-BERT map crop patch image is saved; <=0 saves all agents.",
-            ),
-            DeclareLaunchArgument(
-                "spubert_debug_scene_patch_every",
-                default_value="10",
-                description="Save one SPU-BERT map crop patch image every N scene encodings.",
-            ),
-            DeclareLaunchArgument(
-                "debug_focus_agent_id",
-                default_value="1",
-                description="Agent id whose SPU-BERT input/output markers are expanded in RViz; <=0 shows all.",
-            ),
-            DeclareLaunchArgument(
-                "debug_show_all_candidate_paths",
-                default_value="False",
-                description="Show all SPU-BERT candidate path bundles in RViz instead of only the focus agent.",
-            ),
-            DeclareLaunchArgument(
-                "debug_show_all_model_io",
-                default_value="False",
-                description="Show numbered obs/pred model input-output markers for every agent.",
             ),
             DeclareLaunchArgument(
                 "predictor",
@@ -145,16 +77,6 @@ def generate_launch_description():
                 default_value="/tmp/moai_gazebo_multi_human_all_trajs.pkl",
                 description="Output path for recorded moai all_trajs pkl.",
             ),
-            DeclareLaunchArgument(
-                "save_jackal_training_pkl",
-                default_value="false",
-                description="Save Jackal-as-target teleop trajectories with humans as neighbors.",
-            ),
-            DeclareLaunchArgument(
-                "jackal_training_pkl_path",
-                default_value="/home/hunav_gz_classic_ws/moai_recordings/jackal_teleop_all_trajs.pkl",
-                description="Output path for Jackal-target MOAI all_trajs pkl.",
-            ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     PathJoinSubstitution(
@@ -173,14 +95,7 @@ def generate_launch_description():
                     "moai_spubert_repo_path": moai_spubert_repo_path,
                     "spubert_k_sample": "20",
                     "spubert_d_sample": spubert_d_sample,
-                    "spubert_cache_ttl": "1.5",
-                    "spubert_map_yaml_path": spubert_map_yaml_path,
-                    "spubert_use_map_collision_filter": spubert_use_map_collision_filter,
-                    "spubert_map_collision_radius": spubert_map_collision_radius,
-                    "spubert_map_collision_weight": spubert_map_collision_weight,
-                    "social_bert_debug_scene_patch_dir": spubert_debug_scene_patch_dir,
-                    "social_bert_debug_scene_patch_agent_id": spubert_debug_scene_patch_agent_id,
-                    "social_bert_debug_scene_patch_every": spubert_debug_scene_patch_every,
+                    "spubert_cache_ttl": "2.0",
                     "spubert_cuda": "true",
                     "jackal_spubert_controller": "False",
                     "use_gazebo_obs": "True",
@@ -195,9 +110,9 @@ def generate_launch_description():
                     "social_bert_goal_velocity_blend": "0.65",
                     "social_bert_agent_personal_space": "1.05",
                     "social_bert_agent_avoidance_gain": "1.0",
-                    "social_bert_obstacle_avoidance_distance": "1.8",
-                    "social_bert_obstacle_avoidance_gain": "0.7",
-                    "social_bert_obstacle_collision_buffer": "0.55",
+                    "social_bert_obstacle_avoidance_distance": "2.2",
+                    "social_bert_obstacle_avoidance_gain": "1.1",
+                    "social_bert_obstacle_collision_buffer": "0.75",
                     "social_bert_obstacle_lateral_speed_ratio": "1.4",
                     "social_bert_max_lateral_speed_ratio": "0.8",
                     "social_bert_max_yaw_rate": "1.1",
@@ -206,9 +121,9 @@ def generate_launch_description():
                     "social_bert_training_record_dt": "0.4",
                     "social_bert_training_sample_stride": "1",
                     "social_bert_training_flush_every": "10",
-                    "social_bert_debug_focus_agent_id": debug_focus_agent_id,
-                    "social_bert_debug_show_all_candidate_paths": debug_show_all_candidate_paths,
-                    "social_bert_debug_show_all_model_io": debug_show_all_model_io,
+                    "social_bert_debug_focus_agent_id": "1",
+                    "social_bert_debug_show_all_candidate_paths": "False",
+                    "social_bert_debug_show_all_model_io": "False",
                 }.items(),
             ),
             Node(
@@ -240,27 +155,6 @@ def generate_launch_description():
                         "human_states_topic": "/human_states",
                         "predicted_paths_topic": "/moai/social_bert_predicted_paths",
                         "cloud_topic": "/moai/human_obstacle_cloud",
-                    }
-                ],
-            ),
-            Node(
-                package="moai_hunav_bridge",
-                executable="jackal_teleop_dataset_logger_node",
-                name="jackal_teleop_dataset_logger",
-                output="screen",
-                parameters=[
-                    {
-                        "use_sim_time": True,
-                        "enabled": save_jackal_training_pkl,
-                        "robot_topic": "/robot_states",
-                        "human_states_topic": "/human_states",
-                        "output_path": jackal_training_pkl_path,
-                        "obs_len": 8,
-                        "pred_len": 12,
-                        "record_dt": 0.4,
-                        "sample_stride": 1,
-                        "flush_every": 10,
-                        "stale_timeout": 2.0,
                     }
                 ],
             ),

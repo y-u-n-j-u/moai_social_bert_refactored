@@ -1,0 +1,341 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <world name="default">
+    <gravity>0 0 -9.8</gravity>
+    <physics default="0" name="default_physics" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+
+    <include>
+      <uri>model://sun</uri>
+    </include>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>54 24 0.02</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>54 24 0.02</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.72 0.72 0.72 1</ambient>
+            <diffuse>0.72 0.72 0.72 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="corridor_wall_north">
+      <static>true</static>
+      <pose>0 7.50 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>48 0.25 1.0</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>48 0.25 1.0</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.35 0.38 0.40 1</ambient>
+            <diffuse>0.35 0.38 0.40 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="corridor_wall_south">
+      <static>true</static>
+      <pose>0 -7.50 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>48 0.25 1.0</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>48 0.25 1.0</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.35 0.38 0.40 1</ambient>
+            <diffuse>0.35 0.38 0.40 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="corridor_end_west">
+      <static>true</static>
+      <pose>-24 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.25 15.25 1.0</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.25 15.25 1.0</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.35 0.38 0.40 1</ambient>
+            <diffuse>0.35 0.38 0.40 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="corridor_end_east">
+      <static>true</static>
+      <pose>24 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.25 15.25 1.0</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.25 15.25 1.0</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.35 0.38 0.40 1</ambient>
+            <diffuse>0.35 0.38 0.40 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="corridor_obstacle_left">
+      <static>true</static>
+      <pose>-9.0 3.45 0.35 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.7 0.7 0.7</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.7 0.7 0.7</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.65 0.44 0.24 1</ambient>
+            <diffuse>0.65 0.44 0.24 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="corridor_obstacle_right">
+      <static>true</static>
+      <pose>6.6 -3.45 0.35 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.7 0.7 0.7</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.7 0.7 0.7</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.65 0.44 0.24 1</ambient>
+            <diffuse>0.65 0.44 0.24 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="corridor_obstacle_center">
+      <static>true</static>
+      <pose>15.0 2.85 0.35 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.35</radius>
+              <length>0.7</length>
+            </cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder>
+              <radius>0.35</radius>
+              <length>0.7</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.20 0.45 0.75 1</ambient>
+            <diffuse>0.20 0.45 0.75 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="corridor_obstacle_extra_west">
+      <static>true</static>
+      <pose>-17.0 -2.85 0.35 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.8 0.8 0.7</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.8 0.8 0.7</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.55 0.30 0.25 1</ambient>
+            <diffuse>0.55 0.30 0.25 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="corridor_obstacle_extra_mid_north">
+      <static>true</static>
+      <pose>-5.4 3.15 0.35 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.40</radius>
+              <length>0.7</length>
+            </cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder>
+              <radius>0.40</radius>
+              <length>0.7</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.25 0.55 0.35 1</ambient>
+            <diffuse>0.25 0.55 0.35 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="corridor_obstacle_extra_mid_south">
+      <static>true</static>
+      <pose>1.5 -3.20 0.35 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.8 0.8 0.7</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.8 0.8 0.7</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.55 0.30 0.25 1</ambient>
+            <diffuse>0.55 0.30 0.25 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="corridor_obstacle_extra_east">
+      <static>true</static>
+      <pose>11.0 -2.85 0.35 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.40</radius>
+              <length>0.7</length>
+            </cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder>
+              <radius>0.40</radius>
+              <length>0.7</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.25 0.55 0.35 1</ambient>
+            <diffuse>0.25 0.55 0.35 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <light name="ceiling_light" type="point">
+      <pose>0 0 18 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>90</range>
+        <constant>0.4</constant>
+        <linear>0.02</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <cast_shadows>1</cast_shadows>
+    </light>
+
+    <gui fullscreen="0">
+      <camera name="user_camera">
+        <pose>0 -21 30 0 0.95 1.57</pose>
+        <view_controller>orbit</view_controller>
+        <projection_type>perspective</projection_type>
+      </camera>
+    </gui>
+  </world>
+</sdf>

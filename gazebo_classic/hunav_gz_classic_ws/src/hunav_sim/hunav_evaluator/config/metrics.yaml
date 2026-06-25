@@ -1,0 +1,38 @@
+hunav_evaluator_node:
+  ros__parameters:
+    frequency: 1.0
+    result_file: metrics
+    metrics:
+      time_to_reach_goal: true
+      path_length: true
+      cumulative_heading_changes: true
+      avg_distance_to_closest_person: true
+      minimum_distance_to_people: true
+      intimate_space_intrusions: true
+      personal_space_intrusions: true
+      social_space_intrusions: true
+      group_intimate_space_intrusions: true
+      group_personal_space_intrusions: true
+      group_social_space_intrusions: true
+      completed: true
+      minimum_distance_to_target: true
+      final_distance_to_target: true
+      robot_on_person_collision: true
+      person_on_robot_collision: true
+      time_not_moving: true
+      avg_robot_linear_speed: true
+      avg_robot_angular_speed: true
+      avg_acceleration: true
+      avg_overacceleration: true
+      avg_pedestrian_velocity: true
+      avg_closest_pedestrian_velocity: true
+      social_force_on_agents: true
+      social_force_on_robot: true
+      social_work: true
+      obstacle_force_on_robot: true
+      obstacle_force_on_agents: true
+      danger_fear_cost: true
+      danger_panic_cost: true
+      surprise_visibility_cost: true
+      surprise_shock_cost: true
+      surprise_react_cost: true

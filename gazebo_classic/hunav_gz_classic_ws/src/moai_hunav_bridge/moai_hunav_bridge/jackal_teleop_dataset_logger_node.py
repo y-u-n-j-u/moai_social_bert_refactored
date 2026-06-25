@@ -14,15 +14,15 @@ from rclpy.node import Node
 
 
 class JackalTeleopDatasetLoggerNode(Node):
-    """Record teleoperated Jackal trajectories in MOAI all_trajs format.
+    """Record robot trajectories in MOAI all_trajs format.
 
-    Row 0 is always the Jackal target. Rows 1: are humans used as neighbor
-    context. The Jackal has obs+future positions, while human futures are NaN
-    to match the SPU-BERT target/neighbors contract.
+    Row 0 is always the robot target. Rows 1: are humans used as neighbor
+    context. Human future positions are recorded for analysis, while model
+    inputs still use only the observed neighbor history.
     """
 
     def __init__(self) -> None:
-        super().__init__("jackal_teleop_dataset_logger")
+        super().__init__("robot_target_dataset_logger")
 
         self.enabled = self._as_bool(self.declare_parameter("enabled", False).value)
         self.robot_topic = str(self.declare_parameter("robot_topic", "/robot_states").value)
@@ -30,7 +30,7 @@ class JackalTeleopDatasetLoggerNode(Node):
         self.output_path = str(
             self.declare_parameter(
                 "output_path",
-                "/home/hunav_gz_classic_ws/moai_recordings/jackal_teleop_all_trajs.pkl",
+                "/home/hunav_gz_classic_ws/moai_recordings/robot_target_all_trajs.pkl",
             ).value
         )
         self.obs_len = int(self.declare_parameter("obs_len", 8).value)
@@ -60,7 +60,7 @@ class JackalTeleopDatasetLoggerNode(Node):
 
         state = "enabled" if self.enabled else "disabled"
         self.get_logger().info(
-            f"Jackal teleop dataset logger {state}; robot={self.robot_topic}, humans={self.human_states_topic}, "
+            f"Robot target dataset logger {state}; robot={self.robot_topic}, humans={self.human_states_topic}, "
             f"output={self.output_path}"
         )
 
@@ -158,7 +158,7 @@ class JackalTeleopDatasetLoggerNode(Node):
             return
 
         for row, human_id in enumerate(human_ids, start=1):
-            for t_idx, frame in enumerate(frames[: self.obs_len]):
+            for t_idx, frame in enumerate(frames):
                 pos = frame["humans"].get(human_id)
                 if pos is None:
                     continue
@@ -168,7 +168,7 @@ class JackalTeleopDatasetLoggerNode(Node):
         self._samples.append(trajs)
         self._sample_meta.append(
             {
-                "target": "jackal",
+                "target": "robot",
                 "target_row": 0,
                 "neighbor_type": "humans",
                 "human_ids": human_ids,
@@ -197,19 +197,19 @@ class JackalTeleopDatasetLoggerNode(Node):
             "scales": [1.0],
             "sample_meta": self._sample_meta,
             "metadata": {
-                "format": "moai_jackal_target_all_trajs_v1",
-                "source": "hunavsim_jackal_teleop",
+                "format": "moai_robot_target_all_trajs_v1",
+                "source": "hunavsim_robot_target_logger",
                 "obs_len": self.obs_len,
                 "pred_len": self.pred_len,
                 "seq_len": self.seq_len,
                 "dt": max(self.record_dt, 1e-3),
-                "target": "jackal",
+                "target": "robot",
                 "target_row": 0,
                 "neighbor_rows": "humans",
-                "neighbor_future": "nan",
+                "neighbor_future": "recorded_when_available",
                 "robot_topic": self.robot_topic,
                 "human_states_topic": self.human_states_topic,
-                "description": "Each all_trajs item has Jackal at row 0 and human neighbors in rows 1:.",
+                "description": "Each all_trajs item has the robot at row 0 and human neighbors in rows 1:.",
             },
         }
         tmp_path = f"{self.output_path}.tmp"
@@ -218,7 +218,7 @@ class JackalTeleopDatasetLoggerNode(Node):
         os.replace(tmp_path, self.output_path)
         self._last_flushed_sample_count = len(self._samples)
         if force or self._samples:
-            self.get_logger().info(f"Saved {len(self._samples)} Jackal-target samples to {self.output_path}")
+            self.get_logger().info(f"Saved {len(self._samples)} robot-target samples to {self.output_path}")
 
     def close(self) -> None:
         self._flush(force=True)

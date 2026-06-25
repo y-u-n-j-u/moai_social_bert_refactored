@@ -263,9 +263,6 @@ class SPUBERTPredictor:
         map_collision_weight: float,
         use_cuda: bool,
         logger: Any,
-        debug_scene_patch_dir: str = "",
-        debug_scene_patch_agent_id: int = 1,
-        debug_scene_patch_every: int = 10,
     ) -> None:
         if not model_path:
             raise RuntimeError("spubert_model_path is empty")
@@ -301,10 +298,6 @@ class SPUBERTPredictor:
         self.env_resol = env_resol
         self.map_collision_radius = map_collision_radius
         self.map_collision_weight = map_collision_weight
-        self.debug_scene_patch_dir = debug_scene_patch_dir
-        self.debug_scene_patch_agent_id = debug_scene_patch_agent_id
-        self.debug_scene_patch_every = max(1, debug_scene_patch_every)
-        self._debug_scene_patch_count = 0
         self.occupancy_map: Optional[OccupancyMapProvider] = None
         self._logged_scene_patch = False
         self.seq_len = obs_len + pred_len
@@ -388,7 +381,7 @@ class SPUBERTPredictor:
     ) -> List[List[Tuple[float, float]]]:
         sample, trans, theta = self._build_sample(agent_id, tracks)
         batch = {key: value.unsqueeze(0).to(self.device) for key, value in sample.items()}
-        env_kwargs = self._scene_batch(trans, theta, agent_id) if self.scene else {}
+        env_kwargs = self._scene_batch(trans, theta) if self.scene else {}
 
         with self.torch.no_grad():
             outputs = self.model.inference(
@@ -508,6 +501,12 @@ class SPUBERTPredictor:
             "tgp_segment_ids": torch.tensor(tgp_segment_ids + nbr_segment, dtype=torch.long),
             "tgp_temporal_ids": torch.tensor(tgp_temporal_ids + nbr_temporal, dtype=torch.long),
             "tgp_attn_mask": torch.tensor(tgp_attn_mask + nbr_attn, dtype=torch.float),
+            "mgp_temporal_ids": torch.tensor(mgp_temporal_ids + nbr_temporal, dtype=torch.long),
+            "mgp_attn_mask": torch.tensor(mgp_attn_mask + nbr_attn, dtype=torch.float),
+            "tgp_spatial_ids": torch.tensor(tgp_spatial_ids + nbr_spatial, dtype=torch.float),
+            "tgp_segment_ids": torch.tensor(tgp_segment_ids + nbr_segment, dtype=torch.long),
+            "tgp_temporal_ids": torch.tensor(tgp_temporal_ids + nbr_temporal, dtype=torch.long),
+            "tgp_attn_mask": torch.tensor(tgp_attn_mask + nbr_attn, dtype=torch.float),
         }
 
     def _empty_scene_batch(self) -> Dict[str, Any]:
@@ -524,7 +523,7 @@ class SPUBERTPredictor:
             "env_attn_mask": torch.zeros((1, self.num_patch), dtype=torch.float, device=self.device),
         }
 
-    def _scene_batch(self, trans: Tuple[float, float], theta: float, agent_id: Optional[int] = None) -> Dict[str, Any]:
+    def _scene_batch(self, trans: Tuple[float, float], theta: float) -> Dict[str, Any]:
         if self.occupancy_map is None:
             return self._empty_scene_batch()
 
@@ -546,7 +545,6 @@ class SPUBERTPredictor:
                 f"env_spatial_ids=(1, {patches.shape[0]}, {patches.shape[1]}), "
                 f"active_patches={active_patches}, occupied_cells={occupied_cells}"
             )
-        self._maybe_save_scene_patch_debug(agent_id, patches)
         return {
             "env_spatial_ids": torch.tensor(patches, dtype=torch.float, device=self.device).unsqueeze(0),
             "env_segment_ids": torch.arange(
@@ -558,76 +556,6 @@ class SPUBERTPredictor:
             "env_temporal_ids": torch.full((1, self.num_patch), self.obs_len, dtype=torch.long, device=self.device),
             "env_attn_mask": torch.tensor(attn_mask, dtype=torch.float, device=self.device).unsqueeze(0),
         }
-
-    def _maybe_save_scene_patch_debug(self, agent_id: Optional[int], patches: np.ndarray) -> None:
-        if not self.debug_scene_patch_dir:
-            return
-        if agent_id is not None and self.debug_scene_patch_agent_id > 0 and agent_id != self.debug_scene_patch_agent_id:
-            return
-
-        self._debug_scene_patch_count += 1
-        if (self._debug_scene_patch_count - 1) % self.debug_scene_patch_every != 0:
-            return
-
-        side_cells = self.side_patches * self.patch_size
-        crop = (
-            patches.reshape(self.side_patches, self.side_patches, self.patch_size, self.patch_size)
-            .transpose(0, 2, 1, 3)
-            .reshape(side_cells, side_cells)
-        )
-        os.makedirs(self.debug_scene_patch_dir, exist_ok=True)
-        agent_label = agent_id if agent_id is not None else 0
-        path = os.path.join(
-            self.debug_scene_patch_dir,
-            f"agent_{agent_label}_scene_patch_{self._debug_scene_patch_count:05d}.bmp",
-        )
-        self._write_scene_patch_bmp(path, crop, self.patch_size)
-        self.logger.info(f"Saved SPU-BERT scene patch debug image: {path}")
-
-    @staticmethod
-    def _write_scene_patch_bmp(path: str, crop: np.ndarray, patch_size: int) -> None:
-        h, w = crop.shape
-        rgb = np.zeros((h, w, 3), dtype=np.uint8)
-        rgb[crop <= 0.0] = (35, 35, 35)
-        rgb[(crop > 0.0) & (crop < 1.5)] = (235, 235, 235)
-        rgb[crop >= 1.5] = (220, 45, 45)
-
-        for idx in range(0, h, patch_size):
-            rgb[idx : min(idx + 1, h), :, :] = (0, 150, 255)
-        for idx in range(0, w, patch_size):
-            rgb[:, idx : min(idx + 1, w), :] = (0, 150, 255)
-
-        cy, cx = h // 2, w // 2
-        rgb[max(0, cy - 2) : min(h, cy + 3), max(0, cx - 12) : min(w, cx + 13), :] = (0, 220, 70)
-        rgb[max(0, cy - 12) : min(h, cy + 13), max(0, cx - 2) : min(w, cx + 3), :] = (0, 220, 70)
-
-        scale = 4
-        rgb = np.repeat(np.repeat(rgb, scale, axis=0), scale, axis=1)
-        h, w = rgb.shape[:2]
-        row_stride = (w * 3 + 3) & ~3
-        pixel_bytes = row_stride * h
-        file_size = 54 + pixel_bytes
-
-        with open(path, "wb") as f:
-            f.write(b"BM")
-            f.write(file_size.to_bytes(4, "little"))
-            f.write((0).to_bytes(4, "little"))
-            f.write((54).to_bytes(4, "little"))
-            f.write((40).to_bytes(4, "little"))
-            f.write(w.to_bytes(4, "little", signed=True))
-            f.write(h.to_bytes(4, "little", signed=True))
-            f.write((1).to_bytes(2, "little"))
-            f.write((24).to_bytes(2, "little"))
-            f.write((0).to_bytes(4, "little"))
-            f.write(pixel_bytes.to_bytes(4, "little"))
-            f.write((2835).to_bytes(4, "little"))
-            f.write((2835).to_bytes(4, "little"))
-            f.write((0).to_bytes(4, "little"))
-            f.write((0).to_bytes(4, "little"))
-            padding = b"\x00" * (row_stride - w * 3)
-            for row in rgb[::-1]:
-                f.write(row[:, ::-1].tobytes())
-                f.write(padding)
 
     def _select_candidate_by_goal(self, candidates: List[List[Tuple[float, float]]], goal: Optional[Tuple[float, float]]) -> int:
         if goal is None:
@@ -688,9 +616,6 @@ class MOAIRefactoredSPUBERTPredictor(SPUBERTPredictor):
         map_collision_weight: float,
         use_cuda: bool,
         logger: Any,
-        debug_scene_patch_dir: str = "",
-        debug_scene_patch_agent_id: int = 1,
-        debug_scene_patch_every: int = 10,
     ) -> None:
         if not model_path:
             raise RuntimeError("spubert_model_path is empty")
@@ -727,10 +652,6 @@ class MOAIRefactoredSPUBERTPredictor(SPUBERTPredictor):
         self.env_resol = env_resol
         self.map_collision_radius = map_collision_radius
         self.map_collision_weight = map_collision_weight
-        self.debug_scene_patch_dir = debug_scene_patch_dir
-        self.debug_scene_patch_agent_id = debug_scene_patch_agent_id
-        self.debug_scene_patch_every = max(1, debug_scene_patch_every)
-        self._debug_scene_patch_count = 0
         self.occupancy_map: Optional[OccupancyMapProvider] = None
         self._logged_scene_patch = False
         self.seq_len = obs_len + pred_len
@@ -806,7 +727,13 @@ class SocialBertComputeAgentsNode(Node):
         self.lookahead_step = int(self.declare_parameter("lookahead_step", 6).value)
         self.min_goal_speed = float(self.declare_parameter("min_goal_speed", 0.9).value)
         self.goal_velocity_blend = float(self.declare_parameter("goal_velocity_blend", 0.7).value)
+        self.goal_arrival_distance = float(self.declare_parameter("goal_arrival_distance", 1.5).value)
+        self.goal_arrival_min_speed = float(self.declare_parameter("goal_arrival_min_speed", 0.08).value)
         self.robot_personal_space = float(self.declare_parameter("robot_personal_space", 0.9).value)
+        self.robot_collision_buffer = float(self.declare_parameter("robot_collision_buffer", 0.35).value)
+        self.robot_hard_collision_guard = self._as_bool(
+            self.declare_parameter("robot_hard_collision_guard", True).value
+        )
         self.agent_personal_space = float(self.declare_parameter("agent_personal_space", 1.25).value)
         self.agent_avoidance_gain = float(self.declare_parameter("agent_avoidance_gain", 0.9).value)
         self.obstacle_avoidance_distance = float(self.declare_parameter("obstacle_avoidance_distance", 1.35).value)
@@ -847,11 +774,18 @@ class SocialBertComputeAgentsNode(Node):
         )
         self.spubert_map_collision_radius = float(self.declare_parameter("spubert_map_collision_radius", 0.35).value)
         self.spubert_map_collision_weight = float(self.declare_parameter("spubert_map_collision_weight", 100.0).value)
+        self.spubert_candidate_selection_mode = str(
+            self.declare_parameter("spubert_candidate_selection_mode", "guidance_point").value
+        ).strip().lower()
+        self.guidance_point_radius = float(self.declare_parameter("guidance_point_radius", 8.0).value)
         self.spubert_view_range = float(self.declare_parameter("spubert_view_range", 20.0).value)
         self.spubert_view_angle = float(self.declare_parameter("spubert_view_angle", 2.09).value)
         self.spubert_social_range = float(self.declare_parameter("spubert_social_range", 2.0).value)
         self.spubert_cache_ttl = float(self.declare_parameter("spubert_cache_ttl", 1.5).value)
         self.spubert_refresh_dt = float(self.declare_parameter("spubert_refresh_dt", self.prediction_dt).value)
+        self.spubert_sync_on_cache_miss = self._as_bool(
+            self.declare_parameter("spubert_sync_on_cache_miss", True).value
+        )
         self.save_training_pkl = self._as_bool(self.declare_parameter("save_training_pkl", False).value)
         self.training_pkl_path = str(
             self.declare_parameter("training_pkl_path", "/tmp/moai_gazebo_all_trajs.pkl").value
@@ -861,13 +795,17 @@ class SocialBertComputeAgentsNode(Node):
         self.training_flush_every = int(self.declare_parameter("training_flush_every", 50).value)
         self.training_max_samples = int(self.declare_parameter("training_max_samples", 0).value)
         self.debug_focus_agent_id = int(self.declare_parameter("debug_focus_agent_id", 1).value)
+        self.debug_focus_agent_only = self._as_bool(
+            self.declare_parameter("debug_focus_agent_only", False).value
+        )
+        self.debug_guidance_only = self._as_bool(
+            self.declare_parameter("debug_guidance_only", False).value
+        )
+        
         self.debug_show_all_candidate_paths = self._as_bool(
             self.declare_parameter("debug_show_all_candidate_paths", False).value
         )
         self.debug_show_all_model_io = self._as_bool(self.declare_parameter("debug_show_all_model_io", False).value)
-        self.debug_scene_patch_dir = str(self.declare_parameter("debug_scene_patch_dir", "").value)
-        self.debug_scene_patch_agent_id = int(self.declare_parameter("debug_scene_patch_agent_id", 1).value)
-        self.debug_scene_patch_every = int(self.declare_parameter("debug_scene_patch_every", 10).value)
 
         self._tracks: Dict[int, Deque[TrackPoint]] = defaultdict(lambda: deque(maxlen=self.obs_len))
         self._training_frames: Deque[Dict[str, Any]] = deque(maxlen=self.obs_len + self.pred_len)
@@ -901,6 +839,10 @@ class SocialBertComputeAgentsNode(Node):
 
         active_predictor = "SPU-BERT" if self._spubert_predictor is not None else "constant-velocity fallback"
         self.get_logger().info(f"Serving /compute_agents with MOAI Social-BERT bridge ({active_predictor})")
+        self.get_logger().info(
+            "Pedestrian candidate guidance: "
+            f"mode={self.spubert_candidate_selection_mode}, radius={self.guidance_point_radius:.2f}m"
+        )
         if self.save_training_pkl:
             self.get_logger().info(
                 f"Recording MOAI all_trajs training pkl to {self.training_pkl_path} "
@@ -933,9 +875,6 @@ class SocialBertComputeAgentsNode(Node):
                 map_collision_weight=self.spubert_map_collision_weight,
                 use_cuda=self.spubert_cuda,
                 logger=self.get_logger(),
-                debug_scene_patch_dir=self.debug_scene_patch_dir,
-                debug_scene_patch_agent_id=self.debug_scene_patch_agent_id,
-                debug_scene_patch_every=self.debug_scene_patch_every,
             )
         except Exception as exc:
             self.get_logger().warn(f"SPU-BERT predictor unavailable: {exc}; using constant-velocity fallback.")
@@ -967,9 +906,6 @@ class SocialBertComputeAgentsNode(Node):
                 map_collision_weight=self.spubert_map_collision_weight,
                 use_cuda=self.spubert_cuda,
                 logger=self.get_logger(),
-                debug_scene_patch_dir=self.debug_scene_patch_dir,
-                debug_scene_patch_agent_id=self.debug_scene_patch_agent_id,
-                debug_scene_patch_every=self.debug_scene_patch_every,
             )
         except Exception as exc:
             self.get_logger().warn(f"MOAI refactored SPU-BERT predictor unavailable: {exc}; using constant-velocity fallback.")
@@ -991,13 +927,16 @@ class SocialBertComputeAgentsNode(Node):
         marker_id = 1
         for agent in request.current_agents.agents:
             self._remember(agent, stamp)
-            next_agent, predicted = self._step_agent(agent, robot, request.current_agents.agents, dt)
+            next_agent, predicted, guidance_xy = self._step_agent(agent, robot, request.current_agents.agents, dt)
             updated.agents.append(next_agent)
+            if self.debug_focus_agent_only and not self._is_debug_focus_agent(agent):
+                marker_id += 200
+                continue
             candidate_paths = self._get_cached_candidate_paths(int(agent.id), stamp)
             if not self.debug_show_all_candidate_paths and not self._is_debug_focus_agent(agent):
                 candidate_paths = []
             markers.markers.extend(
-                self._path_markers(marker_id, agent, predicted, candidate_paths, updated.header.frame_id or "map")
+                self._path_markers(marker_id, agent, predicted, candidate_paths, guidance_xy, updated.header.frame_id or "map")
             )
             marker_id += 200
 
@@ -1040,6 +979,14 @@ class SocialBertComputeAgentsNode(Node):
             )
             for agent in agents_msg.agents
         }
+        goals = {
+            int(agent.id): (
+                float(agent.goals[0].position.x),
+                float(agent.goals[0].position.y),
+            )
+            for agent in agents_msg.agents
+            if agent.goals
+        }
         if not agents:
             return
 
@@ -1050,6 +997,7 @@ class SocialBertComputeAgentsNode(Node):
                 "stamp": stamp,
                 "frame": self._training_frame_count,
                 "agents": agents,
+                "goals": goals,
             }
         )
 
@@ -1101,6 +1049,13 @@ class SocialBertComputeAgentsNode(Node):
             if np.any(np.isnan(trajs[0, :, 0])):
                 continue
 
+            obs_end = frames[self.obs_len - 1]
+            current_xy = trajs[0, self.obs_len - 1].astype(np.float32)
+            final_goal_xy = obs_end.get("goals", {}).get(target_id)
+            if final_goal_xy is None:
+                final_goal_xy = tuple(trajs[0, -1].astype(np.float32))
+            guidance_xy = self._guidance_point_from_xy(current_xy, final_goal_xy)
+
             self._training_samples.append(trajs)
             self._training_sample_meta.append(
                 {
@@ -1110,6 +1065,11 @@ class SocialBertComputeAgentsNode(Node):
                     "end_stamp": frames[-1]["stamp"],
                     "start_frame": frames[0]["frame"],
                     "end_frame": frames[-1]["frame"],
+                    "final_goal": [float(final_goal_xy[0]), float(final_goal_xy[1])],
+                    "guidance_point": [float(guidance_xy[0]), float(guidance_xy[1])],
+                    "guidance_radius": float(max(0.0, self.guidance_point_radius)),
+                    "guidance_policy": "circle_line_intersection_to_final_goal",
+                    "candidate_selection_mode": self.spubert_candidate_selection_mode,
                 }
             )
 
@@ -1138,6 +1098,8 @@ class SocialBertComputeAgentsNode(Node):
                 "seq_len": self.obs_len + self.pred_len,
                 "dt": max(self.training_record_dt, 1e-3),
                 "neighbor_future": "nan",
+                "guidance_policy": "circle_line_intersection_to_final_goal",
+                "guidance_radius": float(max(0.0, self.guidance_point_radius)),
                 "description": "Each all_trajs item has target at row 0 and neighbors in rows 1:.",
             },
         }
@@ -1151,7 +1113,13 @@ class SocialBertComputeAgentsNode(Node):
                 f"Saved {len(self._training_samples)} MOAI trajectory samples to {self.training_pkl_path}"
             )
 
-    def _step_agent(self, agent: Agent, robot: Agent, all_agents: List[Agent], dt: float) -> Tuple[Agent, List[Tuple[float, float]]]:
+    def _step_agent(
+        self,
+        agent: Agent,
+        robot: Agent,
+        all_agents: List[Agent],
+        dt: float,
+    ) -> Tuple[Agent, List[Tuple[float, float]], Optional[Tuple[float, float]]]:
         track = list(self._tracks[agent.id])
         fallback_vx = float(agent.velocity.linear.x)
         fallback_vy = float(agent.velocity.linear.y)
@@ -1179,25 +1147,40 @@ class SocialBertComputeAgentsNode(Node):
                     fallback_vx = goal_vx
                     fallback_vy = goal_vy
 
-        goal_xy = None
+        final_goal_xy = None
         if goals:
-            goal_xy = (float(goals[0].position.x), float(goals[0].position.y))
-        predicted = self._predict_agent_trajectory(agent, robot, all_agents, track, fallback_vx, fallback_vy, goal_xy)
+            final_goal_xy = (float(goals[0].position.x), float(goals[0].position.y))
+        guidance_xy = self._candidate_guidance_point(agent, final_goal_xy)
+        predicted = self._predict_agent_trajectory(agent, robot, all_agents, track, fallback_vx, fallback_vy, guidance_xy)
         vx, vy = self._trajectory_velocity(agent, goals, predicted)
         vx, vy = self._blend_goal_velocity(agent, goals, vx, vy)
         vx, vy = self._ensure_goal_progress(agent, goals, vx, vy)
         vx, vy = self._soft_agent_avoidance(agent, all_agents, vx, vy)
         vx, vy = self._soft_obstacle_avoidance(agent, goals, vx, vy)
-        vx, vy = self._soft_robot_avoidance(agent, robot, vx, vy)
+        vx, vy = self._soft_robot_avoidance(agent, robot, goals, vx, vy)
         vx, vy = self._limit_lateral_velocity(agent, goals, vx, vy)
         vx, vy = self._resolve_agent_collision_velocity(agent, all_agents, vx, vy, dt)
         vx, vy = self._resolve_obstacle_collision_velocity(agent, vx, vy, dt)
+        vx, vy = self._resolve_map_collision_velocity(agent, vx, vy, dt)
+        vx, vy = self._resolve_robot_collision_velocity(agent, robot, goals, vx, vy, dt)
         vx, vy = self._limit_lateral_velocity(agent, goals, vx, vy)
+        vx, vy = self._apply_goal_arrival_control(agent, goals, vx, vy, dt)
         if not self._near_hard_hazard(agent, all_agents):
             vx, vy = self._ensure_goal_progress(agent, goals, vx, vy)
-        vx, vy = self._limit_velocity(agent.id, vx, vy, agent.desired_velocity, dt)
         current_yaw = self._agent_yaw(agent)
-        yaw, vx, vy = self._limit_heading_rate(agent.id, current_yaw, vx, vy, dt)
+        vx, vy = self._limit_velocity(agent.id, vx, vy, agent.desired_velocity, dt)
+        vx, vy = self._resolve_agent_collision_velocity(agent, all_agents, vx, vy, dt)
+        vx, vy = self._resolve_obstacle_collision_velocity(agent, vx, vy, dt)
+        vx, vy = self._resolve_map_collision_velocity(agent, vx, vy, dt)
+        vx, vy = self._resolve_robot_collision_velocity(agent, robot, goals, vx, vy, dt)
+        vx, vy = self._clamp_speed_only(vx, vy, agent.desired_velocity)
+        self._last_cmd_vel[agent.id] = (vx, vy)
+        if hypot(vx, vy) > 0.03:
+            yaw = self._normalize_angle(atan2(vy, vx))
+            self._last_yaw[agent.id] = yaw
+        else:
+            yaw = self._normalize_angle(self._last_yaw.get(agent.id, current_yaw))
+            self._last_yaw[agent.id] = yaw
 
         updated = Agent()
         updated.id = agent.id
@@ -1223,7 +1206,44 @@ class SocialBertComputeAgentsNode(Node):
         updated.cyclic_goals = agent.cyclic_goals
         updated.goal_radius = agent.goal_radius
         updated.closest_obs = agent.closest_obs
-        return updated, predicted
+        return updated, predicted, guidance_xy
+
+    def _candidate_guidance_point(
+        self,
+        agent: Agent,
+        final_goal_xy: Optional[Tuple[float, float]],
+    ) -> Optional[Tuple[float, float]]:
+        if final_goal_xy is None:
+            return None
+
+        mode = self.spubert_candidate_selection_mode
+        if mode in {"none", "disabled", "off"}:
+            return None
+        if mode in {"final_goal", "goal"}:
+            return final_goal_xy
+
+        ax = float(agent.position.position.x)
+        ay = float(agent.position.position.y)
+        return self._guidance_point_from_xy((ax, ay), final_goal_xy)
+
+    def _guidance_point_from_xy(
+        self,
+        current_xy: Tuple[float, float] | np.ndarray,
+        final_goal_xy: Tuple[float, float] | np.ndarray,
+    ) -> Tuple[float, float]:
+        ax = float(current_xy[0])
+        ay = float(current_xy[1])
+        gx = float(final_goal_xy[0])
+        gy = float(final_goal_xy[1])
+        dx = gx - ax
+        dy = gy - ay
+        dist = hypot(dx, dy)
+        if dist <= 1e-6:
+            return gx, gy
+
+        radius = max(0.0, self.guidance_point_radius)
+        step = min(radius, dist)
+        return ax + dx / dist * step, ay + dy / dist * step
 
     def _predict_agent_trajectory(
         self,
@@ -1252,6 +1272,13 @@ class SocialBertComputeAgentsNode(Node):
             if selected:
                 return selected
 
+            if self.spubert_sync_on_cache_miss:
+                candidates = self._run_spubert_prediction_sync(agent_id, stamp)
+                if candidates:
+                    selected = self._select_safe_candidate(agent, robot, all_agents, candidates, goal_xy)
+                    if selected:
+                        return selected
+
             self._schedule_spubert_prediction(agent_id, stamp, goal_xy)
 
         return self._fallback_predictor.predict(track, fallback_vx, fallback_vy)
@@ -1273,6 +1300,39 @@ class SocialBertComputeAgentsNode(Node):
                 return
 
         self._start_spubert_prediction_thread(agent_id, stamp, tracks_snapshot, goal_xy)
+
+    def _run_spubert_prediction_sync(
+        self,
+        agent_id: int,
+        stamp: float,
+    ) -> List[List[Tuple[float, float]]]:
+        with self._cache_lock:
+            if agent_id in self._pending_predictions:
+                return []
+            cached = self._prediction_cache.get(agent_id)
+            if cached is not None and stamp - cached[0] <= self.spubert_cache_ttl:
+                return cached[1]
+            tracks_snapshot = {key: deque(value, maxlen=self.obs_len) for key, value in self._tracks.items()}
+            self._pending_predictions.add(agent_id)
+
+        try:
+            if self._spubert_predictor is None:
+                return []
+            with self._inference_lock:
+                candidates = self._spubert_predictor.predict_candidates(agent_id=agent_id, tracks=tracks_snapshot)
+            with self._cache_lock:
+                self._prediction_cache[agent_id] = (stamp, candidates)
+            if candidates:
+                self.get_logger().debug(
+                    f"SPU-BERT sync inference produced {len(candidates)} candidates for agent {agent_id}."
+                )
+            return candidates
+        except Exception as exc:
+            self.get_logger().warn(f"SPU-BERT sync inference failed for agent {agent_id}: {exc}; using fallback.")
+            return []
+        finally:
+            with self._cache_lock:
+                self._pending_predictions.discard(agent_id)
 
     def _start_spubert_prediction_thread(
         self,
@@ -1481,7 +1541,8 @@ class SocialBertComputeAgentsNode(Node):
         dx = gx - ax
         dy = gy - ay
         dist = hypot(dx, dy)
-        if dist <= max(float(agent.goal_radius), 0.1) + 0.1:
+        arrival_distance = max(max(float(agent.goal_radius), 0.1) + 0.1, self.goal_arrival_distance)
+        if dist <= arrival_distance:
             return vx, vy
 
         desired_speed = max(0.0, min(float(agent.desired_velocity), self.max_speed))
@@ -1542,6 +1603,7 @@ class SocialBertComputeAgentsNode(Node):
         agent: Agent,
         predicted: List[Tuple[float, float]],
         candidate_paths: List[List[Tuple[float, float]]],
+        guidance_xy: Optional[Tuple[float, float]],
         frame_id: str,
     ) -> List[Marker]:
         z = max(float(agent.position.position.z), 0.05) + 0.2
@@ -1719,18 +1781,61 @@ class SocialBertComputeAgentsNode(Node):
                 z=z,
             )
 
-        markers = [
-            interaction_range,
-            body,
-            heading,
-            line,
-            dots,
-            candidate_lines,
-            candidate_goals,
-            obstacle_points,
-            label,
-            *input_markers,
-        ]
+        if self.debug_guidance_only:
+            markers = [body, heading, line, dots]
+        else:
+            markers = [
+                interaction_range,
+                body,
+                heading,
+                line,
+                dots,
+                candidate_lines,
+                candidate_goals,
+                obstacle_points,
+                label,
+                *input_markers,
+            ]
+        if guidance_xy is not None:
+            guidance_marker = Marker()
+            guidance_marker.header.frame_id = frame_id
+            guidance_marker.header.stamp = line.header.stamp
+            guidance_marker.ns = f"agent_{agent.id}_guidance_point"
+            guidance_marker.id = marker_id + 11
+            guidance_marker.type = Marker.CUBE
+            guidance_marker.action = Marker.ADD
+            guidance_marker.pose.position.x = float(guidance_xy[0])
+            guidance_marker.pose.position.y = float(guidance_xy[1])
+            guidance_marker.pose.position.z = z + 0.18
+            guidance_marker.pose.orientation.w = 1.0
+            guidance_marker.scale.x = 0.28
+            guidance_marker.scale.y = 0.28
+            guidance_marker.scale.z = 0.28
+            guidance_marker.color = ColorRGBA(r=1.0, g=0.95, b=0.05, a=0.95)
+            guidance_marker.lifetime = Duration(sec=1)
+
+            guidance_circle = Marker()
+            guidance_circle.header.frame_id = frame_id
+            guidance_circle.header.stamp = line.header.stamp
+            guidance_circle.ns = f"agent_{agent.id}_guidance_radius"
+            guidance_circle.id = marker_id + 12
+            guidance_circle.type = Marker.LINE_STRIP
+            guidance_circle.action = Marker.ADD
+            guidance_circle.pose.orientation.w = 1.0
+            guidance_circle.scale.x = 0.06
+            guidance_circle.color = ColorRGBA(r=0.02, g=0.02, b=0.02, a=0.78)
+            guidance_circle.lifetime = Duration(sec=1)
+            gr = max(0.0, self.guidance_point_radius)
+            cx = float(agent.position.position.x)
+            cy = float(agent.position.position.y)
+            if gr > 1e-3:
+                for idx in range(73):
+                    theta = 2.0 * pi * idx / 72.0
+                    guidance_circle.points.append(
+                        Point(x=cx + cos(theta) * gr, y=cy + sin(theta) * gr, z=z + 0.04)
+                    )
+            markers.extend([guidance_marker, guidance_circle])
+
         if agent.goals:
             goal = agent.goals[0]
 
@@ -2080,19 +2185,164 @@ class SocialBertComputeAgentsNode(Node):
             avoid_y /= divisor
         return vx + avoid_x, vy + avoid_y
 
-    def _soft_robot_avoidance(self, agent: Agent, robot: Agent, vx: float, vy: float) -> Tuple[float, float]:
+    def _soft_robot_avoidance(
+        self,
+        agent: Agent,
+        robot: Agent,
+        goals: List,
+        vx: float,
+        vy: float,
+    ) -> Tuple[float, float]:
         dx = float(agent.position.position.x) - float(robot.position.position.x)
         dy = float(agent.position.position.y) - float(robot.position.position.y)
         dist = hypot(dx, dy)
         if dist <= 1e-3 or dist >= self.robot_personal_space:
             return vx, vy
 
+        goal_dir_x = 0.0
+        goal_dir_y = 0.0
+        if goals:
+            gx = float(goals[0].position.x)
+            gy = float(goals[0].position.y)
+            gdx = gx - float(agent.position.position.x)
+            gdy = gy - float(agent.position.position.y)
+            gdist = hypot(gdx, gdy)
+            if gdist > 1e-3:
+                goal_dir_x = gdx / gdist
+                goal_dir_y = gdy / gdist
+
         strength = (self.robot_personal_space - dist) / self.robot_personal_space
-        side_x = -dy / dist
-        side_y = dx / dist
         away_x = dx / dist
         away_y = dy / dist
-        return vx + 0.35 * strength * side_x + 0.25 * strength * away_x, vy + 0.35 * strength * side_y + 0.25 * strength * away_y
+
+        if hypot(goal_dir_x, goal_dir_y) > 0.5:
+            side_x = -goal_dir_y
+            side_y = goal_dir_x
+        else:
+            speed = hypot(vx, vy)
+            side_x = -vy / speed if speed > 0.05 else -away_y
+            side_y = vx / speed if speed > 0.05 else away_x
+
+        lateral_gain = 0.95 * strength
+        away_gain = 0.08 * strength
+        side_sign = self._choose_avoid_side(
+            int(agent.id),
+            side_x,
+            side_y,
+            away_x,
+            away_y,
+            vx,
+            vy,
+            goal_dir_x=goal_dir_x,
+            goal_dir_y=goal_dir_y,
+            lateral_gain=lateral_gain,
+            away_gain=away_gain,
+        )
+        # Do not let robot avoidance become a U-turn. If the robot is in front
+        # of the pedestrian, the away vector points backward, so use only the
+        # lateral component and keep the final-goal direction intact.
+        if hypot(goal_dir_x, goal_dir_y) > 0.5:
+            away_goal_dot = away_x * goal_dir_x + away_y * goal_dir_y
+            if away_goal_dot < 0.0:
+                away_gain = 0.0
+
+        return (
+            vx + lateral_gain * side_sign * side_x + away_gain * away_x,
+            vy + lateral_gain * side_sign * side_y + away_gain * away_y,
+        )
+
+    def _resolve_robot_collision_velocity(
+        self,
+        agent: Agent,
+        robot: Agent,
+        goals: List,
+        vx: float,
+        vy: float,
+        dt: float,
+    ) -> Tuple[float, float]:
+        if not self.robot_hard_collision_guard:
+            return vx, vy
+
+        ax = float(agent.position.position.x)
+        ay = float(agent.position.position.y)
+        rx = float(robot.position.position.x)
+        ry = float(robot.position.position.y)
+        rvx = float(robot.velocity.linear.x)
+        rvy = float(robot.velocity.linear.y)
+        next_x = ax + vx * dt
+        next_y = ay + vy * dt
+        robot_next_x = rx + rvx * dt
+        robot_next_y = ry + rvy * dt
+
+        dx = next_x - robot_next_x
+        dy = next_y - robot_next_y
+        dist = hypot(dx, dy)
+        if dist <= 1e-4:
+            dx = ax - rx
+            dy = ay - ry
+            dist = hypot(dx, dy)
+            if dist <= 1e-4:
+                dx, dy, dist = 1.0, 0.0, 1.0
+
+        agent_radius = max(float(agent.radius), 0.25)
+        robot_radius = max(float(robot.radius), 0.35)
+        min_dist = agent_radius + robot_radius + max(self.robot_collision_buffer, 0.0)
+        if dist >= min_dist:
+            return vx, vy
+
+        away_x = dx / dist
+        away_y = dy / dist
+        push = min_dist - dist
+        correction_x = push * away_x / max(dt, 1e-3)
+        correction_y = push * away_y / max(dt, 1e-3)
+
+        rel_vx = vx - rvx
+        rel_vy = vy - rvy
+        closing_speed = -(rel_vx * away_x + rel_vy * away_y)
+        if closing_speed > 0.0:
+            correction_x += closing_speed * away_x
+            correction_y += closing_speed * away_y
+
+        out_vx = vx + correction_x
+        out_vy = vy + correction_y
+        return self._preserve_goal_progress(agent, goals, out_vx, out_vy, min_ratio=0.25)
+
+    def _preserve_goal_progress(
+        self,
+        agent: Agent,
+        goals: List,
+        vx: float,
+        vy: float,
+        *,
+        min_ratio: float,
+    ) -> Tuple[float, float]:
+        if not goals:
+            return vx, vy
+
+        ax = float(agent.position.position.x)
+        ay = float(agent.position.position.y)
+        gx = float(goals[0].position.x)
+        gy = float(goals[0].position.y)
+        dx = gx - ax
+        dy = gy - ay
+        dist = hypot(dx, dy)
+        if dist <= max(float(agent.goal_radius), 0.1) + 0.1:
+            return vx, vy
+
+        goal_x = dx / max(dist, 1e-6)
+        goal_y = dy / max(dist, 1e-6)
+        side_x = -goal_y
+        side_y = goal_x
+        forward = vx * goal_x + vy * goal_y
+        lateral = vx * side_x + vy * side_y
+        desired = max(0.0, min(float(agent.desired_velocity), self.max_speed))
+        min_forward = min(desired * max(0.0, min(min_ratio, 1.0)), self.min_goal_speed)
+        if forward >= min_forward:
+            return vx, vy
+
+        max_lateral = max(0.35, desired * max(0.7, self.max_lateral_speed_ratio))
+        lateral = max(-max_lateral, min(max_lateral, lateral))
+        return min_forward * goal_x + lateral * side_x, min_forward * goal_y + lateral * side_y
 
     def _choose_avoid_side(
         self,
@@ -2182,6 +2432,45 @@ class SocialBertComputeAgentsNode(Node):
             best = min(best, hypot(ax - float(obs.x), ay - float(obs.y)))
         return best
 
+    def _apply_goal_arrival_control(
+        self,
+        agent: Agent,
+        goals: List,
+        vx: float,
+        vy: float,
+        dt: float,
+    ) -> Tuple[float, float]:
+        if not goals:
+            return vx, vy
+
+        ax = float(agent.position.position.x)
+        ay = float(agent.position.position.y)
+        gx = float(goals[0].position.x)
+        gy = float(goals[0].position.y)
+        dx = gx - ax
+        dy = gy - ay
+        dist = hypot(dx, dy)
+        goal_radius = max(float(agent.goal_radius), 0.1)
+        if dist <= goal_radius + 0.03:
+            self._last_cmd_vel[int(agent.id)] = (0.0, 0.0)
+            return 0.0, 0.0
+
+        arrival_distance = max(goal_radius + 0.05, self.goal_arrival_distance)
+        if dist > arrival_distance:
+            return vx, vy
+        if self._closest_obstacle_distance(agent) < goal_radius + self.obstacle_collision_buffer:
+            return vx, vy
+
+        desired_speed = max(0.0, min(float(agent.desired_velocity), self.max_speed))
+        remaining = max(0.0, dist - goal_radius * 0.5)
+        no_overshoot_speed = remaining / max(dt, 1e-3)
+        slowdown_speed = max(self.goal_arrival_min_speed, desired_speed * dist / max(arrival_distance, 1e-6))
+        speed = min(desired_speed, slowdown_speed, no_overshoot_speed)
+        if speed <= 1e-3:
+            return 0.0, 0.0
+
+        return speed * dx / dist, speed * dy / dist
+
     def _near_hard_hazard(self, agent: Agent, all_agents: List[Agent]) -> bool:
         ax = float(agent.position.position.x)
         ay = float(agent.position.position.y)
@@ -2245,6 +2534,102 @@ class SocialBertComputeAgentsNode(Node):
             return vx, vy
         return vx + correction_x / max(dt, 1e-3), vy + correction_y / max(dt, 1e-3)
 
+    def _active_occupancy_map(self) -> Optional[OccupancyMapProvider]:
+        predictor = self._spubert_predictor
+        if predictor is None:
+            return None
+        return predictor.occupancy_map
+
+    @staticmethod
+    def _disk_offsets(radius: float) -> List[Tuple[float, float]]:
+        radius = max(float(radius), 0.0)
+        if radius <= 1e-3:
+            return [(0.0, 0.0)]
+        diag = radius * 0.70710678
+        return [
+            (0.0, 0.0),
+            (radius, 0.0),
+            (-radius, 0.0),
+            (0.0, radius),
+            (0.0, -radius),
+            (diag, diag),
+            (diag, -diag),
+            (-diag, diag),
+            (-diag, -diag),
+        ]
+
+    def _map_position_free(self, x: float, y: float, radius: float) -> bool:
+        occupancy = self._active_occupancy_map()
+        if occupancy is None:
+            return True
+        for ox, oy in self._disk_offsets(radius):
+            if occupancy.point_occupied(float(x) + ox, float(y) + oy):
+                return False
+        return True
+
+    def _resolve_map_collision_velocity(
+        self,
+        agent: Agent,
+        vx: float,
+        vy: float,
+        dt: float,
+    ) -> Tuple[float, float]:
+        occupancy = self._active_occupancy_map()
+        if occupancy is None:
+            return vx, vy
+
+        ax = float(agent.position.position.x)
+        ay = float(agent.position.position.y)
+        next_x = ax + vx * dt
+        next_y = ay + vy * dt
+        radius = max(float(agent.radius) + 0.08, self.spubert_map_collision_radius)
+        if self._map_position_free(next_x, next_y, radius):
+            return vx, vy
+
+        original_next = np.asarray([next_x, next_y], dtype=np.float32)
+        speed = hypot(vx, vy)
+        step = max(speed * max(dt, 1e-3), 0.35)
+        best: Optional[Tuple[float, float]] = None
+        best_score = float("inf")
+        for ring in (step, step + 0.25, step + 0.5, step + 0.8):
+            for idx in range(24):
+                theta = 2.0 * pi * idx / 24.0
+                cx = ax + ring * cos(theta)
+                cy = ay + ring * sin(theta)
+                if not self._map_position_free(cx, cy, radius):
+                    continue
+                candidate = np.asarray([cx, cy], dtype=np.float32)
+                score = float(np.linalg.norm(candidate - original_next))
+                if score < best_score:
+                    best_score = score
+                    best = (cx, cy)
+            if best is not None:
+                break
+
+        if best is None:
+            # Last-resort gradient away from occupied samples around the next pose.
+            push_x = 0.0
+            push_y = 0.0
+            for ox, oy in self._disk_offsets(max(radius, 0.35)):
+                sx = next_x + ox
+                sy = next_y + oy
+                if occupancy.point_occupied(sx, sy):
+                    dx = next_x - sx
+                    dy = next_y - sy
+                    dist = hypot(dx, dy)
+                    if dist <= 1e-4:
+                        dx, dy, dist = ax - sx, ay - sy, hypot(ax - sx, ay - sy)
+                    if dist <= 1e-4:
+                        dx, dy, dist = 1.0, 0.0, 1.0
+                    push_x += dx / dist
+                    push_y += dy / dist
+            norm = hypot(push_x, push_y)
+            if norm <= 1e-6:
+                return 0.0, 0.0
+            return vx + 0.6 * push_x / norm / max(dt, 1e-3), vy + 0.6 * push_y / norm / max(dt, 1e-3)
+
+        return (best[0] - ax) / max(dt, 1e-3), (best[1] - ay) / max(dt, 1e-3)
+
     def _resolve_agent_collision_velocity(
         self,
         agent: Agent,
@@ -2291,11 +2676,7 @@ class SocialBertComputeAgentsNode(Node):
         return vx + correction_x / max(dt, 1e-3), vy + correction_y / max(dt, 1e-3)
 
     def _limit_velocity(self, agent_id: int, vx: float, vy: float, desired_velocity: float, dt: float) -> Tuple[float, float]:
-        max_speed = max(0.05, min(float(desired_velocity) if desired_velocity > 0.0 else self.max_speed, self.max_speed))
-        speed = hypot(vx, vy)
-        if speed > max_speed:
-            vx *= max_speed / speed
-            vy *= max_speed / speed
+        vx, vy = self._clamp_speed_only(vx, vy, desired_velocity)
 
         prev = self._last_cmd_vel.get(agent_id)
         if prev is None:
@@ -2317,6 +2698,14 @@ class SocialBertComputeAgentsNode(Node):
         self._last_cmd_vel[agent_id] = (vx, vy)
         return vx, vy
 
+    def _clamp_speed_only(self, vx: float, vy: float, desired_velocity: float) -> Tuple[float, float]:
+        max_speed = max(0.05, min(float(desired_velocity) if desired_velocity > 0.0 else self.max_speed, self.max_speed))
+        speed = hypot(vx, vy)
+        if speed > max_speed:
+            scale = max_speed / speed
+            return vx * scale, vy * scale
+        return vx, vy
+
     def _limit_heading_rate(
         self,
         agent_id: int,
@@ -2336,9 +2725,24 @@ class SocialBertComputeAgentsNode(Node):
         max_turn = max(0.05, self.max_yaw_rate) * max(dt, 1e-3)
         yaw_error = self._angle_diff(desired_yaw, prev_yaw)
         yaw_error = max(-max_turn, min(max_turn, yaw_error))
-        yaw = prev_yaw + yaw_error
+        yaw = self._normalize_angle(prev_yaw + yaw_error)
         self._last_yaw[agent_id] = yaw
         return yaw, speed * cos(yaw), speed * sin(yaw)
+
+    def _limit_yaw_only(
+        self,
+        agent_id: int,
+        current_yaw: float,
+        desired_yaw: float,
+        dt: float,
+    ) -> float:
+        prev_yaw = self._last_yaw.get(agent_id, current_yaw)
+        max_turn = max(0.05, self.max_yaw_rate) * max(dt, 1e-3)
+        yaw_error = self._angle_diff(desired_yaw, prev_yaw)
+        yaw_error = max(-max_turn, min(max_turn, yaw_error))
+        yaw = self._normalize_angle(prev_yaw + yaw_error)
+        self._last_yaw[agent_id] = yaw
+        return yaw
 
     def _compute_dt(self, stamp: float) -> float:
         if self._last_stamp is None:
@@ -2372,12 +2776,20 @@ class SocialBertComputeAgentsNode(Node):
 
     @staticmethod
     def _angle_diff(a: float, b: float) -> float:
-        diff = a - b
+        diff = SocialBertComputeAgentsNode._normalize_angle(a) - SocialBertComputeAgentsNode._normalize_angle(b)
         while diff > 3.141592653589793:
             diff -= 6.283185307179586
         while diff < -3.141592653589793:
             diff += 6.283185307179586
         return diff
+
+    @staticmethod
+    def _normalize_angle(angle: float) -> float:
+        while angle > 3.141592653589793:
+            angle -= 6.283185307179586
+        while angle < -3.141592653589793:
+            angle += 6.283185307179586
+        return angle
 
     @staticmethod
     def _as_bool(value: Any) -> bool:

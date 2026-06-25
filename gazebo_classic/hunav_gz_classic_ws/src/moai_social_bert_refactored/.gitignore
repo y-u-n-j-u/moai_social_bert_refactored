@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+docs/
+logs/
+output/**/*.pth
+!output/ethucy/univ/spubert.pth

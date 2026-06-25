@@ -15,7 +15,7 @@ Visualization Manager:
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Name: Social-BERT Prediction
+      Name: SPU-BERT Prediction
       Topic:
         Value: /moai/social_bert_predicted_paths
       Value: true
@@ -34,14 +34,6 @@ Visualization Manager:
       Topic:
         Value: /moai/human_obstacle_cloud
       Value: true
-    - Class: rviz_default_plugins/LaserScan
-      Enabled: false
-      Name: Jackal Lidar Obstacles
-      Size (m): 0.08
-      Style: Flat Squares
-      Topic:
-        Value: /front/scan
-      Value: false
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48

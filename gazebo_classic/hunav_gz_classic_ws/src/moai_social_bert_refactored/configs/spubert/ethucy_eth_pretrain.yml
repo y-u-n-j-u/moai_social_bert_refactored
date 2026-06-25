@@ -1,0 +1,60 @@
+experiment:
+  name: spubert_eth_pretrain
+  framework: spubert
+  task: pretrain
+  seed: 20
+
+data:
+  dataset_name: ethucy
+  dataset_path: ./data
+  dataset_split: eth
+  obs_len: 8
+  pred_len: 12
+  min_obs_len: 2
+  num_nbr: 6
+  augment: true
+  sampling: 0.1
+  view_range: 20.0
+  view_angle: 1.57
+  social_range: 1.0
+
+scene:
+  enabled: true
+  env_range: 10.0
+  env_resol: 0.1
+  patch_size: 32
+
+model:
+  backbone:
+    type: bert
+    hidden_size: 256
+    num_hidden_layers: 4
+    num_attention_heads: 4
+    dropout_prob: 0.1
+  heads:
+    social:
+      sip: false
+    spubert:
+      goal_hidden: 256
+      goal_latent: 64
+      k_sample: 20
+      d_sample: 400
+
+loss:
+  traj_weight: 1.0
+  goal_weight: 1.0
+  kld_weight: 1.0
+  col_weight: 0.0
+
+train:
+  batch_size: 32
+  test_batch_size: 32
+  epoch: 100
+  checkpoint_interval: 20
+  patience: -1
+  optimizer:
+    lr: 1.0e-5
+
+runtime:
+  cuda: true
+  model_dir: ./output

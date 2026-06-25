@@ -1,0 +1,108 @@
+hunav_loader:
+  ros__parameters:
+    yaml_base_name: agents_cafe
+    simulator: Gazebo Classic
+    map: empty_room_50
+    publish_people: true
+    global_goals:
+      1:
+        x: -20.0
+        y: -20.0
+      2:
+        x: 20.0
+        y: -20.0
+      3:
+        x: 20.0
+        y: 20.0
+      4:
+        x: -20.0
+        y: 20.0
+      5:
+        x: 0.0
+        y: 0.0
+      6:
+        x: -20.0
+        y: 0.0
+      7:
+        x: 20.0
+        y: 0.0
+    agents:
+      - agent1
+      - agent2
+      - agent3
+    agent1:
+      id: 1
+      group_id: -1
+      skin: 0
+      max_vel: 1.5
+      radius: 0.4
+      goal_radius: 0.3
+      cyclic_goals: true
+      init_pose:
+        x: -18.0
+        y: -18.0
+        z: 1.250
+        h: 0.785
+      behavior:
+        type: Regular
+        configuration: 2
+        goal_force_factor: 3.7
+        obstacle_force_factor: 11.0
+        social_force_factor: 3.0
+        other_force_factor: 20.0
+      goals:
+        - 3
+        - 5
+    agent2:
+      id: 2
+      group_id: -1
+      skin: 1
+      max_vel: 1.9
+      radius: 0.4
+      goal_radius: 0.3
+      cyclic_goals: true
+      init_pose:
+        x: 18.0
+        y: -18.0
+        z: 1.250
+        h: 2.356
+      behavior:
+        type: Surprised
+        dist: 1.400
+        duration: 30.0
+        once: true
+        configuration: 0
+        goal_force_factor: 2.0
+        obstacle_force_factor: 10.0
+        social_force_factor: 5.0
+        other_force_factor: 20.0
+      goals:
+        - 4
+        - 6
+    agent3:
+      id: 3
+      group_id: -1
+      skin: 2
+      max_vel: 1.8
+      radius: 0.4
+      goal_radius: 0.3
+      cyclic_goals: true
+      init_pose:
+        x: 0.0
+        y: 18.0
+        z: 1.250
+        h: -1.571
+      behavior:
+        type: Threatening
+        dist: 1.40
+        duration: 40.00
+        once: true
+        front_dist: 20.00
+        configuration: 0
+        goal_force_factor: 2.0
+        obstacle_force_factor: 10.0
+        social_force_factor: 5.0
+        other_force_factor: 20.0
+      goals:
+        - 1
+        - 7

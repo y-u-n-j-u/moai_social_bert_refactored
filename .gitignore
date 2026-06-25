@@ -1,0 +1,37 @@
+# ROS / colcon generated files
+**/build/
+**/install/
+**/log/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Local simulator outputs and recordings
+*.bag
+*.db3
+*.mcap
+core.*
+gazebo_classic/hunav_gz_classic_ws/moai_recordings/
+gazebo_classic/hunav_gz_classic_ws/moai_debug_*/
+
+# Local datasets / visualizations / experiments
+*.pkl
+**/data/processed/
+**/outputs/
+processed_datasets/
+presentation_output/
+capston_*/
+
+# Large optional model checkpoints.
+# The default runtime model below is intentionally allowed.
+gazebo_classic/hunav_gz_classic_ws/src/moai_social_bert_refactored/output/**/*.pth
+!gazebo_classic/hunav_gz_classic_ws/src/moai_social_bert_refactored/output/ethucy/univ/spubert.pth
+gazebo_classic/hunav_gz_classic_ws/src/moai_social_bert_refactored/runtime/SPUBERT/weights/
+
+# IDE / OS noise
+.vscode/
+.idea/
+.DS_Store

@@ -1,0 +1,110 @@
+hunav_loader:
+  ros__parameters:
+    yaml_base_name: agents_house
+    simulator: Gazebo Classic
+    map: house
+    publish_people: true
+    global_goals:
+      1:
+        x: 3.360
+        y: 0.964
+      2:
+        x: -0.411
+        y: 0.907
+      3:
+        x: -2.056
+        y: -0.907
+      4:
+        x: -7.761
+        y: -0.312
+      5:
+        x: -1.489
+        y: -4.056
+      6:
+        x: 3.785
+        y: -4.027
+      7:
+        x: 6.423
+        y: -1.616
+      8:
+        x: 6.487
+        y: -3.435
+    agents:
+      - agent1
+      - agent2
+      - agent3
+    agent1:
+      id: 1
+      group_id: -1
+      skin: 3
+      max_vel: 1.6000000000000001
+      radius: 0.4
+      goal_radius: 0.3
+      cyclic_goals: true
+      init_pose:
+        x: 7.749
+        y: -2.947
+        z: 1.250
+        h: 2.415
+      behavior:
+        type: Regular
+        configuration: 2
+        goal_force_factor: 2.0
+        obstacle_force_factor: 8.6
+        social_force_factor: 5.6
+        other_force_factor: 20.0
+      goals:
+        - 7
+        - 1
+        - 6
+        - 8
+    agent2:
+      id: 2
+      group_id: -1
+      skin: 0
+      max_vel: 1.5
+      radius: 0.4
+      goal_radius: 0.3
+      cyclic_goals: true
+      init_pose:
+        x: -0.184
+        y: 2.437
+        z: 1.250
+        h: 0.000
+      behavior:
+        type: Regular
+        configuration: 0
+        goal_force_factor: 2.0
+        obstacle_force_factor: 10.0
+        social_force_factor: 5.0
+        other_force_factor: 20.0
+      goals:
+        - 2
+        - 3
+        - 4
+    agent3:
+      id: 3
+      group_id: -1
+      skin: 2
+      max_vel: 1.5
+      radius: 0.4
+      goal_radius: 0.3
+      cyclic_goals: true
+      init_pose:
+        x: -1.771
+        y: -0.085
+        z: 1.250
+        h: 0.000
+      behavior:
+        type: Regular
+        configuration: 1
+        goal_force_factor: 2.0
+        obstacle_force_factor: 1.0
+        social_force_factor: 6.0
+        other_force_factor: 0.0
+      goals:
+        - 3
+        - 5
+        - 6
+        - 1
+        - 2

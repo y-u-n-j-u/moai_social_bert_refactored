@@ -1,0 +1,106 @@
+hunav_loader:
+  ros__parameters:
+    yaml_base_name: agents_warehouse
+    simulator: Gazebo Classic
+    map: warehouse
+    publish_people: true
+    global_goals:
+      1:
+        x: 0.920
+        y: 5.779
+      2:
+        x: 0.850
+        y: -7.784
+      3:
+        x: -3.678
+        y: 7.331
+      4:
+        x: -3.613
+        y: -7.366
+      5:
+        x: -2.647
+        y: -4.476
+      6:
+        x: 1.605
+        y: -4.393
+      7:
+        x: 1.398
+        y: 0.340
+      8:
+        x: -2.260
+        y: 0.295
+    agents:
+      - agent1
+      - agent2
+      - agent3
+    agent1:
+      id: 1
+      group_id: -1
+      skin: 4
+      max_vel: 1.9
+      radius: 0.4
+      goal_radius: 0.3
+      cyclic_goals: true
+      init_pose:
+        x: 0.845
+        y: 6.514
+        z: 1.250
+        h: -1.555
+      behavior:
+        type: Regular
+        configuration: 0
+        goal_force_factor: 2.0
+        obstacle_force_factor: 10.0
+        social_force_factor: 5.0
+        other_force_factor: 20.0
+      goals:
+        - 1
+        - 2
+    agent2:
+      id: 2
+      group_id: -1
+      skin: 4
+      max_vel: 2.0
+      radius: 0.4
+      goal_radius: 0.3
+      cyclic_goals: true
+      init_pose:
+        x: -5.694
+        y: -4.052
+        z: 1.250
+        h: -0.101
+      behavior:
+        type: Regular
+        configuration: 0
+        goal_force_factor: 2.0
+        obstacle_force_factor: 10.0
+        social_force_factor: 5.0
+        other_force_factor: 20.0
+      goals:
+        - 5
+        - 6
+        - 7
+        - 8
+    agent3:
+      id: 3
+      group_id: -1
+      skin: 4
+      max_vel: 1.5
+      radius: 0.4
+      goal_radius: 0.3
+      cyclic_goals: true
+      init_pose:
+        x: -3.582
+        y: 8.318
+        z: 1.250
+        h: -1.551
+      behavior:
+        type: Regular
+        configuration: 0
+        goal_force_factor: 2.0
+        obstacle_force_factor: 10.0
+        social_force_factor: 5.0
+        other_force_factor: 20.0
+      goals:
+        - 3
+        - 4

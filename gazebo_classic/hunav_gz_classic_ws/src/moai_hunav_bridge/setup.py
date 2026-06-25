@@ -24,8 +24,10 @@ setup(
             "human_path_debug_node = moai_hunav_bridge.human_path_debug_node:main",
             "human_obstacle_cloud_node = moai_hunav_bridge.human_obstacle_cloud_node:main",
             "social_bert_compute_agents_node = moai_hunav_bridge.social_bert_compute_agents_node:main",
+            "spubert_compute_agents_node = moai_hunav_bridge.social_bert_compute_agents_node:main",
             "spubert_jackal_controller_node = moai_hunav_bridge.spubert_jackal_controller_node:main",
             "jackal_teleop_dataset_logger_node = moai_hunav_bridge.jackal_teleop_dataset_logger_node:main",
+            "pedestrian_dataset_logger_node = moai_hunav_bridge.pedestrian_dataset_logger_node:main",
         ],
     },
 )
