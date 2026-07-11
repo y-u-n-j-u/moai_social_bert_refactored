@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import argparse
-import sys
+import argparse # 명령어 입력 처리 
+import sys # 파이썬 자체 정보
 
-import torch
-import yaml
+import torch 
+import yaml # config 파일을 읽기 위한 라이브러리
 
 from configs.loader import load_runtime_namespace
 from .data_loader import build_loaders
-from .utils import (
+from .utils import ( # 자주 사용하는 함수들 모음
     CheckpointTracker,
     NullWriter,
     best_checkpoint_path,
@@ -25,11 +25,13 @@ from .utils import (
     set_workdir,
 )
 
-
+# trandformer에 입력되는 trajectory stream의 전체 토큰 개수를 계산
+# obs_len: 관측 길이 / pred_len: 예측 길이 / 이웃 객체 수
 def _base_stream_length(obs_len: int, pred_len: int, num_nbr: int) -> int:
-    return (obs_len + 1) * (num_nbr + 1) + pred_len
+    return (obs_len + 1) * (num_nbr + 1) + pred_len # 각 traj 앞에 붙은 특수 토큰을 포함하기 위해 +1을 해준 것
 
-
+# scene map(occupancy map)을 사용할 때 필요한 patch token 개수를 계산
+# 전체 map 길이, 셀 개수를 통해 patch수를 계산
 def _scene_tokens(args) -> int:
     if not getattr(args, "scene", False):
         return 0
@@ -38,7 +40,8 @@ def _scene_tokens(args) -> int:
     map_length = estimate_map_length(float(args.env_range) * 2.0, float(args.env_resol))
     return int(estimate_num_patch(map_length, int(args.patch_size)))
 
-
+# --dry-run mode를 실행하면 아래와 같이 설명서처럼 나오게 됨
+# SPUBERT, SBERT가 Ransformer에 어떤 형태의 입력(Token)을 넣는지 사람이 쉽게 확인하기 위함
 def format_token_contract_report(args) -> str:
     framework = normalize_framework(args.framework)
     obs_len = int(args.obs_len)
@@ -98,7 +101,7 @@ def format_token_contract_report(args) -> str:
     lines.append("trajectory_encoder_path=spatial linear -> shared BERT")
     return "\n".join(lines)
 
-
+# 현재 config에 맞게 trainer 클래스 선택
 def build_trainer_class(args):
     bootstrap_paths()
     framework = normalize_framework(args.framework)
@@ -106,23 +109,25 @@ def build_trainer_class(args):
         from sbert.training import SBertFTTrainer, SBertPTTrainer
 
         mapping = {
-            ("sbert", "pretrain"): SBertPTTrainer,
-            ("sbert", "finetune"): SBertFTTrainer,
+            ("sbert", "pretrain"): SBertPTTrainer, # sbert, pretrain을 넣으면 SBertPTTrainer
+            ("sbert", "finetune"): SBertFTTrainer, # sbert, finetuning을 넣으면 SBertFTTainer
         }
         return mapping[(framework, args.mode)]
 
     from spubert.training import SBertPlusFTTrainer, SBertPlusPTTrainer
 
     mapping = {
-        ("spubert", "pretrain"): SBertPlusPTTrainer,
-        ("spubert", "finetune"): SBertPlusFTTrainer,
+        ("spubert", "pretrain"): SBertPlusPTTrainer, # spubret, pretrain을 넣으면 SBertPlus PTTTrainer
+        ("spubert", "finetune"): SBertPlusFTTrainer, # spubert, finetuning을 넣으면 SBertPlusFTTrainer
     }
     return mapping[(framework, args.mode)]
 
-
+# epoch 함수 선택
+# sbert라면 run_sbert_train_epoch
+# spubert라면 run_spubert_train_epoch
 def run_train_epoch(trainer, args, epoch: int):
     bootstrap_paths()
-    framework = normalize_framework(args.framework)
+    framework = normalize_framework(args.framework) # sbert인지 SPUBert인지 확인
     if framework == "sbert":
         from sbert.training import run_train_epoch as run_sbert_train_epoch
 
@@ -132,7 +137,9 @@ def run_train_epoch(trainer, args, epoch: int):
 
     return run_spubert_train_epoch(trainer, args, epoch)
 
-
+# 명령어가 어떤 형태인지 정의
+# --config는 무조건 있어야 함
+# --dry_run이라는 게 붙으면 dry_run = true, 없으면 false(플래그 역할)
 def build_parser(command: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=command,
@@ -142,49 +149,58 @@ def build_parser(command: str) -> argparse.ArgumentParser:
     parser.add_argument("--dry_run", action="store_true")
     return parser
 
-
+# 실제로 명령어를 읽어서 args 생성
 def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespace:
-    argv = list(sys.argv[1:] if argv is None else argv)
-    cli_args = build_parser(command).parse_args(argv)
+    argv = list(sys.argv[1:] if argv is None else argv) 
+    cli_args = build_parser(command).parse_args(argv) # 위의 build_parser를 실행해서 parser를 반환받아옴(config, dry_run 여부)
     return load_runtime_namespace(cli_args.config, command=command, cli_dry_run=cli_args.dry_run)
+    # config 파일을 읽어서 args 생성
 
-
+# 로그 출력 함수
 def _print_epoch(prefix: str, epoch: int, train_loss: float, val_loss: float, metric_msg: str = "") -> None:
     message = f"[{prefix}] epoch={epoch + 1:04d} train={train_loss:.6f} val={val_loss:.6f}"
     if metric_msg:
         message = f"{message} {metric_msg}"
     print(message)
 
-
+# dry_run 실행했을 떄 확인용도. 실제 terminal에 print 해주는 역할을 얘가 함
 def _print_dry_run(command: str, args: argparse.Namespace) -> None:
     print(f"[DRY_RUN] {command} effective configuration")
     print(yaml.safe_dump(args._config, sort_keys=False, allow_unicode=True).strip())
-    print(format_token_contract_report(args))
+    print(format_token_contract_report(args)) # 위에 함수 호출해서 print 시킴(자세한 config 내용)
 
-
+# train 함수의 main loop
 def run_train(argv: list[str] | None = None) -> int:
-    bootstrap_paths()
-    set_workdir()
+    # 프로젝트 환경 초기화
+    bootstrap_paths() 
+    set_workdir() 
     ensure_runtime_dirs()
-    args = parse_args(command="train", argv=argv)
-    set_seed(args.seed, use_cuda=args.cuda)
+    args = parse_args(command="train", argv=argv) # config 읽어옴
+    set_seed(args.seed, use_cuda=args.cuda) # seed 설정(고정)
 
-    if args.dry_run:
+    # dry_run이라면 위의 _print_drt_run 함수만 실행하고 종료
+    if args.dry_run: 
         _print_dry_run("train", args)
         return 0
 
+    # DataLoader 생성
     train_loader, val_loader, test_loader = build_loaders(args, for_test=False)
-    trainer_class = build_trainer_class(args)
-    writer = NullWriter()
+    trainer_class = build_trainer_class(args) # build_trainer_class를 통해 trainer 선택
+    writer = NullWriter() # TensorBoard 기록용 객체
 
+    # trainer 생성
     trainer = trainer_class(train_dataloader=train_loader, val_dataloader=val_loader, args=args, tb_writer=writer)
+    # early stopping 객체: 이 객체는 매 epoch마자 validation loss를 비교해서 best moddel, early stopping을 관리함
     tracker = CheckpointTracker(patience=args.patience)
+    # checkpoint 주기: 이 주기마다 model을 저장
     checkpoint_interval = max(int(getattr(args, "checkpoint_interval", 20)), 1)
 
     try:
         for epoch in range(args.epoch):
             train_loss, params = run_train_epoch(trainer, args, epoch)
+            # loss 기록
             writer.add_scalar("loss/train", train_loss, epoch)
+            # learning rate 기록
             if "lr" in params:
                 writer.add_scalar("lr/main", params["lr"], epoch)
             if "mgp_lr" in params:
@@ -198,14 +214,14 @@ def run_train(argv: list[str] | None = None) -> int:
                 writer.add_scalar("loss/val", val_loss, epoch)
 
             metric_msg = ""
+            # arg.test에서 test 의사가 있고 test data set이 존재한다면 지정된 epoch마다 test를 수행함
             if args.test and test_loader is not None and ((epoch + 1) % max(args.eval_interval, 1) == 0):
-                if args.framework == "spubert" and args.mode == "finetune":
-                    metrics = trainer.test(epoch, test_loader, args.d_sample, args.k_sample,
-                                           use_gt_goal=getattr(args, "use_gt_goal", False))
+                if args.framework == "spubert" and args.mode == "finetune": # spubert의 경우 test시 ade, fde, gde 모두 반환
+                    metrics = trainer.test(epoch, test_loader, args.d_sample, args.k_sample)
                     writer.add_scalar("test/ade", float(metrics[0]), epoch)
                     writer.add_scalar("test/fde", float(metrics[1]), epoch)
                     writer.add_scalar("test/gde", float(metrics[2]), epoch)
-                elif args.mode == "finetune":
+                elif args.mode == "finetune": # sbert의 경우 ade, fde만 나타냄(goal 예측이 없으므로)
                     metrics = trainer.test(epoch, test_loader)
                     writer.add_scalar("test/ade", float(metrics[0]), epoch)
                     writer.add_scalar("test/fde", float(metrics[1]), epoch)
@@ -213,15 +229,18 @@ def run_train(argv: list[str] | None = None) -> int:
                     metrics = ()
                 metric_msg = format_metric_message(args, metrics)
 
+            # checkpoint 저장
             if (epoch + 1) % checkpoint_interval == 0:
                 save_state_dict(args, trainer, epoch_checkpoint_path(args, epoch))
 
+            # validation loss를 기준으로(없으면 train loss 기준) best model 저장
             monitor = val_loss if val_loader is not None else train_loss
             if tracker.update(monitor):
                 save_state_dict(args, trainer, best_checkpoint_path(args))
 
             _print_epoch("TRAIN", epoch, train_loss, val_loss, metric_msg)
 
+            # 너무 loss가 줄어들지 않으면 중간에 early stopping
             if tracker.early_stop:
                 print("[TRAIN] early stopping triggered")
                 break
@@ -260,8 +279,7 @@ def run_test(argv: list[str] | None = None) -> int:
     model.load_state_dict(state)
 
     if args.framework == "spubert":
-        ade, fde, gde = trainer.test(epoch=0, data_loader=test_loader, d_sample=args.d_sample, k_sample=args.k_sample,
-                                     use_gt_goal=getattr(args, "use_gt_goal", False))
+        ade, fde, gde = trainer.test(epoch=0, data_loader=test_loader, d_sample=args.d_sample, k_sample=args.k_sample)
         print(f"[TEST] ADE={float(ade):.6f} FDE={float(fde):.6f} GDE={float(gde):.6f}")
     else:
         ade, fde = trainer.test(epoch=0, data_loader=test_loader)

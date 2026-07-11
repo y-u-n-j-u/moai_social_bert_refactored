@@ -26,6 +26,7 @@ def dataset_class(framework: str, dataset_name: str):
     else:
         from spubert.datasets.ethucy import ETHUCYDataset
         from spubert.datasets.ethucy_sbert import ETHUCYSBertDataset
+        from spubert.datasets.ethucy_sbert_extended_goal import ETHUCYSBertDataset as ETHUCYSBertExtendedGoalDataset
         from spubert.datasets.ethucy_star import ETHUCYSTARDataset
         from spubert.datasets.ethucy_tpp import ETHUCYTPPDataset
         from spubert.datasets.sdd_sbert import SDDSBertDataset
@@ -35,6 +36,7 @@ def dataset_class(framework: str, dataset_name: str):
             "ethucy_tpp": ETHUCYTPPDataset,
             "ethucy_star": ETHUCYSTARDataset,
             "ethucy_sbert": ETHUCYSBertDataset,
+            "ethucy_sbert_ext": ETHUCYSBertExtendedGoalDataset,
             "sdd_sbert": SDDSBertDataset,
         }
 
@@ -50,6 +52,15 @@ def _build_dataset(args, split: str):
     ds_args = copy.copy(args)
     if ds_args.dataset_name == "sdd_sbert":
         ds_args.dataset_split = "default"
+
+    use_ext = ds_args.dataset_name.endswith("_ext")
+    if use_ext:
+        ds_args.dataset_name = ds_args.dataset_name.replace("_ext", "")
+
+    if use_ext:
+        bootstrap_paths()
+        from spubert.datasets.ethucy_sbert_extended_goal import ETHUCYSBertDataset as ETHUCYSBertExtendedGoalDataset
+        return ETHUCYSBertExtendedGoalDataset(split=split, args=ds_args)
 
     ds_cls = dataset_class(ds_args.framework, ds_args.dataset_name)
     return ds_cls(split=split, args=ds_args)

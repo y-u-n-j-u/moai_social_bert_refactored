@@ -91,7 +91,8 @@ def _apply_runtime_fields(cfg, *, backbone_type="bert", binary_scene=False):
     cfg.segment_vocab_size = cfg.num_nbr + cfg.num_patch + 2
 
 
-class SBertPlusPTConfig:
+# 사전학습용 설정
+class SBertPlusPTConfig: 
     def __init__(
         self,
         hidden_size=512,
@@ -148,6 +149,7 @@ class SBertPlusPTConfig:
         _apply_runtime_fields(self, backbone_type=backbone_type, binary_scene=binary_scene)
 
 
+# 궤적 예측 모델(TGP) 설정
 class SBertPlusTGPConfig:
     def __init__(
         self,
@@ -203,6 +205,7 @@ class SBertPlusTGPConfig:
         _apply_runtime_fields(self, backbone_type=backbone_type, binary_scene=binary_scene)
 
 
+# 목적지 예측(MGP) 관련 설정
 class SBertPlusMGPConfig:
     def __init__(
         self,
@@ -274,6 +277,7 @@ class SBertPlusMGPConfig:
         _apply_runtime_fields(self, backbone_type=backbone_type, binary_scene=binary_scene)
 
 
+# TGP + MGP Config를 합쳐서 파인튜닝용 설정 생성
 class SBertPlusFTConfig:
     def __init__(self, traj_cfgs, goal_cfgs, share=False):
         self.input_dim = traj_cfgs.input_dim
@@ -319,7 +323,7 @@ class SBertPlusFTConfig:
             self.num_head = self.num_traj_head
 
 
-
+# Scene TrajectoryEncoder를 감싼 래퍼 - 좌표 시퀀스르르 BERT로 인코딩 -> hidden state 변환
 class SBertPlusModel(SBertModelBase):
     def __init__(self, cfgs):
         super().__init__(cfgs)
@@ -352,7 +356,7 @@ class SBertPlusModel(SBertModelBase):
             output_attentions=output_attentions,
         )
 
-
+# 사전학습 모델
 class SBertPlusPTModel(SBertModelBase):
 
     def __init__(self, cfgs):
@@ -423,7 +427,7 @@ class SBertPlusPTModel(SBertModelBase):
             "attentions": enc_h["attentions"],
         }
 
-# trajectory 예측 -> ade loss
+# 궤적 예측 모델
 class SBertPlusTGPModel(SBertModelBase):
     def __init__(self, cfgs):
         super().__init__(cfgs)
@@ -443,6 +447,7 @@ class SBertPlusTGPModel(SBertModelBase):
         self.fde_loss_fn = FDELoss()
         self.init_weights()
 
+    # spatial_ids(goal 포함) 입력 -> pred_trajs 반환
     def inference(
         self,
         spatial_ids,
@@ -472,6 +477,7 @@ class SBertPlusTGPModel(SBertModelBase):
         pred_trajs = self.sbert_decoder(traj_h)
         return {"pred_trajs": pred_trajs, "attentions": enc_h["attentions"]}
 
+    # inference() 호출 후 ADE/FDE/col_loss 계산
     def forward(
         self,
         spatial_ids,
@@ -519,10 +525,7 @@ class SBertPlusTGPModel(SBertModelBase):
             "attentions": outputs["attentions"],
         }
 
-# goal 예측(CVAE) -> kld_loss + gde_loss
-# kld_loss: CVAE의 KL divergence
-# gde_loss
-# col_loss: 충돌 loss
+# 목적지 예측 모델
 class SBertPlusMGPModel(SBertModelBase):
     def __init__(self, goal_cfgs, share_enc=None):
         super().__init__(goal_cfgs)
@@ -560,6 +563,7 @@ class SBertPlusMGPModel(SBertModelBase):
         self.gde_loss_fn = MGPCVAELoss()
         self.init_weights()
 
+    # prior에서 k개 goal 샘플 -> KMeans로 대표 goal 선정
     def goal_predictor(self, pred_goal_h, k_sample, d_sample=0):
         if d_sample < k_sample:
             d_sample = k_sample
@@ -591,6 +595,7 @@ class SBertPlusMGPModel(SBertModelBase):
 
         return pred_goals
 
+    # 
     def goal_trainer(self, pred_goal_h, goal_lbl, k_sample):
         gt_goal_h = self.gt_goal_encoder(goal_lbl)
         r_goal_out = self.goal_recog_net(torch.cat([pred_goal_h, gt_goal_h], dim=-1))
@@ -714,7 +719,7 @@ class SBertPlusMGPModel(SBertModelBase):
             "attentions": goal_enc_out["attentions"],
         }
 
-
+# MGP + TGP를 합친 최종 모델
 class SBertPlusFTModel(SBertModelBase):
     def __init__(self, tgp_cfgs, mgp_cfgs, cfgs):
         super().__init__(cfgs)
@@ -726,27 +731,17 @@ class SBertPlusFTModel(SBertModelBase):
             self.mgp_model = SBertPlusMGPModel(mgp_cfgs)
         self.init_weights()
 
-    # ── k개 복제용 (MGP 흐름) ──────────────────────────────────────────────
-    # MGP가 예측한 k개 goal을 spatial_ids에 삽입, TGP 입력용 준비
+    # MGP 예측 goal을 spatial_ids에 삽입 TGP 입력용 준비
     def add_goals(self, spatial_ids, goals, mask_val, pad_val):
         spatial_ids = spatial_ids.unsqueeze(1).repeat(1, self.cfgs.k_sample, 1, 1)
-        spatial_ids[:, :, 1 + self.cfgs.obs_len : 1 + self.cfgs.obs_len + self.cfgs.pred_len, :] = mask_val
-        spatial_ids[:, :, 1 + self.cfgs.obs_len + self.cfgs.pred_len, : self.cfgs.goal_dim] = goals
-        spatial_ids[:, :, 1 + self.cfgs.obs_len + self.cfgs.pred_len, self.cfgs.goal_dim :] = pad_val
+        spatial_ids[:, :, 1 + self.cfgs.obs_len : self.cfgs.obs_len + self.cfgs.pred_len, :] = mask_val
+        spatial_ids[:, :, self.cfgs.obs_len + self.cfgs.pred_len, : self.cfgs.goal_dim] = goals
+        spatial_ids[:, :, self.cfgs.obs_len + self.cfgs.pred_len, self.cfgs.goal_dim :] = pad_val
         return spatial_ids
 
-    # ── goal 1개용 (GT goal 흐름) ──────────────────────────────────────────
-    # GT goal 하나를 spatial_ids에 삽입 (k배 복제 없음)
-    # 학습 때 dataset.py가 만드는 tgp_spatial_ids와 동일한 형태
-    def add_single_goal(self, spatial_ids, goal, mask_val, pad_val):
-        # spatial_ids: (batch, seq_len, input_dim) → 그대로 유지 (복제 없음)
-        spatial_ids = spatial_ids.clone()
-        # 중간 pred 구간 [MSK]로 채움 (1+obs_len ~ obs_len+pred_len)
-        spatial_ids[:, 1 + self.cfgs.obs_len : 1 + self.cfgs.obs_len + self.cfgs.pred_len, :] = mask_val
-        spatial_ids[:, 1 + self.cfgs.obs_len + self.cfgs.pred_len, : self.cfgs.goal_dim] = goal
-        spatial_ids[:, 1 + self.cfgs.obs_len + self.cfgs.pred_len, self.cfgs.goal_dim :] = pad_val
-        return spatial_ids
-
+    # 1. MGP로 goal 예측
+    # 2. add_goals로 삽입
+    # 3. TGP로 trajectory 출력
     def inference(
         self,
         mgp_spatial_ids,
@@ -765,8 +760,6 @@ class SBertPlusFTModel(SBertModelBase):
         d_sample=0,
     ):
         traj_batch_size, traj_seq_len, traj_spatial_dim = mgp_spatial_ids.size()
-
-        # MGP prior에서 goal k개 샘플링
         mgp_out = self.mgp_model.inference(
             spatial_ids=mgp_spatial_ids,
             segment_ids=mgp_segment_ids,
@@ -780,11 +773,10 @@ class SBertPlusFTModel(SBertModelBase):
             output_attentions=output_attentions,
             d_sample=d_sample,
         )
-        pred_goals = mgp_out["pred_goals"]       # (batch, k, goal_dim)
 
         k_goal_spatial_ids = self.add_goals(
             mgp_spatial_ids,
-            pred_goals,
+            mgp_out["pred_goals"],
             mask_val=self.cfgs.view_range,
             pad_val=-self.cfgs.view_range,
         ).view(-1, traj_seq_len, self.cfgs.input_dim)
@@ -818,71 +810,15 @@ class SBertPlusFTModel(SBertModelBase):
         )
 
         pred_trajs = tgp_out["pred_trajs"].reshape(traj_batch_size, self.cfgs.k_sample, self.cfgs.pred_len, self.cfgs.output_dim)
-        pred_goals = pred_goals.reshape(traj_batch_size, self.cfgs.k_sample, self.cfgs.goal_dim)
+        pred_goals = mgp_out["pred_goals"].reshape(traj_batch_size, self.cfgs.k_sample, self.cfgs.goal_dim)
         return {
-            "pred_trajs": pred_trajs,          # (batch, k, pred_len, 2)
-            "pred_goals": pred_goals,          # (batch, k, 2)
+            "pred_trajs": pred_trajs,
+            "pred_goals": pred_goals,
             "goal_attentions": mgp_out["attentions"],
             "traj_attentions": tgp_out["attentions"],
         }
 
-    # ── 새 함수: GT goal → TGP 단독 호출 → trajectory 1개 ─────────────────
-    # 학습 때 TGP가 본 입력 형태와 완전히 동일
-    # 실 환경에서 GPS goal이 확정되었을 때 사용
-    def inference_with_gt_goal(
-        self,
-        mgp_spatial_ids,       # obs + 이웃 시퀀스 (add_single_goal에서 goal 삽입)
-        tgp_temporal_ids,
-        tgp_segment_ids,
-        tgp_attn_mask,
-        gt_goals,              # (batch, goal_dim) — local 좌표 GT goal
-        env_spatial_ids=None,
-        env_temporal_ids=None,
-        env_segment_ids=None,
-        env_attn_mask=None,
-        envs=None,
-        output_attentions=False,
-    ):
-        # GT goal 하나를 시퀀스에 삽입 (k배 복제 없음)
-        # 학습 때 tgp_spatial_ids = [SOT]+obs×8+[MSK]×11+goal_lbl 과 동일한 형태
-        goal_spatial_ids = self.add_single_goal(
-            mgp_spatial_ids,
-            gt_goals,
-            mask_val=self.cfgs.view_range,
-            pad_val=-self.cfgs.view_range,
-        )  # (batch, seq_len, input_dim)
-
-        if self.cfgs.scene:
-            tgp_env_spatial_ids  = env_spatial_ids
-            tgp_env_segment_ids  = env_segment_ids
-            tgp_env_temporal_ids = env_temporal_ids
-            tgp_env_attn_mask    = env_attn_mask
-        else:
-            tgp_env_spatial_ids  = None
-            tgp_env_segment_ids  = None
-            tgp_env_temporal_ids = None
-            tgp_env_attn_mask    = None
-
-        # TGP 단독 호출 — trajectory 1개만 생성 (MGP 호출 없음)
-        tgp_out = self.tgp_model.inference(
-            spatial_ids=goal_spatial_ids,
-            segment_ids=tgp_segment_ids,
-            temporal_ids=tgp_temporal_ids,
-            attn_mask=tgp_attn_mask,
-            env_spatial_ids=tgp_env_spatial_ids,
-            env_segment_ids=tgp_env_segment_ids,
-            env_temporal_ids=tgp_env_temporal_ids,
-            env_attn_mask=tgp_env_attn_mask,
-            envs=envs,
-            output_attentions=output_attentions,
-        )
-
-        return {
-            "pred_trajs": tgp_out["pred_trajs"],   # (batch, pred_len, 2)
-            "pred_goals": gt_goals,                # (batch, 2)
-            "traj_attentions": tgp_out["attentions"],
-        }
-
+    # MGP, TGP 각각 학습 두 loss 합산 변환(독립 학습)
     def forward(
         self,
         mgp_spatial_ids,

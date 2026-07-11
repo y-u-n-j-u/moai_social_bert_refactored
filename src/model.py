@@ -123,7 +123,7 @@ class GoalPooler(nn.Module):
         self.dropout = nn.Dropout(dropout_prob)
 
     def forward(self, x):
-        x = x[:, self.obs_len + self.pred_len, :]
+        x = x[:, self.obs_len + self.pred_len + 1, :]
         x = self.act_fn(self.linear(x))
         x = self.LayerNorm(x)
         return self.dropout(x)

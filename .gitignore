@@ -5,3 +5,9 @@ __pycache__/
 docs/
 logs/
 output/
+
+# non-code artifacts (images, text notes, test data)
+*.png
+*.txt
+data/processed/ethucy_sbert_test1/
+data/processed/ethucy_sbert_test2/

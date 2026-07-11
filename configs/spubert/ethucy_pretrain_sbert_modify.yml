@@ -1,25 +1,27 @@
 experiment:
-  name: spubert_eth_finetune
+  name: spubert_ethucy_pretrain
   framework: spubert
-  task: finetune
-  seed: 1
+  task: pretrain
+  seed: 20
 
 data:
-  dataset_name: ethucy_sbert
-  dataset_path: ./data/processed
-  dataset_split: eth
+  dataset_name: ethucy_sbert       # pkl 파일 사용
+  dataset_path: ./data/processed   # processed 폴더
+  dataset_split: univ              # univ_train.pkl, univ_test.pkl 사용
   obs_len: 8
   pred_len: 12
+  min_obs_len: 2
   num_nbr: 4
+  augment: true
+  sampling: 0.1
   view_range: 20.0
-  view_angle: 1.0
-  social_range: 2.0
-  traj_scale: 2.0
+  view_angle: 1.57
+  social_range: 1.0
 
 scene:
   enabled: true
   env_range: 10.0
-  env_resol: 0.1
+  env_resol: 0.2
   patch_size: 16
 
 model:
@@ -30,35 +32,28 @@ model:
     num_attention_heads: 4
     dropout_prob: 0.1
   heads:
+    social:
+      sip: false
     spubert:
       goal_hidden: 64
-      goal_latent: 64
+      goal_latent: 32
       k_sample: 20
       d_sample: 400
-      share_backbone: false
-      normal: false
 
 loss:
   traj_weight: 1.0
   goal_weight: 1.0
   kld_weight: 1.0
-  kld_clamp: 2.0
+  col_weight: 0.0
 
 train:
-  train_mode: fs
   batch_size: 32
   test_batch_size: 32
   epoch: 100
-  eval_interval: 10
   checkpoint_interval: 20
-  lr_scheduler: step
+  patience: -1
   optimizer:
-    lr: 1.0e-4
-  scheduler:
-    decay_step: 10
-    decay_gamma: 0.5
-  evaluate_on_test: false
-  use_gt_goal: false
+    lr: 1.0e-5
 
 runtime:
   cuda: true

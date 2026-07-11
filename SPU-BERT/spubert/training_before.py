@@ -276,7 +276,7 @@ class SBertPlusFTTrainer(SimpleTrainerBase):
             reverse=True,
         )
 
-    def test(self, epoch, data_loader, d_sample, k_sample, use_gt_goal: bool = False):
+    def test(self, epoch, data_loader, d_sample, k_sample):
         self.model.eval()
         with torch.no_grad():
             total_aderror = 0
@@ -285,62 +285,19 @@ class SBertPlusFTTrainer(SimpleTrainerBase):
             total_data = 0
             for _, it_data in _make_eval_pbar(data_loader, epoch, "test"):
                 data = _to_device(it_data, self.device)
-
-                if use_gt_goal:
-                    # GT goal 확정 시 — TGP 단독 호출, trajectory 1개 반환
-                    # inference_with_gt_goal()에 필요한 인자만 추려서 전달
-                    gt_goal_kwargs = {
-                        "mgp_spatial_ids": data["mgp_spatial_ids"],
-                        "tgp_temporal_ids": data["tgp_temporal_ids"],
-                        "tgp_segment_ids": data["tgp_segment_ids"],
-                        "tgp_attn_mask": data["tgp_attn_mask"],
-                        "gt_goals": data["goal_lbl"],
-                    }
-                    if self.args.scene:
-                        gt_goal_kwargs.update({
-                            "env_spatial_ids": data["env_spatial_ids"],
-                            "env_temporal_ids": data["env_temporal_ids"],
-                            "env_segment_ids": data["env_segment_ids"],
-                            "env_attn_mask": data["env_attn_mask"],
-                            "envs": data["envs"],
-                        })
-                    outputs = self.model.inference_with_gt_goal(**gt_goal_kwargs)
-
-                    # shape: (batch, pred_len, 2) — k 차원 없음
-                    outputs["pred_trajs"] = torch.einsum("bts,b->bts", outputs["pred_trajs"], data["scales"])
-                    outputs["pred_goals"] = torch.einsum("bs,b->bs", outputs["pred_goals"], data["scales"])
-                    data["traj_lbl"] = torch.einsum("bts,b->bts", data["traj_lbl"], data["scales"])
-                    data["goal_lbl"] = torch.einsum("bs,b->bs", data["goal_lbl"], data["scales"])
-
-                    # k=1로 unsqueeze해서 bom_loss_3 재사용
-                    gderror, aderror, fderror = bom_loss_3(
-                        outputs["pred_goals"].unsqueeze(1),    # (batch, 1, 2)
-                        outputs["pred_trajs"].unsqueeze(1),    # (batch, 1, pred_len, 2)
-                        data["goal_lbl"],
-                        data["traj_lbl"],
-                        k_sample=1,
-                        output_dim=self.args.output_dim,
-                    )
-                else:
-                    # 기존 흐름 — MGP로 goal 예측, trajectory k개 반환
-                    outputs = self.model.inference(
-                        **_spubert_inference_kwargs(data, scene=self.args.scene, d_sample=d_sample)
-                    )
-                    # shape: (batch, k, pred_len, 2)
-                    outputs["pred_trajs"] = torch.einsum("bkts,b->bkts", outputs["pred_trajs"], data["scales"])
-                    outputs["pred_goals"] = torch.einsum("bks,b->bks", outputs["pred_goals"], data["scales"])
-                    data["traj_lbl"] = torch.einsum("bts,b->bts", data["traj_lbl"], data["scales"])
-                    data["goal_lbl"] = torch.einsum("bs,b->bs", data["goal_lbl"], data["scales"])
-
-                    gderror, aderror, fderror = bom_loss_3(
-                        outputs["pred_goals"],
-                        outputs["pred_trajs"],
-                        data["goal_lbl"],
-                        data["traj_lbl"],
-                        k_sample,
-                        output_dim=self.args.output_dim,
-                    )
-
+                outputs = self.model.inference(**_spubert_inference_kwargs(data, scene=self.args.scene, d_sample=d_sample))
+                outputs["pred_trajs"] = torch.einsum("bkts,b->bkts", outputs["pred_trajs"], data["scales"])
+                outputs["pred_goals"] = torch.einsum("bks,b->bks", outputs["pred_goals"], data["scales"])
+                data["traj_lbl"] = torch.einsum("bts,b->bts", data["traj_lbl"], data["scales"])
+                data["goal_lbl"] = torch.einsum("bs,b->bs", data["goal_lbl"], data["scales"])
+                gderror, aderror, fderror = bom_loss_3(
+                    outputs["pred_goals"],
+                    outputs["pred_trajs"],
+                    data["goal_lbl"],
+                    data["traj_lbl"],
+                    k_sample,
+                    output_dim=self.args.output_dim,
+                )
                 total_aderror += aderror
                 total_fderror += fderror
                 total_gderror += gderror

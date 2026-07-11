@@ -31,6 +31,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         'goal_dim': 2,
         'subsample_stride': 3,
         'traj_scale': 1.0,
+        'goal_extra_frames': 8,
     },
     'scene': {
         'enabled': False,
@@ -88,6 +89,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         'clip_grads': False,
         'num_cycle': 0,
         'evaluate_on_test': False,
+        'use_gt_goal': False,
         'optimizer': {
             'name': 'adamw',
             'lr': 1.0e-4,
@@ -237,6 +239,7 @@ def _to_namespace(cfg: dict[str, Any], config_path: str, cli_dry_run: bool) -> a
         goal_dim=data['goal_dim'],
         subsample_stride=data['subsample_stride'],
         traj_scale=data['traj_scale'],
+        goal_extra_frames=data['goal_extra_frames'],
         scene=scene['enabled'],
         env_range=scene['env_range'],
         env_resol=scene['env_resol'],
@@ -279,6 +282,7 @@ def _to_namespace(cfg: dict[str, Any], config_path: str, cli_dry_run: bool) -> a
         decay_step=train['scheduler']['decay_step'],
         decay_gamma=train['scheduler']['decay_gamma'],
         test=train['evaluate_on_test'],
+        use_gt_goal=train['use_gt_goal'],
         cuda=runtime['cuda'],
         num_worker=runtime['num_worker'],
         model_dir=model_dir,
