@@ -1,4 +1,5 @@
 from .dataset import moai_social_bertDataset
+from .dataset_extended_goal import moai_social_bertDataset as moai_social_bertDatasetExtendedGoal
 # from .jaad_data import JAAD
 # from .pie_data import PIE
 # from .jaadpie import JAADPIEDataset

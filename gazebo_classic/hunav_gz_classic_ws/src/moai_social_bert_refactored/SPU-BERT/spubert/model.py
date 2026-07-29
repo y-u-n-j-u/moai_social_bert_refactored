@@ -31,6 +31,162 @@ from src.utils import MultiKMeans
 from src.model import SceneTrajectoryEncoder
 
 
+def classify_map_points(
+    points,
+    envs,
+    envs_params,
+    *,
+    reject_unknown=True,
+):
+    """Classify local-frame points against 0/1/2 occupancy maps."""
+    if points.ndim != 3 or points.size(-1) < 2:
+        raise ValueError(f"points must have shape (B,N,2+), got {tuple(points.shape)}")
+    if envs is None or envs_params is None:
+        raise ValueError("map point classification requires envs and envs_params")
+    if envs.ndim != 3 or envs_params.ndim != 2 or envs_params.size(-1) < 6:
+        raise ValueError(
+            f"expected envs=(B,H,W), envs_params=(B,6+); got "
+            f"{tuple(envs.shape)}, {tuple(envs_params.shape)}"
+        )
+    batch_size = points.size(0)
+    if envs.size(0) != batch_size or envs_params.size(0) != batch_size:
+        raise ValueError("points, envs, and envs_params batch sizes must match")
+    if not torch.isfinite(envs_params[:, :6]).all():
+        raise ValueError("envs_params contains NaN or Inf")
+
+    points_xy = points[..., :2]
+    finite = torch.isfinite(points_xy).all(dim=-1)
+    safe_xy = torch.where(finite.unsqueeze(-1), points_xy, torch.zeros_like(points_xy))
+
+    min_x = envs_params[:, 0].unsqueeze(1)
+    min_y = envs_params[:, 1].unsqueeze(1)
+    width = envs_params[:, 2].to(dtype=torch.long).unsqueeze(1)
+    height = envs_params[:, 3].to(dtype=torch.long).unsqueeze(1)
+    resolution = envs_params[:, 4].unsqueeze(1)
+    if torch.any(resolution <= 0) or torch.any(width <= 0) or torch.any(height <= 0):
+        raise ValueError("envs_params width, height, and resolution must be positive")
+
+    x_ids = torch.floor((safe_xy[..., 0] - min_x) / resolution).to(dtype=torch.long)
+    y_ids = torch.floor((safe_xy[..., 1] - min_y) / resolution).to(dtype=torch.long)
+    in_bounds = (
+        finite
+        & (x_ids >= 0)
+        & (y_ids >= 0)
+        & (x_ids < width)
+        & (y_ids < height)
+        & (x_ids < envs.size(-1))
+        & (y_ids < envs.size(-2))
+    )
+
+    batch_ids = torch.arange(batch_size, device=points.device).unsqueeze(1)
+    sampled_values = envs[
+        batch_ids,
+        y_ids.clamp(0, envs.size(-2) - 1),
+        x_ids.clamp(0, envs.size(-1) - 1),
+    ]
+    cell_values = torch.where(
+        in_bounds,
+        sampled_values,
+        torch.full_like(sampled_values, -1.0),
+    )
+    occupied_threshold = envs_params[:, 5].unsqueeze(1)
+    safe_mask = in_bounds & (cell_values < occupied_threshold)
+    if reject_unknown:
+        safe_mask = safe_mask & (cell_values > 0)
+
+    return {
+        "point_safe_mask": safe_mask,
+        "point_in_bounds_mask": in_bounds,
+        "point_cell_values": cell_values,
+    }
+
+
+def select_guided_goal_candidates(
+    pred_goals,
+    guidance_points,
+    envs,
+    envs_params,
+    *,
+    reject_unknown=True,
+):
+    """Select one map-valid candidate nearest to each guidance point.
+
+    Map values follow the Gazebo adapter contract:
+    0=unknown/padding, 1=free, 2=occupied. Candidates outside the local map
+    are always invalid. If every candidate is invalid, a stop goal at the
+    robot origin is returned and marked invalid.
+    """
+    if pred_goals.ndim != 3 or pred_goals.size(-1) < 2:
+        raise ValueError(f"pred_goals must have shape (B,K,2+), got {tuple(pred_goals.shape)}")
+    if guidance_points.ndim != 2 or guidance_points.size(-1) < 2:
+        raise ValueError(
+            f"guidance_points must have shape (B,2+), got {tuple(guidance_points.shape)}"
+        )
+    batch_size, num_candidates, _ = pred_goals.shape
+    if num_candidates < 1:
+        raise ValueError("guided goal selection requires at least one candidate")
+    if guidance_points.size(0) != batch_size:
+        raise ValueError("pred_goals and guidance_points batch sizes must match")
+    if not torch.isfinite(guidance_points[:, :2]).all():
+        raise ValueError("guidance_points contains NaN or Inf")
+
+    goals_xy = pred_goals[..., :2]
+    finite = torch.isfinite(goals_xy).all(dim=-1)
+    classification = classify_map_points(
+        pred_goals,
+        envs,
+        envs_params,
+        reject_unknown=reject_unknown,
+    )
+    candidate_safe_mask = classification["point_safe_mask"]
+    in_bounds = classification["point_in_bounds_mask"]
+    cell_values = classification["point_cell_values"]
+
+    distances = torch.linalg.vector_norm(
+        goals_xy - guidance_points[:, None, :2],
+        dim=-1,
+    )
+    distances = torch.where(finite, distances, torch.full_like(distances, torch.inf))
+    safe_distances = torch.where(
+        candidate_safe_mask,
+        distances,
+        torch.full_like(distances, torch.inf),
+    )
+
+    all_candidates_invalid = ~candidate_safe_mask.any(dim=1)
+    safe_indices = safe_distances.argmin(dim=1)
+    fallback_indices = distances.argmin(dim=1)
+    selected_indices = torch.where(
+        all_candidates_invalid,
+        torch.full_like(safe_indices, -1),
+        safe_indices,
+    )
+    gathered_goals = pred_goals[
+        torch.arange(batch_size, device=pred_goals.device),
+        safe_indices,
+    ]
+    # No safe candidate means "stop/hold" at the robot origin. The -1 index
+    # and validity flag let the runtime refuse to execute this fallback.
+    selected_goals = torch.where(
+        all_candidates_invalid.unsqueeze(-1),
+        torch.zeros_like(gathered_goals),
+        gathered_goals,
+    )
+    selected_goal_valid = ~all_candidates_invalid & torch.isfinite(selected_goals[..., :2]).all(dim=-1)
+
+    return {
+        "selected_goals": selected_goals,
+        "selected_indices": selected_indices,
+        "nearest_unsafe_indices": fallback_indices,
+        "selected_goal_valid": selected_goal_valid,
+        "all_candidates_invalid": all_candidates_invalid,
+        "candidate_safe_mask": candidate_safe_mask,
+        "candidate_in_bounds_mask": in_bounds,
+        "candidate_cell_values": cell_values,
+        "candidate_guidance_distances": distances,
+    }
+
+
 class SBertModelBase(nn.Module):
     def __init__(self, cfgs):
         super().__init__()
@@ -236,6 +392,7 @@ class SBertPlusMGPConfig:
         kld_clamp=None,
         share=False,
         normal=False,
+        guidance_conditioned=False,
         backbone_type="bert",
         binary_scene=False,
     ):
@@ -271,6 +428,7 @@ class SBertPlusMGPConfig:
         self.cvae_sigma = cvae_sigma
         self.kld_clamp = kld_clamp
         self.normal = normal
+        self.guidance_conditioned = guidance_conditioned
         _apply_runtime_fields(self, backbone_type=backbone_type, binary_scene=binary_scene)
 
 
@@ -310,6 +468,7 @@ class SBertPlusFTConfig:
         self.num_goal_layer = goal_cfgs.num_layer
         self.num_goal_head = goal_cfgs.num_head
         self.normal = goal_cfgs.normal
+        self.guidance_conditioned = goal_cfgs.guidance_conditioned
         self.share = share
         self.backbone_type = traj_cfgs.backbone_type
         self.binary_scene = traj_cfgs.binary_scene
@@ -423,7 +582,7 @@ class SBertPlusPTModel(SBertModelBase):
             "attentions": enc_h["attentions"],
         }
 
-
+# trajectory 예측 -> ade loss
 class SBertPlusTGPModel(SBertModelBase):
     def __init__(self, cfgs):
         super().__init__(cfgs)
@@ -519,7 +678,10 @@ class SBertPlusTGPModel(SBertModelBase):
             "attentions": outputs["attentions"],
         }
 
-
+# goal 예측(CVAE) -> kld_loss + gde_loss
+# kld_loss: CVAE의 KL divergence
+# gde_loss
+# col_loss: 충돌 loss
 class SBertPlusMGPModel(SBertModelBase):
     def __init__(self, goal_cfgs, share_enc=None):
         super().__init__(goal_cfgs)
@@ -528,6 +690,7 @@ class SBertPlusMGPModel(SBertModelBase):
             hidden_size=goal_cfgs.hidden_size,
             obs_len=goal_cfgs.obs_len,
             pred_len=goal_cfgs.pred_len,
+            token_offset=0 if goal_cfgs.guidance_conditioned else 1,
             act_fn=goal_cfgs.act_fn,
         )
         self.gt_goal_encoder = GoalEncoder(
@@ -723,11 +886,25 @@ class SBertPlusFTModel(SBertModelBase):
             self.mgp_model = SBertPlusMGPModel(mgp_cfgs)
         self.init_weights()
 
+    # ── k개 복제용 (MGP 흐름) ──────────────────────────────────────────────
+    # MGP가 예측한 k개 goal을 spatial_ids에 삽입, TGP 입력용 준비
     def add_goals(self, spatial_ids, goals, mask_val, pad_val):
         spatial_ids = spatial_ids.unsqueeze(1).repeat(1, self.cfgs.k_sample, 1, 1)
-        spatial_ids[:, :, 1 + self.cfgs.obs_len : self.cfgs.obs_len + self.cfgs.pred_len, :] = mask_val
-        spatial_ids[:, :, self.cfgs.obs_len + self.cfgs.pred_len, : self.cfgs.goal_dim] = goals
-        spatial_ids[:, :, self.cfgs.obs_len + self.cfgs.pred_len, self.cfgs.goal_dim :] = pad_val
+        spatial_ids[:, :, 1 + self.cfgs.obs_len : 1 + self.cfgs.obs_len + self.cfgs.pred_len, :] = mask_val
+        spatial_ids[:, :, 1 + self.cfgs.obs_len + self.cfgs.pred_len, : self.cfgs.goal_dim] = goals
+        spatial_ids[:, :, 1 + self.cfgs.obs_len + self.cfgs.pred_len, self.cfgs.goal_dim :] = pad_val
+        return spatial_ids
+
+    # ── goal 1개용 (GT goal 흐름) ──────────────────────────────────────────
+    # GT goal 하나를 spatial_ids에 삽입 (k배 복제 없음)
+    # 학습 때 dataset.py가 만드는 tgp_spatial_ids와 동일한 형태
+    def add_single_goal(self, spatial_ids, goal, mask_val, pad_val):
+        # spatial_ids: (batch, seq_len, input_dim) → 그대로 유지 (복제 없음)
+        spatial_ids = spatial_ids.clone()
+        # 중간 pred 구간 [MSK]로 채움 (1+obs_len ~ obs_len+pred_len)
+        spatial_ids[:, 1 + self.cfgs.obs_len : 1 + self.cfgs.obs_len + self.cfgs.pred_len, :] = mask_val
+        spatial_ids[:, 1 + self.cfgs.obs_len + self.cfgs.pred_len, : self.cfgs.goal_dim] = goal
+        spatial_ids[:, 1 + self.cfgs.obs_len + self.cfgs.pred_len, self.cfgs.goal_dim :] = pad_val
         return spatial_ids
 
     def inference(
@@ -748,6 +925,8 @@ class SBertPlusFTModel(SBertModelBase):
         d_sample=0,
     ):
         traj_batch_size, traj_seq_len, traj_spatial_dim = mgp_spatial_ids.size()
+
+        # MGP prior에서 goal k개 샘플링
         mgp_out = self.mgp_model.inference(
             spatial_ids=mgp_spatial_ids,
             segment_ids=mgp_segment_ids,
@@ -761,10 +940,11 @@ class SBertPlusFTModel(SBertModelBase):
             output_attentions=output_attentions,
             d_sample=d_sample,
         )
+        pred_goals = mgp_out["pred_goals"]       # (batch, k, goal_dim)
 
         k_goal_spatial_ids = self.add_goals(
             mgp_spatial_ids,
-            mgp_out["pred_goals"],
+            pred_goals,
             mask_val=self.cfgs.view_range,
             pad_val=-self.cfgs.view_range,
         ).view(-1, traj_seq_len, self.cfgs.input_dim)
@@ -798,11 +978,166 @@ class SBertPlusFTModel(SBertModelBase):
         )
 
         pred_trajs = tgp_out["pred_trajs"].reshape(traj_batch_size, self.cfgs.k_sample, self.cfgs.pred_len, self.cfgs.output_dim)
-        pred_goals = mgp_out["pred_goals"].reshape(traj_batch_size, self.cfgs.k_sample, self.cfgs.goal_dim)
+        pred_goals = pred_goals.reshape(traj_batch_size, self.cfgs.k_sample, self.cfgs.goal_dim)
+        return {
+            "pred_trajs": pred_trajs,          # (batch, k, pred_len, 2)
+            "pred_goals": pred_goals,          # (batch, k, 2)
+            "goal_attentions": mgp_out["attentions"],
+            "traj_attentions": tgp_out["attentions"],
+        }
+
+    def inference_guided(
+        self,
+        mgp_spatial_ids,
+        mgp_temporal_ids,
+        mgp_segment_ids,
+        mgp_attn_mask,
+        tgp_temporal_ids,
+        tgp_segment_ids,
+        tgp_attn_mask,
+        guidance_points,
+        env_spatial_ids,
+        env_temporal_ids,
+        env_segment_ids,
+        env_attn_mask,
+        envs,
+        envs_params,
+        output_attentions=False,
+        d_sample=0,
+        reject_unknown=True,
+    ):
+        """MGP candidates -> map filter -> nearest guidance goal -> one TGP."""
+        if not self.cfgs.guidance_conditioned:
+            raise ValueError("inference_guided requires a guidance-conditioned MGP")
+
+        mgp_out = self.mgp_model.inference(
+            spatial_ids=mgp_spatial_ids,
+            segment_ids=mgp_segment_ids,
+            temporal_ids=mgp_temporal_ids,
+            attn_mask=mgp_attn_mask,
+            env_spatial_ids=env_spatial_ids,
+            env_temporal_ids=env_temporal_ids,
+            env_segment_ids=env_segment_ids,
+            env_attn_mask=env_attn_mask,
+            envs=envs,
+            output_attentions=output_attentions,
+            d_sample=d_sample,
+        )
+        candidate_goals = mgp_out["pred_goals"]
+        selection = select_guided_goal_candidates(
+            candidate_goals,
+            guidance_points,
+            envs,
+            envs_params,
+            reject_unknown=reject_unknown,
+        )
+        selected_goals = selection["selected_goals"]
+        goal_spatial_ids = self.add_single_goal(
+            mgp_spatial_ids,
+            selected_goals,
+            mask_val=self.cfgs.view_range,
+            pad_val=-self.cfgs.view_range,
+        )
+        tgp_out = self.tgp_model.inference(
+            spatial_ids=goal_spatial_ids,
+            segment_ids=tgp_segment_ids,
+            temporal_ids=tgp_temporal_ids,
+            attn_mask=tgp_attn_mask,
+            env_spatial_ids=env_spatial_ids,
+            env_segment_ids=env_segment_ids,
+            env_temporal_ids=env_temporal_ids,
+            env_attn_mask=env_attn_mask,
+            envs=envs,
+            output_attentions=output_attentions,
+        )
+        trajectory_classification = classify_map_points(
+            tgp_out["pred_trajs"],
+            envs,
+            envs_params,
+            reject_unknown=reject_unknown,
+        )
+        trajectory_map_safe = trajectory_classification["point_safe_mask"].all(dim=1)
+        execution_valid = selection["selected_goal_valid"] & trajectory_map_safe
+        # Invalid goal selection or an unsafe/non-finite TGP path is a hard
+        # stop. Return a deterministic zero trajectory even if the caller
+        # forgets to gate on execution_valid.
+        pred_trajs = torch.where(
+            execution_valid[:, None, None],
+            tgp_out["pred_trajs"],
+            torch.zeros_like(tgp_out["pred_trajs"]),
+        )
         return {
             "pred_trajs": pred_trajs,
-            "pred_goals": pred_goals,
+            "pred_goals": selected_goals,
+            "candidate_goals": candidate_goals,
+            "trajectory_point_safe_mask": trajectory_classification["point_safe_mask"],
+            "trajectory_point_in_bounds_mask": trajectory_classification[
+                "point_in_bounds_mask"
+            ],
+            "trajectory_point_cell_values": trajectory_classification[
+                "point_cell_values"
+            ],
+            "trajectory_map_safe": trajectory_map_safe,
+            "execution_valid": execution_valid,
             "goal_attentions": mgp_out["attentions"],
+            "traj_attentions": tgp_out["attentions"],
+            **selection,
+        }
+
+    # ── 새 함수: GT goal → TGP 단독 호출 → trajectory 1개 ─────────────────
+    # 학습 때 TGP가 본 입력 형태와 완전히 동일
+    # 실 환경에서 GPS goal이 확정되었을 때 사용
+    def inference_with_gt_goal(
+        self,
+        mgp_spatial_ids,       # obs + 이웃 시퀀스 (add_single_goal에서 goal 삽입)
+        tgp_temporal_ids,
+        tgp_segment_ids,
+        tgp_attn_mask,
+        gt_goals,              # (batch, goal_dim) — local 좌표 GT goal
+        env_spatial_ids=None,
+        env_temporal_ids=None,
+        env_segment_ids=None,
+        env_attn_mask=None,
+        envs=None,
+        output_attentions=False,
+    ):
+        # GT goal 하나를 시퀀스에 삽입 (k배 복제 없음)
+        # 학습 때 tgp_spatial_ids = [SOT]+obs×8+[MSK]×12+goal_lbl 과 동일한 형태
+        goal_spatial_ids = self.add_single_goal(
+            mgp_spatial_ids,
+            gt_goals,
+            mask_val=self.cfgs.view_range,
+            pad_val=-self.cfgs.view_range,
+        )  # (batch, seq_len, input_dim)
+
+        if self.cfgs.scene:
+            tgp_env_spatial_ids  = env_spatial_ids
+            tgp_env_segment_ids  = env_segment_ids
+            tgp_env_temporal_ids = env_temporal_ids
+            tgp_env_attn_mask    = env_attn_mask
+        else:
+            tgp_env_spatial_ids  = None
+            tgp_env_segment_ids  = None
+            tgp_env_temporal_ids = None
+            tgp_env_attn_mask    = None
+
+        # TGP 단독 호출 — trajectory 1개만 생성 (MGP 호출 없음)
+        tgp_out = self.tgp_model.inference(
+            spatial_ids=goal_spatial_ids,
+            segment_ids=tgp_segment_ids,
+            temporal_ids=tgp_temporal_ids,
+            attn_mask=tgp_attn_mask,
+            env_spatial_ids=tgp_env_spatial_ids,
+            env_segment_ids=tgp_env_segment_ids,
+            env_temporal_ids=tgp_env_temporal_ids,
+            env_attn_mask=tgp_env_attn_mask,
+            envs=envs,
+            output_attentions=output_attentions,
+        )
+
+        return {
+            "pred_trajs": tgp_out["pred_trajs"],   # (batch, pred_len, 2)
+            "pred_goals": gt_goals,                # (batch, 2)
             "traj_attentions": tgp_out["attentions"],
         }
 

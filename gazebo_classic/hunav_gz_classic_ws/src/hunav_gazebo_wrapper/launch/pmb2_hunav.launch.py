@@ -24,7 +24,7 @@ from launch.actions import (IncludeLaunchDescription, DeclareLaunchArgument,
                             SetEnvironmentVariable, SetLaunchConfiguration, GroupAction) 
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.conditions import IfCondition, UnlessCondition
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 from launch_ros.parameter_descriptions import ParameterValue
@@ -55,6 +55,9 @@ def generate_launch_description():
 
     # Create the launch description and populate
     ld = LaunchDescription()
+    ld.add_action(DeclareLaunchArgument("navigation", default_value="True"))
+    ld.add_action(DeclareLaunchArgument("slam", default_value="False"))
+    ld.add_action(DeclareLaunchArgument("use_rviz", default_value="True"))
     launch_arguments = LaunchArguments()
 
     launch_arguments.add_to_launch_description(ld)
@@ -73,12 +76,6 @@ def declare_actions(
 
     set_public_sim = SetLaunchConfiguration('is_public_sim', 'True')
     launch_description.add_action(set_public_sim)
-
-    set_slam = SetLaunchConfiguration('slam', 'False')
-    launch_description.add_action(set_slam)
-
-    set_nav = SetLaunchConfiguration('navigation', 'True')
-    launch_description.add_action(set_nav)
 
     set_log_level = SetLaunchConfiguration('log_level', 'debug')
     #launch_description.add_action(set_log_level)
@@ -234,7 +231,10 @@ def declare_actions(
             ),
             "use_sim_time": "True",
         }.items(),
-        condition=IfCondition(LaunchConfiguration("navigation"))
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration("navigation"), "' == 'True' and '",
+            LaunchConfiguration("use_rviz"), "' == 'True'"
+        ]))
     )
 
     launch_description.add_action(nav2_bringup_launch)

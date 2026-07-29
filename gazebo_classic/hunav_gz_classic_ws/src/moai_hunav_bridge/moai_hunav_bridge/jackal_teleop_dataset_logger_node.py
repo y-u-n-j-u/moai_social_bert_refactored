@@ -8,6 +8,7 @@ from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import numpy as np
 import rclpy
+from geometry_msgs.msg import PoseStamped
 from hunav_msgs.msg import Agent, Agents
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -27,6 +28,7 @@ class JackalTeleopDatasetLoggerNode(Node):
         self.enabled = self._as_bool(self.declare_parameter("enabled", False).value)
         self.robot_topic = str(self.declare_parameter("robot_topic", "/robot_states").value)
         self.human_states_topic = str(self.declare_parameter("human_states_topic", "/human_states").value)
+        self.goal_topic = str(self.declare_parameter("goal_topic", "/goal_pose").value)
         self.output_path = str(
             self.declare_parameter(
                 "output_path",
@@ -36,6 +38,8 @@ class JackalTeleopDatasetLoggerNode(Node):
         self.obs_len = int(self.declare_parameter("obs_len", 8).value)
         self.pred_len = int(self.declare_parameter("pred_len", 12).value)
         self.record_dt = float(self.declare_parameter("record_dt", 0.4).value)
+        self.guidance_point_radius = float(self.declare_parameter("guidance_point_radius", 8.0).value)
+        self.require_goal = self._as_bool(self.declare_parameter("require_goal", True).value)
         self.sample_stride = int(self.declare_parameter("sample_stride", 1).value)
         self.flush_every = int(self.declare_parameter("flush_every", 10).value)
         self.max_samples = int(self.declare_parameter("max_samples", 0).value)
@@ -45,8 +49,10 @@ class JackalTeleopDatasetLoggerNode(Node):
         self.seq_len = self.obs_len + self.pred_len
         self._latest_robot: Optional[Tuple[float, float]] = None
         self._latest_humans: Dict[int, Tuple[float, float]] = {}
+        self._latest_goal: Optional[Tuple[float, float]] = None
         self._last_robot_stamp: Optional[float] = None
         self._last_humans_stamp: Optional[float] = None
+        self._last_goal_stamp: Optional[float] = None
         self._last_record_stamp: Optional[float] = None
         self._frame_count = 0
         self._last_flushed_sample_count = 0
@@ -56,12 +62,14 @@ class JackalTeleopDatasetLoggerNode(Node):
 
         self._robot_sub = self.create_subscription(Agent, self.robot_topic, self._on_robot, 10)
         self._humans_sub = self.create_subscription(Agents, self.human_states_topic, self._on_humans, 10)
+        self._goal_sub = self.create_subscription(PoseStamped, self.goal_topic, self._on_goal, 10)
         self._timer = self.create_timer(1.0 / max(self.timer_rate, 0.1), self._on_timer)
 
         state = "enabled" if self.enabled else "disabled"
         self.get_logger().info(
             f"Robot target dataset logger {state}; robot={self.robot_topic}, humans={self.human_states_topic}, "
-            f"output={self.output_path}"
+            f"goal={self.goal_topic}, require_goal={self.require_goal}, "
+            f"guidance_radius={self.guidance_point_radius:.2f}, output={self.output_path}"
         )
 
     @staticmethod
@@ -86,6 +94,14 @@ class JackalTeleopDatasetLoggerNode(Node):
         }
         self._last_humans_stamp = self._now_float()
 
+    def _on_goal(self, msg: PoseStamped) -> None:
+        self._latest_goal = (float(msg.pose.position.x), float(msg.pose.position.y))
+        self._last_goal_stamp = self._now_float()
+        self.get_logger().info(
+            f"Updated dataset final_goal from {self.goal_topic}: "
+            f"({self._latest_goal[0]:.3f}, {self._latest_goal[1]:.3f})"
+        )
+
     def _on_timer(self) -> None:
         if not self.enabled:
             return
@@ -109,6 +125,8 @@ class JackalTeleopDatasetLoggerNode(Node):
                 "frame": self._frame_count,
                 "robot": self._latest_robot,
                 "humans": dict(self._latest_humans),
+                "goal": self._latest_goal,
+                "goal_stamp": self._last_goal_stamp,
             }
         )
 
@@ -122,6 +140,8 @@ class JackalTeleopDatasetLoggerNode(Node):
         if self._latest_robot is None or self._last_robot_stamp is None:
             return False
         if self._last_humans_stamp is None:
+            return False
+        if self.require_goal and self._latest_goal is None:
             return False
         if stamp - self._last_robot_stamp > self.stale_timeout:
             return False
@@ -165,6 +185,18 @@ class JackalTeleopDatasetLoggerNode(Node):
                 trajs[row, t_idx, 0] = pos[0]
                 trajs[row, t_idx, 1] = pos[1]
 
+        obs_end_frame = frames[self.obs_len - 1]
+        final_goal = obs_end_frame.get("goal")
+        goal_stamp = obs_end_frame.get("goal_stamp")
+        final_goal_source = "rviz_goal_pose"
+        if final_goal is None:
+            if self.require_goal:
+                return
+            final_goal = tuple(trajs[0, -1].astype(np.float32))
+            final_goal_source = "target_future_endpoint_fallback"
+        current_xy = trajs[0, self.obs_len - 1]
+        guidance_point = self._guidance_point_from_goal(current_xy, final_goal)
+
         self._samples.append(trajs)
         self._sample_meta.append(
             {
@@ -176,8 +208,32 @@ class JackalTeleopDatasetLoggerNode(Node):
                 "end_stamp": frames[-1]["stamp"],
                 "start_frame": frames[0]["frame"],
                 "end_frame": frames[-1]["frame"],
+                "final_goal": [float(final_goal[0]), float(final_goal[1])],
+                "final_goal_source": final_goal_source,
+                "goal_topic": self.goal_topic,
+                "goal_stamp": float(goal_stamp) if goal_stamp is not None else None,
+                "guidance_point": [float(guidance_point[0]), float(guidance_point[1])],
+                "guidance_radius": float(max(0.0, self.guidance_point_radius)),
+                "guidance_policy": "circle_line_intersection_to_final_goal",
             }
         )
+
+    def _guidance_point_from_goal(
+        self,
+        current_xy: np.ndarray,
+        final_goal_xy: Tuple[float, float],
+    ) -> Tuple[float, float]:
+        cx = float(current_xy[0])
+        cy = float(current_xy[1])
+        gx = float(final_goal_xy[0])
+        gy = float(final_goal_xy[1])
+        dx = gx - cx
+        dy = gy - cy
+        dist = float(np.hypot(dx, dy))
+        if dist <= 1e-6:
+            return gx, gy
+        step = min(max(0.0, self.guidance_point_radius), dist)
+        return cx + dx / dist * step, cy + dy / dist * step
 
     def _flush(self, *, force: bool) -> None:
         if not self.enabled:
@@ -209,6 +265,11 @@ class JackalTeleopDatasetLoggerNode(Node):
                 "neighbor_future": "recorded_when_available",
                 "robot_topic": self.robot_topic,
                 "human_states_topic": self.human_states_topic,
+                "goal_topic": self.goal_topic,
+                "require_goal": self.require_goal,
+                "final_goal_source": "rviz_goal_pose_when_available",
+                "guidance_policy": "circle_line_intersection_to_final_goal",
+                "guidance_radius": float(max(0.0, self.guidance_point_radius)),
                 "description": "Each all_trajs item has the robot at row 0 and human neighbors in rows 1:.",
             },
         }

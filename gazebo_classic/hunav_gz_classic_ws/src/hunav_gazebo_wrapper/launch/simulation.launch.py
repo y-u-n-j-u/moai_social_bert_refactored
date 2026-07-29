@@ -3,6 +3,7 @@ from os import environ
 from os import pathsep
 from scripts import GazeboRosPaths
 from ament_index_python.packages import get_package_prefix, get_package_share_directory
+from ament_index_python.packages import PackageNotFoundError
 
 from launch import LaunchDescription
 from launch.actions import (IncludeLaunchDescription, SetEnvironmentVariable, 
@@ -33,6 +34,7 @@ def generate_launch_description():
     navgoal_topic = LaunchConfiguration('navgoal_topic')
     ignore_models = LaunchConfiguration('ignore_models')
     use_gazebo_gui = LaunchConfiguration('use_gazebo_gui')
+    use_rviz = LaunchConfiguration('use_rviz')
     use_hunav_evaluator = LaunchConfiguration('use_hunav_evaluator')
     navigation = LaunchConfiguration('navigation')
     use_static_map_odom = LaunchConfiguration('use_static_map_odom')
@@ -96,6 +98,14 @@ def generate_launch_description():
     social_bert_debug_model_io_image_agent_id = LaunchConfiguration('social_bert_debug_model_io_image_agent_id')
     social_bert_debug_model_io_image_every = LaunchConfiguration('social_bert_debug_model_io_image_every')
     jackal_spubert_controller = LaunchConfiguration('jackal_spubert_controller')
+    robot_path_planner = LaunchConfiguration('robot_path_planner')
+    robot_spubert_repo_path = LaunchConfiguration('robot_spubert_repo_path')
+    robot_spubert_config_path = LaunchConfiguration('robot_spubert_config_path')
+    robot_spubert_checkpoint_path = LaunchConfiguration('robot_spubert_checkpoint_path')
+    robot_spubert_cuda = LaunchConfiguration('robot_spubert_cuda')
+    robot_spubert_d_sample = LaunchConfiguration('robot_spubert_d_sample')
+    robot_spubert_replan_period = LaunchConfiguration('robot_spubert_replan_period')
+    robot_spubert_fallback_to_nav2 = LaunchConfiguration('robot_spubert_fallback_to_nav2')
     learned_agent_motion = PythonExpression(
         ["'", agent_motion_model, "' in ['social_bert', 'spubert', 'moai_spubert']"]
     )
@@ -172,7 +182,11 @@ def generate_launch_description():
         'models',
     ])
     pmb2_gazebo_models = path.join(get_package_prefix('pmb2_description'), 'share')
-    jackal_gazebo_models = path.join(get_package_prefix('jackal_description'), 'share')
+    optional_gazebo_model_paths = [pmb2_gazebo_models]
+    try:
+        optional_gazebo_model_paths.append(path.join(get_package_prefix('jackal_description'), 'share'))
+    except PackageNotFoundError:
+        pass
 
     config_file_name = 'params.yaml' 
     pkg_dir = get_package_share_directory('hunav_gazebo_wrapper') 
@@ -195,17 +209,27 @@ def generate_launch_description():
     }
     print('env:', env)
 
+    gazebo_model_path_values = [
+        EnvironmentVariable('GAZEBO_MODEL_PATH'),
+        TextSubstitution(text=pathsep),
+        my_gazebo_models,
+    ]
+    gazebo_resource_path_values = [
+        EnvironmentVariable('GAZEBO_RESOURCE_PATH'),
+        TextSubstitution(text=pathsep),
+        my_gazebo_models,
+    ]
+    for model_path in optional_gazebo_model_paths:
+        gazebo_model_path_values.extend([TextSubstitution(text=pathsep), model_path])
+        gazebo_resource_path_values.extend([TextSubstitution(text=pathsep), model_path])
+
     set_env_gazebo_model = SetEnvironmentVariable(
-        name='GAZEBO_MODEL_PATH', 
-        value=[EnvironmentVariable('GAZEBO_MODEL_PATH'), TextSubstitution(text=pathsep),
-               my_gazebo_models, TextSubstitution(text=pathsep), pmb2_gazebo_models,
-               TextSubstitution(text=pathsep), jackal_gazebo_models]
+        name='GAZEBO_MODEL_PATH',
+        value=gazebo_model_path_values
     )
     set_env_gazebo_resource = SetEnvironmentVariable(
-        name='GAZEBO_RESOURCE_PATH', 
-        value=[EnvironmentVariable('GAZEBO_RESOURCE_PATH'), TextSubstitution(text=pathsep),
-               my_gazebo_models, TextSubstitution(text=pathsep), pmb2_gazebo_models,
-               TextSubstitution(text=pathsep), jackal_gazebo_models]
+        name='GAZEBO_RESOURCE_PATH',
+        value=gazebo_resource_path_values
     )
     set_env_gazebo_plugin = SetEnvironmentVariable(
         name='GAZEBO_PLUGIN_PATH', 
@@ -297,7 +321,8 @@ def generate_launch_description():
             'x': gz_x,
             'y': gz_y,
             'yaw': gz_Y,
-            'navigation': 'True',
+            'navigation': navigation,
+            'use_rviz': use_rviz,
             'advanced_navigation': 'False',
             'slam': 'False',
         }.items(),
@@ -440,7 +465,49 @@ def generate_launch_description():
             {'predicted_paths_topic': '/moai/social_bert_predicted_paths'},
             {'cloud_topic': '/moai/human_obstacle_cloud'},
         ],
-        condition=IfCondition(PythonExpression(["'", navigation, "' == 'True' and '", robot_type, "' == 'jackal'"]))
+        condition=IfCondition(PythonExpression([
+            "'", navigation, "' == 'True' and '", robot_type,
+            "' in ['jackal', 'pmb2']"
+        ]))
+    )
+
+    spubert_nav2_bridge_node = Node(
+        package='moai_hunav_bridge',
+        executable='spubert_nav2_bridge_node',
+        name='spubert_nav2_bridge',
+        output='screen',
+        parameters=[
+            {'use_sim_time': True},
+            {'execution_mode': robot_path_planner},
+            {'robot_topic': '/robot_states'},
+            {'humans_topic': '/human_states'},
+            {'goal_topic': '/goal_pose'},
+            {'predicted_humans_topic': '/moai/social_bert_predicted_paths'},
+            {'path_topic': '/moai/spubert_robot_path'},
+            {'marker_topic': '/moai/spubert_robot_path_markers'},
+            {'status_topic': '/moai/spubert_robot_planner_status'},
+            {'model_repo_path': robot_spubert_repo_path},
+            {'model_config_path': robot_spubert_config_path},
+            {'model_checkpoint_path': robot_spubert_checkpoint_path},
+            {'map_yaml_path': spubert_map_yaml_path},
+            {'use_cuda': robot_spubert_cuda},
+            {'d_sample': robot_spubert_d_sample},
+            {'guidance_radius': spubert_guidance_point_radius},
+            {'obs_len': 8},
+            {'pred_len': 12},
+            {'prediction_dt': 0.4},
+            {'replan_period': robot_spubert_replan_period},
+            {'goal_tolerance': 0.40},
+            {'robot_radius': 0.275},
+            {'static_safety_margin': 0.10},
+            {'min_human_center_distance': 1.20},
+            {'human_safety_margin': 0.25},
+            {'max_robot_speed': 1.50},
+            {'fallback_to_nav2': robot_spubert_fallback_to_nav2},
+        ],
+        condition=IfCondition(PythonExpression([
+            "'", navigation, "' == 'True' and '", robot_type, "' == 'pmb2'"
+        ]))
     )
 
     spubert_jackal_controller_node = Node(
@@ -542,6 +609,11 @@ def generate_launch_description():
         'use_gazebo_gui',
         default_value=EnvironmentVariable('HUNAV_USE_GAZEBO_GUI', default_value='true'),
         description='Launch gzclient. Set false for headless/faster simulation.'
+    )
+    declare_use_rviz = DeclareLaunchArgument(
+        'use_rviz',
+        default_value=EnvironmentVariable('HUNAV_USE_RVIZ', default_value='True'),
+        description='Launch RViz for PMB2 navigation.'
     )
     declare_use_hunav_evaluator = DeclareLaunchArgument(
         'use_hunav_evaluator',
@@ -856,6 +928,61 @@ def generate_launch_description():
         default_value=EnvironmentVariable('HUNAV_JACKAL_SPUBERT_CONTROLLER', default_value='False'),
         description='Launch experimental SPU-BERT local controller for Jackal on /cmd_vel.'
     )
+    declare_robot_path_planner = DeclareLaunchArgument(
+        'robot_path_planner',
+        default_value=EnvironmentVariable('HUNAV_ROBOT_PATH_PLANNER', default_value='nav2'),
+        description='PMB2 planner mode: nav2, monitor, or spubert.'
+    )
+    declare_robot_spubert_repo_path = DeclareLaunchArgument(
+        'robot_spubert_repo_path',
+        default_value=EnvironmentVariable(
+            'HUNAV_ROBOT_SPUBERT_REPO_PATH',
+            default_value='/home/hunav_gz_classic_ws/src/moai_social_bert_refactored'
+        ),
+        description='Guidance-conditioned moai_social_bert_refactored repository.'
+    )
+    declare_robot_spubert_config_path = DeclareLaunchArgument(
+        'robot_spubert_config_path',
+        default_value=EnvironmentVariable(
+            'HUNAV_ROBOT_SPUBERT_CONFIG_PATH',
+            default_value=(
+                '/home/hunav_gz_classic_ws/src/moai_social_bert_refactored/'
+                'configs/spubert/moai_social_nav_ext_scene_guided_fs.yaml'
+            )
+        ),
+        description='Guidance-conditioned robot SPU-BERT YAML.'
+    )
+    declare_robot_spubert_checkpoint_path = DeclareLaunchArgument(
+        'robot_spubert_checkpoint_path',
+        default_value=EnvironmentVariable(
+            'HUNAV_ROBOT_SPUBERT_CHECKPOINT',
+            default_value=(
+                '/home/hunav_gz_classic_ws/src/moai_social_bert_refactored/'
+                'output/spubert_moai_gazebo_guided_mgp_fs/model_best.pth'
+            )
+        ),
+        description='Fine-tuned guidance-conditioned robot SPU-BERT checkpoint.'
+    )
+    declare_robot_spubert_cuda = DeclareLaunchArgument(
+        'robot_spubert_cuda',
+        default_value=EnvironmentVariable('HUNAV_ROBOT_SPUBERT_CUDA', default_value='true'),
+        description='Use CUDA for the PMB2 guided SPU-BERT planner.'
+    )
+    declare_robot_spubert_d_sample = DeclareLaunchArgument(
+        'robot_spubert_d_sample',
+        default_value=EnvironmentVariable('HUNAV_ROBOT_SPUBERT_D_SAMPLE', default_value='40'),
+        description='MGP latent samples used for each online PMB2 replan.'
+    )
+    declare_robot_spubert_replan_period = DeclareLaunchArgument(
+        'robot_spubert_replan_period',
+        default_value=EnvironmentVariable('HUNAV_ROBOT_SPUBERT_REPLAN_PERIOD', default_value='0.8'),
+        description='Seconds between SPU-BERT FollowPath updates.'
+    )
+    declare_robot_spubert_fallback_to_nav2 = DeclareLaunchArgument(
+        'robot_spubert_fallback_to_nav2',
+        default_value=EnvironmentVariable('HUNAV_ROBOT_SPUBERT_FALLBACK_NAV2', default_value='True'),
+        description='Fall back to standard NavigateToPose when a learned path is unsafe.'
+    )
     declare_frame_to_publish = DeclareLaunchArgument(
         'global_frame_to_publish', default_value='map',
         description='Name of the global frame in which the position of the agents are provided'
@@ -933,6 +1060,7 @@ def generate_launch_description():
     ld.add_action(declare_update_rate)
     ld.add_action(declare_robot_type)
     ld.add_action(declare_use_gazebo_gui)
+    ld.add_action(declare_use_rviz)
     ld.add_action(declare_use_hunav_evaluator)
     ld.add_action(declare_agent_motion_model)
     ld.add_action(declare_social_bert_predictor)
@@ -993,6 +1121,14 @@ def generate_launch_description():
     ld.add_action(declare_social_bert_debug_model_io_image_agent_id)
     ld.add_action(declare_social_bert_debug_model_io_image_every)
     ld.add_action(declare_jackal_spubert_controller)
+    ld.add_action(declare_robot_path_planner)
+    ld.add_action(declare_robot_spubert_repo_path)
+    ld.add_action(declare_robot_spubert_config_path)
+    ld.add_action(declare_robot_spubert_checkpoint_path)
+    ld.add_action(declare_robot_spubert_cuda)
+    ld.add_action(declare_robot_spubert_d_sample)
+    ld.add_action(declare_robot_spubert_replan_period)
+    ld.add_action(declare_robot_spubert_fallback_to_nav2)
     ld.add_action(declare_robot_name)
     ld.add_action(declare_frame_to_publish)
     ld.add_action(declare_use_navgoal)
@@ -1022,6 +1158,7 @@ def generate_launch_description():
     # hunav evaluator
     ld.add_action(hunav_evaluator_node)
     ld.add_action(human_obstacle_cloud_node)
+    ld.add_action(spubert_nav2_bridge_node)
     ld.add_action(spubert_jackal_controller_node)
 
     # launch Gazebo after worldGenerator 

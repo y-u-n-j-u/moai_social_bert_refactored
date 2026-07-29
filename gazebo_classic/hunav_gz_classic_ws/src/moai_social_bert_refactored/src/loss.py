@@ -60,30 +60,34 @@ def cal_idx_from_pos(pos, min_pos, max_idx, res):
 
 def goal_collision_loss(pred_goals, envs, envs_params):
     num_goal = 0
-    num_col_goal = 0
+    num_col_goal = torch.zeros((), dtype=torch.double, device=pred_goals.device)
     for bidx, bgoal in enumerate(pred_goals):
         num_goal += bgoal.size(dim=0)
         bgoal = bgoal.reshape(-1, 2)
         x_ids, x_valid = cal_idx_from_pos(bgoal[:, 0], envs_params[bidx][0], envs_params[bidx][2], envs_params[bidx][4])
         y_ids, y_valid = cal_idx_from_pos(bgoal[:, 1], envs_params[bidx][1], envs_params[bidx][3], envs_params[bidx][4])
         valid = (x_valid & y_valid).to(pred_goals.device)
+        num_col_goal += torch.sum(~valid).double()
         vals = envs[bidx][y_ids[valid], x_ids[valid]]
-        num_col_goal += torch.sum(vals > envs_params[bidx][5]).double()
-    return torch.div(num_col_goal, num_goal)
+        unsafe = (vals <= 0) | (vals >= envs_params[bidx][5])
+        num_col_goal += torch.sum(unsafe).double()
+    return torch.div(num_col_goal, max(num_goal, 1))
 
 
 def pos_collision_loss(pred_trajs, envs, envs_params):
     num_pos = 0
-    num_col_pos = 0
+    num_col_pos = torch.zeros((), dtype=torch.double, device=pred_trajs.device)
     for bidx, btraj in enumerate(pred_trajs):
         btraj = btraj.reshape(-1, 2)
+        num_pos += btraj.size(dim=0)
         x_ids, x_valid = cal_idx_from_pos(btraj[:, 0], envs_params[bidx][0], envs_params[bidx][2], envs_params[bidx][4])
         y_ids, y_valid = cal_idx_from_pos(btraj[:, 1], envs_params[bidx][1], envs_params[bidx][3], envs_params[bidx][4])
         valid = (x_valid & y_valid).to(pred_trajs.device)
-        num_pos += torch.sum(valid)
+        num_col_pos += torch.sum(~valid).double()
         vals = envs[bidx][y_ids[valid], x_ids[valid]]
-        num_col_pos += torch.sum(vals > envs_params[bidx][5]).double()
-    return torch.div(num_col_pos, num_pos)
+        unsafe = (vals <= 0) | (vals >= envs_params[bidx][5])
+        num_col_pos += torch.sum(unsafe).double()
+    return torch.div(num_col_pos, max(num_pos, 1))
 
 
 def bom_loss_3(pred_goals, pred_trajs, gt_goals, gt_trajs, k_sample, output_dim=2):

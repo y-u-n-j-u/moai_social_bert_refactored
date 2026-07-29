@@ -1,7 +1,13 @@
 import argparse
 import math
 import random
+import sys
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
@@ -15,6 +21,7 @@ bootstrap_paths()
 
 from spubert.datasets.ethucy import ETHUCYDataset
 from spubert.datasets.ethucy_sbert import ETHUCYSBertDataset
+from spubert.datasets.ethucy_sbert_extended_goal import ETHUCYSBertDataset as ETHUCYSBertExtendedGoalDataset
 from spubert.datasets.ethucy_star import ETHUCYSTARDataset
 from spubert.datasets.ethucy_tpp import ETHUCYTPPDataset
 from spubert.datasets.jrdb import JRDBDataset as SPUBertJRDBDataset
@@ -73,6 +80,14 @@ def parse_args():
     parser.add_argument("--subsample_stride", type=int, default=3, help="JRDB only")
     parser.add_argument("--traj_scale", type=float, default=1.0, help="JRDB only")
     parser.add_argument("--out", default="")
+    parser.add_argument("--robot_only", action="store_true",
+                        help="trackId=0(로봇)만 target으로 사용 (보행자는 neighbor로만 사용)")
+    parser.add_argument("--use_gt_goal", action="store_true",
+                        help="GT goal을 직접 주입해서 TGP만 단독 실행 (MGP skip)")
+    parser.add_argument("--plot_range", type=float, default=None,
+                        help="그래프 표시 반경(m). 지정 시 target 중심으로 ±plot_range로 축 고정 (view_range와 무관)")
+    parser.add_argument("--goal_extra_frames", type=int, default=0,
+                        help="ext 데이터셋 사용 시 goal을 몇 step 더 멀리 줄지 (0=step12, 10=step22)")
     return parser.parse_args()
 
 
@@ -106,8 +121,10 @@ def _build_dataset_args(args):
         aug=False,
         viz=False,
         scene=args.scene,
+        robot_only=args.robot_only,
         subsample_stride=args.subsample_stride,
         traj_scale=args.traj_scale,
+        goal_extra_frames=args.goal_extra_frames,
     )
 
 
@@ -121,8 +138,11 @@ def _load_dataset(args):
         dataset = ETHUCYTPPDataset(split=args.split, args=ds_args)
     elif name == "ethucy_star":
         dataset = ETHUCYSTARDataset(split=args.split, args=ds_args)
-    elif name == "ethucy_sbert":
+    elif name in ("ethucy_sbert", "ethucy_sbert_test1", "ethucy_sbert_test2"):
         dataset = ETHUCYSBertDataset(split=args.split, args=ds_args)
+    elif name in ("ethucy_sbert_ext", "ethucy_sbert_test1_ext", "ethucy_sbert_test2_ext"):
+        ds_args.dataset_name = name.replace("_ext", "")  # ethucy_sbert_ext → ethucy_sbert 폴더 사용
+        dataset = ETHUCYSBertExtendedGoalDataset(split=args.split, args=ds_args)
     elif name == "sdd_sbert":
         ds_args.dataset_split = "default"
         dataset = SDDSBertDataset(split=args.split, args=ds_args)
@@ -432,43 +452,70 @@ def _collect_samples(args):
             env_attn_mask = item["env_attn_mask"].unsqueeze(0).to(device) if "env_attn_mask" in item else None
             envs = item["envs"].unsqueeze(0).to(device) if "envs" in item else None
 
-            outputs = model.inference(
-                mgp_spatial_ids=batched["mgp_spatial_ids"],
-                mgp_temporal_ids=batched["mgp_temporal_ids"],
-                mgp_segment_ids=batched["mgp_segment_ids"],
-                mgp_attn_mask=batched["mgp_attn_mask"],
-                tgp_temporal_ids=batched["tgp_temporal_ids"],
-                tgp_segment_ids=batched["tgp_segment_ids"],
-                tgp_attn_mask=batched["tgp_attn_mask"],
-                env_spatial_ids=env_spatial_ids,
-                env_temporal_ids=env_temporal_ids,
-                env_segment_ids=env_segment_ids,
-                env_attn_mask=env_attn_mask,
-                envs=envs,
-                d_sample=args.d_sample,
-                output_attentions=False,
-            )
-
-            pred_local_all = outputs["pred_trajs"][0].detach().cpu().numpy() * scale
-            pred_goal_local_all = outputs["pred_goals"][0].detach().cpu().numpy() * scale
             gt_local = item["traj_lbl"].detach().cpu().numpy() * scale
-            best_idx = _pick_best(pred_local_all, gt_local, args.best_by)
-            pred_world = _local_to_world(raw_sample, pred_local_all[best_idx], args.obs_len)
-            pred_goal_world_all = _local_points_to_world(raw_sample, pred_goal_local_all, args.obs_len)
 
-            pred_all_world = None
-            if args.plot_k:
-                pred_all_world = [
-                    _local_to_world(raw_sample, pred_local_all[k], args.obs_len)
-                    for k in range(pred_local_all.shape[0])
-                ]
+            if args.use_gt_goal:
+                # GT goal 직접 주입 — TGP 단독 호출, trajectory 1개
+                gt_goals_tensor = item["goal_lbl"].unsqueeze(0).to(device)
+                outputs = model.inference_with_gt_goal(
+                    mgp_spatial_ids=batched["mgp_spatial_ids"],
+                    tgp_temporal_ids=batched["tgp_temporal_ids"],
+                    tgp_segment_ids=batched["tgp_segment_ids"],
+                    tgp_attn_mask=batched["tgp_attn_mask"],
+                    gt_goals=gt_goals_tensor,
+                    env_spatial_ids=env_spatial_ids,
+                    env_temporal_ids=env_temporal_ids,
+                    env_segment_ids=env_segment_ids,
+                    env_attn_mask=env_attn_mask,
+                    envs=envs,
+                    output_attentions=False,
+                )
+                # (batch, pred_len, 2) → (pred_len, 2)
+                pred_local_single = outputs["pred_trajs"][0].detach().cpu().numpy() * scale
+                gt_goal_local = outputs["pred_goals"][0].detach().cpu().numpy() * scale
+                pred_world = _local_to_world(raw_sample, pred_local_single, args.obs_len)
+                gt_goal_world = _local_points_to_world(
+                    raw_sample, gt_goal_local[np.newaxis, :], args.obs_len
+                )[0]
+                pred_all_plot = None          # k개 없음
+                mgp_goals_plot = None         # MGP goal 없음
+                mgp_goal_plot = gt_goal_world # GT goal 표시
+            else:
+                # 기존 흐름 — MGP로 goal k개 예측
+                outputs = model.inference(
+                    mgp_spatial_ids=batched["mgp_spatial_ids"],
+                    mgp_temporal_ids=batched["mgp_temporal_ids"],
+                    mgp_segment_ids=batched["mgp_segment_ids"],
+                    mgp_attn_mask=batched["mgp_attn_mask"],
+                    tgp_temporal_ids=batched["tgp_temporal_ids"],
+                    tgp_segment_ids=batched["tgp_segment_ids"],
+                    tgp_attn_mask=batched["tgp_attn_mask"],
+                    env_spatial_ids=env_spatial_ids,
+                    env_temporal_ids=env_temporal_ids,
+                    env_segment_ids=env_segment_ids,
+                    env_attn_mask=env_attn_mask,
+                    envs=envs,
+                    d_sample=args.d_sample,
+                    output_attentions=False,
+                )
+                # (batch, k, pred_len, 2) → (k, pred_len, 2)
+                pred_local_all = outputs["pred_trajs"][0].detach().cpu().numpy() * scale
+                pred_goal_local_all = outputs["pred_goals"][0].detach().cpu().numpy() * scale
+                best_idx = _pick_best(pred_local_all, gt_local, args.best_by)
+                pred_world = _local_to_world(raw_sample, pred_local_all[best_idx], args.obs_len)
+                pred_goal_world_all = _local_points_to_world(raw_sample, pred_goal_local_all, args.obs_len)
+                pred_all_plot = None
+                if args.plot_k:
+                    pred_all_plot = [
+                        _local_to_world(raw_sample, pred_local_all[k], args.obs_len)
+                        for k in range(pred_local_all.shape[0])
+                    ]
+                mgp_goal_plot = pred_goal_world_all[best_idx]
+                mgp_goals_plot = pred_goal_world_all if args.plot_k else None
 
             obs_plot = obs_world
             gt_plot = gt_world
             pred_plot = pred_world
-            pred_all_plot = pred_all_world
-            mgp_goal_plot = pred_goal_world_all[best_idx]
-            mgp_goals_plot = pred_goal_world_all if args.plot_k else None
             neighbors_plot = neighbors_world_plot
             context_center = context_center_world
             context_heading = context_heading_world
@@ -520,12 +567,13 @@ def _collect_samples(args):
                     "gridmap": gridmap,
                     "grid_extent": grid_extent,
                     "title": title,
+                    "use_gt_goal": args.use_gt_goal,
                 }
             )
     return samples
 
 
-def plot_samples(samples, out_path: Path):
+def plot_samples(samples, out_path: Path, plot_range: float = None):
     n = len(samples)
     cols = min(3, max(1, n))
     rows = math.ceil(n / cols)
@@ -592,11 +640,17 @@ def plot_samples(samples, out_path: Path):
         ax.scatter([gt[-1, 0]], [gt[-1, 1]], color="crimson", s=35)
         ax.scatter([pred[-1, 0]], [pred[-1, 1]], color="black", s=35)
         if mgp_goal is not None:
-            ax.scatter([mgp_goal[0]], [mgp_goal[1]], color="black", marker="x", s=90, linewidths=2.0, zorder=7, label="Chosen MGP goal")
+            label = "GT Goal" if sample.get("use_gt_goal") else "Chosen MGP goal"
+            color = "green" if sample.get("use_gt_goal") else "black"
+            ax.scatter([mgp_goal[0]], [mgp_goal[1]], color=color, marker="x", s=90, linewidths=2.0, zorder=7, label=label)
 
         ax.set_title(sample["title"], fontsize=9)
         ax.set_aspect("equal", adjustable="box")
-        if grid_extent is not None:
+        if plot_range is not None:
+            cx, cy = sample["context_center"]
+            ax.set_xlim(cx - plot_range, cx + plot_range)
+            ax.set_ylim(cy - plot_range, cy + plot_range)
+        elif grid_extent is not None:
             ax.set_xlim(grid_extent[0], grid_extent[1])
             ax.set_ylim(grid_extent[2], grid_extent[3])
         ax.grid(True, alpha=0.25)
@@ -626,11 +680,12 @@ def main():
     if args.out:
         out_path = Path(args.out)
     else:
-        base = Path(args.dataset_path) / args.dataset_name
+        base_name = args.dataset_name.replace("_ext", "") if args.dataset_name.endswith("_ext") else args.dataset_name
+        base = Path(args.dataset_path) / base_name
         out_path = base / f"sampled_{args.dataset_name}_spubert.png"
 
     samples = _collect_samples(args)
-    plot_samples(samples, out_path)
+    plot_samples(samples, out_path, plot_range=args.plot_range)
 
 
 if __name__ == "__main__":

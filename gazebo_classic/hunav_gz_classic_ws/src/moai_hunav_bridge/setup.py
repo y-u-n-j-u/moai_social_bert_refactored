@@ -26,6 +26,7 @@ setup(
             "social_bert_compute_agents_node = moai_hunav_bridge.social_bert_compute_agents_node:main",
             "spubert_compute_agents_node = moai_hunav_bridge.social_bert_compute_agents_node:main",
             "spubert_jackal_controller_node = moai_hunav_bridge.spubert_jackal_controller_node:main",
+            "spubert_nav2_bridge_node = moai_hunav_bridge.spubert_nav2_bridge_node:main",
             "jackal_teleop_dataset_logger_node = moai_hunav_bridge.jackal_teleop_dataset_logger_node:main",
             "pedestrian_dataset_logger_node = moai_hunav_bridge.pedestrian_dataset_logger_node:main",
         ],

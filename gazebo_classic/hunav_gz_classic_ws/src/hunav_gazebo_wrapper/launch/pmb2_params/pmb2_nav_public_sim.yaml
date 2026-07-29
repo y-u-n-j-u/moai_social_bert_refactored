@@ -210,7 +210,9 @@ global_costmap:
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
-        observation_sources: scan human_cloud
+        # Keep moving people out of the global layer. Navfn needs a stable
+        # topological route; pedestrian avoidance is handled by the local layer.
+        observation_sources: scan
         scan:
           topic: /scan_raw
           max_obstacle_height: 2.0
@@ -221,16 +223,6 @@ global_costmap:
           raytrace_min_range: 0.0
           obstacle_max_range: 2.5
           obstacle_min_range: 0.0
-        human_cloud:
-          topic: /moai/human_obstacle_cloud
-          max_obstacle_height: 2.0
-          min_obstacle_height: 0.0
-          clearing: False
-          marking: True
-          data_type: "PointCloud2"
-          obstacle_max_range: 6.0
-          obstacle_min_range: 0.0
-          observation_persistence: 0.4
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
@@ -253,7 +245,9 @@ local_costmap:
       height: 5
       resolution: 0.05
       robot_radius: 0.275
-      plugins: ["voxel_layer", "inflation_layer"]
+      # The static layer is required even when the laser is unavailable or an
+      # actor is not represented by laser returns.
+      plugins: ["static_layer", "voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.5
@@ -282,12 +276,15 @@ local_costmap:
           topic: /moai/human_obstacle_cloud
           max_obstacle_height: 2.0
           min_obstacle_height: 0.0
-          clearing: False
+          clearing: True
           marking: True
           data_type: "PointCloud2"
+          raytrace_max_range: 8.0
+          raytrace_min_range: 0.0
           obstacle_max_range: 6.0
           obstacle_min_range: 0.0
-          observation_persistence: 0.4
+          observation_persistence: 0.0
+          expected_update_rate: 0.2
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True

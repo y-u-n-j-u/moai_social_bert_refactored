@@ -1,5 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
 
-xhost +local:docker
+container_name="hunavsim_pmb2"
+
+cleanup_container() {
+    if docker container inspect "$container_name" >/dev/null 2>&1; then
+        echo "Removing existing container: $container_name"
+        docker rm -f "$container_name" >/dev/null
+    fi
+}
+
+trap cleanup_container EXIT INT TERM
+cleanup_container
+xhost +local:docker >/dev/null 2>&1 || true
 
 # Resolve paths relative to this script so the launcher works from any directory.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,19 +25,36 @@ if [ "${HUNAV_ROBOT_TYPE:-pmb2}" = "jackal" ]; then
     fi
 fi
 
+gpu_args=()
+case "${HUNAV_DOCKER_USE_GPU:-true}" in
+    1|true|TRUE|yes|YES|on|ON)
+        gpu_args=(--gpus all)
+        ;;
+esac
+
 docker run -it \
-    --name hunavsim_pmb2 \
-    --gpus all \
+    --rm \
+    --name "$container_name" \
+    "${gpu_args[@]}" \
     --env="RMW_IMPLEMENTATION=rmw_fastrtps_cpp" \
     --env="HUNAV_ROBOT_TYPE=${HUNAV_ROBOT_TYPE:-pmb2}" \
     --env="HUNAV_ROBOT_NAME=${HUNAV_ROBOT_NAME:-${HUNAV_ROBOT_TYPE:-pmb2}}" \
     --env="HUNAV_AGENT_MOTION_MODEL=${HUNAV_AGENT_MOTION_MODEL:-hunav}" \
     --env="HUNAV_NAVIGATION=${HUNAV_NAVIGATION:-False}" \
+    --env="HUNAV_USE_RVIZ=${HUNAV_USE_RVIZ:-True}" \
     --env="HUNAV_USE_STATIC_MAP_ODOM=${HUNAV_USE_STATIC_MAP_ODOM:-$default_static_map_odom}" \
     --env="HUNAV_UPDATE_RATE=${HUNAV_UPDATE_RATE:-10.0}" \
     --env="HUNAV_JACKAL_LASER=${HUNAV_JACKAL_LASER:-0}" \
     --env="HUNAV_JACKAL_REALSENSE=${HUNAV_JACKAL_REALSENSE:-0}" \
     --env="HUNAV_JACKAL_SPUBERT_CONTROLLER=${HUNAV_JACKAL_SPUBERT_CONTROLLER:-False}" \
+    --env="HUNAV_ROBOT_PATH_PLANNER=${HUNAV_ROBOT_PATH_PLANNER:-nav2}" \
+    --env="HUNAV_ROBOT_SPUBERT_REPO_PATH=${HUNAV_ROBOT_SPUBERT_REPO_PATH:-/home/hunav_gz_classic_ws/src/moai_social_bert_refactored}" \
+    --env="HUNAV_ROBOT_SPUBERT_CONFIG_PATH=${HUNAV_ROBOT_SPUBERT_CONFIG_PATH:-/home/hunav_gz_classic_ws/src/moai_social_bert_refactored/configs/spubert/moai_social_nav_ext_scene_guided_fs.yaml}" \
+    --env="HUNAV_ROBOT_SPUBERT_CHECKPOINT=${HUNAV_ROBOT_SPUBERT_CHECKPOINT:-/home/hunav_gz_classic_ws/src/moai_social_bert_refactored/output/spubert_moai_gazebo_guided_mgp_fs/model_best.pth}" \
+    --env="HUNAV_ROBOT_SPUBERT_CUDA=${HUNAV_ROBOT_SPUBERT_CUDA:-true}" \
+    --env="HUNAV_ROBOT_SPUBERT_D_SAMPLE=${HUNAV_ROBOT_SPUBERT_D_SAMPLE:-40}" \
+    --env="HUNAV_ROBOT_SPUBERT_REPLAN_PERIOD=${HUNAV_ROBOT_SPUBERT_REPLAN_PERIOD:-0.8}" \
+    --env="HUNAV_ROBOT_SPUBERT_FALLBACK_NAV2=${HUNAV_ROBOT_SPUBERT_FALLBACK_NAV2:-True}" \
     --env="HUNAV_SOCIAL_BERT_PREDICTOR=${HUNAV_SOCIAL_BERT_PREDICTOR:-spubert}" \
     --env="HUNAV_SPUBERT_MODEL_PATH=${HUNAV_SPUBERT_MODEL_PATH:-/home/hunav_gz_classic_ws/src/moai_social_bert_refactored/output/ethucy/univ/spubert.pth}" \
     --env="HUNAV_SPUBERT_REPO_PATH=${HUNAV_SPUBERT_REPO_PATH:-/home/hunav_gz_classic_ws/src/moai_social_bert_refactored/runtime/SPUBERT}" \
@@ -72,7 +102,7 @@ docker run -it \
     --env="HUNAV_GZPOSE_Y=${HUNAV_GZPOSE_Y:-0.0}" \
     --env="HUNAV_GZPOSE_Z=${HUNAV_GZPOSE_Z:-0.25}" \
     --env="HUNAV_GZPOSE_YAW=${HUNAV_GZPOSE_YAW:-0.0}" \
-    --env="DISPLAY=$DISPLAY" \
+    --env="DISPLAY=${DISPLAY:-:0}" \
     --env="QT_X11_NO_MITSHM=1" \
     --env="NVIDIA_VISIBLE_DEVICES=all" \
     --env="NVIDIA_DRIVER_CAPABILITIES=all" \
@@ -86,5 +116,3 @@ docker run -it \
     --mount type=bind,source=$cwd/pmb2_overrides/mobile_base_controller_public_sim_fast.yaml,target=/home/pmb2_ws/install/pmb2_controller_configuration/share/pmb2_controller_configuration/config/mobile_base_controller_public_sim.yaml,readonly \
     pmb2_hunavsim \
     bash
-    
-docker rm hunavsim_pmb2

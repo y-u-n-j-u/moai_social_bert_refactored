@@ -113,17 +113,27 @@ class FullTrajPooler(nn.Module):
 
 
 class GoalPooler(nn.Module):
-    def __init__(self, hidden_size, obs_len, pred_len, layer_norm_eps=1e-4, dropout_prob=0.25, act_fn="relu"):
+    def __init__(
+        self,
+        hidden_size,
+        obs_len,
+        pred_len,
+        layer_norm_eps=1e-4,
+        dropout_prob=0.25,
+        act_fn="relu",
+        token_offset=1,
+    ):
         super().__init__()
         self.obs_len = obs_len
         self.pred_len = pred_len
+        self.token_offset = token_offset
         self.linear = nn.Linear(hidden_size, hidden_size)
         self.act_fn = _activation(act_fn)
         self.LayerNorm = nn.LayerNorm(hidden_size, eps=layer_norm_eps)
         self.dropout = nn.Dropout(dropout_prob)
 
     def forward(self, x):
-        x = x[:, self.obs_len + self.pred_len, :]
+        x = x[:, self.obs_len + self.pred_len + self.token_offset, :]
         x = self.act_fn(self.linear(x))
         x = self.LayerNorm(x)
         return self.dropout(x)

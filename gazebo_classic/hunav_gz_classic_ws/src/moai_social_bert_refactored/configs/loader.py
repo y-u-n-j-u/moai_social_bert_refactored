@@ -31,13 +31,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
         'goal_dim': 2,
         'subsample_stride': 3,
         'traj_scale': 1.0,
+        'goal_extra_frames': 8,
+        'local_map_size_m': 8.0,
+        'local_map_grid_size': 32,
     },
     'scene': {
         'enabled': False,
         'env_range': 10.0,
         'env_resol': 0.2,
         'patch_size': 16,
+        'num_patch': None,
         'binary': False,
+        'map_align_to_target': True,
+        'map_source_unknown_value': 0.5,
     },
     'model': {
         'backbone': {
@@ -65,6 +71,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 'k_sample': 20,
                 'd_sample': 400,
                 'normal': False,
+                'guidance_conditioned': False,
+                'reject_unknown_goals': True,
             },
         },
     },
@@ -88,6 +96,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         'clip_grads': False,
         'num_cycle': 0,
         'evaluate_on_test': False,
+        'use_gt_goal': False,
+        'guided_inference': False,
         'optimizer': {
             'name': 'adamw',
             'lr': 1.0e-4,
@@ -147,6 +157,7 @@ def _canonicalize_config(data: dict[str, Any], command: str) -> dict[str, Any]:
     cfg['experiment']['framework'] = normalize_framework(cfg['experiment']['framework'])
     cfg['scene']['enabled'] = _normalize_scene_enabled(cfg['scene']['enabled'])
     cfg['scene']['binary'] = bool(cfg['scene']['binary'])
+    cfg['scene']['map_align_to_target'] = _normalize_scene_enabled(cfg['scene']['map_align_to_target'])
     cfg['runtime']['cuda'] = bool(cfg['runtime']['cuda'])
     cfg['runtime']['viz'] = bool(cfg['runtime']['viz'])
     cfg['runtime']['shuffle'] = bool(cfg['runtime']['shuffle'])
@@ -157,6 +168,13 @@ def _canonicalize_config(data: dict[str, Any], command: str) -> dict[str, Any]:
     cfg['model']['heads']['social']['sip'] = bool(cfg['model']['heads']['social']['sip'])
     cfg['model']['heads']['spubert']['share_backbone'] = bool(cfg['model']['heads']['spubert']['share_backbone'])
     cfg['model']['heads']['spubert']['normal'] = bool(cfg['model']['heads']['spubert']['normal'])
+    cfg['model']['heads']['spubert']['guidance_conditioned'] = bool(
+        cfg['model']['heads']['spubert']['guidance_conditioned']
+    )
+    cfg['model']['heads']['spubert']['reject_unknown_goals'] = bool(
+        cfg['model']['heads']['spubert']['reject_unknown_goals']
+    )
+    cfg['train']['guided_inference'] = bool(cfg['train']['guided_inference'])
 
     if cfg['data']['dataset_name'] == 'sdd_sbert':
         cfg['data']['dataset_split'] = 'default'
@@ -186,6 +204,39 @@ def _validate_config(cfg: dict[str, Any], config_path: str) -> None:
         raise SystemExit(f"Unsupported model.backbone.type in {config_path}: {cfg['model']['backbone']['type']}")
     if cfg['experiment']['framework'] == 'sbert' and cfg['scene']['enabled']:
         raise SystemExit(f'Social-BERT does not use a scene branch: {config_path}')
+    if cfg['data']['dataset_name'] == 'moai_social_nav_ext':
+        if (
+            cfg['experiment']['framework'] != 'spubert'
+            or cfg['experiment']['task'] != 'finetune'
+        ):
+            raise SystemExit(
+                f'MoAI Gazebo data is only supported for SPU-BERT finetuning: {config_path}'
+            )
+        if not cfg['model']['heads']['spubert']['guidance_conditioned']:
+            raise SystemExit(
+                f'MoAI Gazebo data requires model.heads.spubert.guidance_conditioned=true: {config_path}'
+            )
+        if not cfg['scene']['enabled']:
+            raise SystemExit(f'MoAI guided-goal training requires scene.enabled=true: {config_path}')
+    if float(cfg['loss']['col_weight']) != 0.0:
+        raise SystemExit(
+            f'loss.col_weight must remain 0: current grid collision code is a '
+            f'non-differentiable filter/metric, not a training loss: {config_path}'
+        )
+    if cfg['train']['guided_inference'] and cfg['train']['use_gt_goal']:
+        raise SystemExit(
+            f'train.guided_inference and train.use_gt_goal cannot both be true: {config_path}'
+        )
+    if cfg['train']['guided_inference'] and not cfg['scene']['enabled']:
+        raise SystemExit(f'Guided inference requires scene.enabled=true: {config_path}')
+    if cfg['train']['guided_inference'] and not cfg['model']['heads']['spubert']['guidance_conditioned']:
+        raise SystemExit(
+            f'Guided inference requires model.heads.spubert.guidance_conditioned=true: {config_path}'
+        )
+    if cfg['train']['guided_inference'] and (
+        cfg['experiment']['framework'] != 'spubert' or cfg['experiment']['task'] != 'finetune'
+    ):
+        raise SystemExit(f'Guided inference is only supported for SPU-BERT finetuning: {config_path}')
 
 
 def _resolved_act_fn(cfg: dict[str, Any]) -> str:
@@ -237,11 +288,17 @@ def _to_namespace(cfg: dict[str, Any], config_path: str, cli_dry_run: bool) -> a
         goal_dim=data['goal_dim'],
         subsample_stride=data['subsample_stride'],
         traj_scale=data['traj_scale'],
+        goal_extra_frames=data['goal_extra_frames'],
+        local_map_size_m=data['local_map_size_m'],
+        local_map_grid_size=data['local_map_grid_size'],
         scene=scene['enabled'],
         env_range=scene['env_range'],
         env_resol=scene['env_resol'],
         patch_size=scene['patch_size'],
+        num_patch=scene['num_patch'],
         binary_scene=scene['binary'],
+        map_align_to_target=scene['map_align_to_target'],
+        map_source_unknown_value=scene['map_source_unknown_value'],
         backbone_type=backbone['type'],
         hidden=backbone['hidden_size'],
         layer=backbone['num_hidden_layers'],
@@ -256,6 +313,8 @@ def _to_namespace(cfg: dict[str, Any], config_path: str, cli_dry_run: bool) -> a
         k_sample=heads['spubert']['k_sample'],
         d_sample=heads['spubert']['d_sample'],
         normal=heads['spubert']['normal'],
+        guidance_conditioned=heads['spubert']['guidance_conditioned'],
+        reject_unknown_goals=heads['spubert']['reject_unknown_goals'],
         traj_weight=loss['traj_weight'],
         goal_weight=loss['goal_weight'],
         kld_weight=loss['kld_weight'],
@@ -279,6 +338,8 @@ def _to_namespace(cfg: dict[str, Any], config_path: str, cli_dry_run: bool) -> a
         decay_step=train['scheduler']['decay_step'],
         decay_gamma=train['scheduler']['decay_gamma'],
         test=train['evaluate_on_test'],
+        use_gt_goal=train['use_gt_goal'],
+        guided_inference=train['guided_inference'],
         cuda=runtime['cuda'],
         num_worker=runtime['num_worker'],
         model_dir=model_dir,

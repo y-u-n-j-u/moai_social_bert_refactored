@@ -34,7 +34,16 @@ from .model import (
 
 
 def _num_patch(args):
-    return estimate_num_patch(estimate_map_length(args.env_range * 2, args.env_resol), args.patch_size)
+    computed = estimate_num_patch(
+        estimate_map_length(args.env_range * 2, args.env_resol),
+        args.patch_size,
+    )
+    configured = getattr(args, "num_patch", None)
+    if configured is not None and int(configured) != computed:
+        raise ValueError(
+            f"scene.num_patch={configured}, but map settings produce {computed}"
+        )
+    return computed
 
 
 
@@ -101,6 +110,7 @@ def _build_spubert_mgp_config(args):
             "cvae_sigma": args.cvae_sigma,
             "goal_weight": args.goal_weight,
             "normal": args.normal,
+            "guidance_conditioned": args.guidance_conditioned,
         }
     )
     return SBertPlusMGPConfig(**kwargs)
@@ -195,6 +205,27 @@ def _spubert_inference_kwargs(data, *, scene: bool, d_sample):
     return kwargs
 
 
+def _spubert_guided_inference_kwargs(data, *, d_sample, reject_unknown):
+    return {
+        "mgp_spatial_ids": data["mgp_spatial_ids"],
+        "mgp_temporal_ids": data["mgp_temporal_ids"],
+        "mgp_segment_ids": data["mgp_segment_ids"],
+        "mgp_attn_mask": data["mgp_attn_mask"],
+        "tgp_temporal_ids": data["tgp_temporal_ids"],
+        "tgp_segment_ids": data["tgp_segment_ids"],
+        "tgp_attn_mask": data["tgp_attn_mask"],
+        "guidance_points": data["guidance_lbl"],
+        "env_spatial_ids": data["env_spatial_ids"],
+        "env_temporal_ids": data["env_temporal_ids"],
+        "env_segment_ids": data["env_segment_ids"],
+        "env_attn_mask": data["env_attn_mask"],
+        "envs": data["envs"],
+        "envs_params": data["envs_params"],
+        "d_sample": d_sample,
+        "reject_unknown": reject_unknown,
+    }
+
+
 
 class SBertPlusPTTrainer(SimpleTrainerBase):
     def __init__(self, train_dataloader=None, val_dataloader=None, tb_writer=None, args=None):
@@ -276,33 +307,152 @@ class SBertPlusFTTrainer(SimpleTrainerBase):
             reverse=True,
         )
 
-    def test(self, epoch, data_loader, d_sample, k_sample):
+    def test(self, epoch, data_loader, d_sample, k_sample, use_gt_goal: bool = False):
         self.model.eval()
         with torch.no_grad():
+            inference_model = self.model.module if self.parallel else self.model
             total_aderror = 0
             total_fderror = 0
             total_gderror = 0
             total_data = 0
+            total_candidates = 0
+            total_safe_candidates = 0
+            total_valid_selections = 0
+            total_safe_trajectories = 0
+            total_execution_valid = 0
+            total_valid_aderror = 0
+            total_valid_fderror = 0
+            total_valid_gderror = 0
             for _, it_data in _make_eval_pbar(data_loader, epoch, "test"):
                 data = _to_device(it_data, self.device)
-                outputs = self.model.inference(**_spubert_inference_kwargs(data, scene=self.args.scene, d_sample=d_sample))
-                outputs["pred_trajs"] = torch.einsum("bkts,b->bkts", outputs["pred_trajs"], data["scales"])
-                outputs["pred_goals"] = torch.einsum("bks,b->bks", outputs["pred_goals"], data["scales"])
-                data["traj_lbl"] = torch.einsum("bts,b->bts", data["traj_lbl"], data["scales"])
-                data["goal_lbl"] = torch.einsum("bs,b->bs", data["goal_lbl"], data["scales"])
-                gderror, aderror, fderror = bom_loss_3(
-                    outputs["pred_goals"],
-                    outputs["pred_trajs"],
-                    data["goal_lbl"],
-                    data["traj_lbl"],
-                    k_sample,
-                    output_dim=self.args.output_dim,
-                )
+
+                if use_gt_goal:
+                    # GT goal 확정 시 — TGP 단독 호출, trajectory 1개 반환
+                    # inference_with_gt_goal()에 필요한 인자만 추려서 전달
+                    gt_goal_kwargs = {
+                        "mgp_spatial_ids": data["mgp_spatial_ids"],
+                        "tgp_temporal_ids": data["tgp_temporal_ids"],
+                        "tgp_segment_ids": data["tgp_segment_ids"],
+                        "tgp_attn_mask": data["tgp_attn_mask"],
+                        "gt_goals": data["goal_lbl"],
+                    }
+                    if self.args.scene:
+                        gt_goal_kwargs.update({
+                            "env_spatial_ids": data["env_spatial_ids"],
+                            "env_temporal_ids": data["env_temporal_ids"],
+                            "env_segment_ids": data["env_segment_ids"],
+                            "env_attn_mask": data["env_attn_mask"],
+                            "envs": data["envs"],
+                        })
+                    outputs = inference_model.inference_with_gt_goal(**gt_goal_kwargs)
+
+                    # shape: (batch, pred_len, 2) — k 차원 없음
+                    outputs["pred_trajs"] = torch.einsum("bts,b->bts", outputs["pred_trajs"], data["scales"])
+                    outputs["pred_goals"] = torch.einsum("bs,b->bs", outputs["pred_goals"], data["scales"])
+                    data["traj_lbl"] = torch.einsum("bts,b->bts", data["traj_lbl"], data["scales"])
+                    data["goal_lbl"] = torch.einsum("bs,b->bs", data["goal_lbl"], data["scales"])
+
+                    # k=1로 unsqueeze해서 bom_loss_3 재사용
+                    gderror, aderror, fderror = bom_loss_3(
+                        outputs["pred_goals"].unsqueeze(1),    # (batch, 1, 2)
+                        outputs["pred_trajs"].unsqueeze(1),    # (batch, 1, pred_len, 2)
+                        data["goal_lbl"],
+                        data["traj_lbl"],
+                        k_sample=1,
+                        output_dim=self.args.output_dim,
+                    )
+                elif self.args.guided_inference:
+                    outputs = inference_model.inference_guided(
+                        **_spubert_guided_inference_kwargs(
+                            data,
+                            d_sample=d_sample,
+                            reject_unknown=self.args.reject_unknown_goals,
+                        )
+                    )
+                    outputs["pred_trajs"] = torch.einsum(
+                        "bts,b->bts", outputs["pred_trajs"], data["scales"]
+                    )
+                    outputs["pred_goals"] = torch.einsum(
+                        "bs,b->bs", outputs["pred_goals"], data["scales"]
+                    )
+                    data["traj_lbl"] = torch.einsum(
+                        "bts,b->bts", data["traj_lbl"], data["scales"]
+                    )
+                    data["goal_lbl"] = torch.einsum(
+                        "bs,b->bs", data["goal_lbl"], data["scales"]
+                    )
+                    gderror, aderror, fderror = bom_loss_3(
+                        outputs["pred_goals"].unsqueeze(1),
+                        outputs["pred_trajs"].unsqueeze(1),
+                        data["goal_lbl"],
+                        data["traj_lbl"],
+                        k_sample=1,
+                        output_dim=self.args.output_dim,
+                    )
+                    valid = outputs["execution_valid"]
+                    if valid.any():
+                        valid_gde, valid_ade, valid_fde = bom_loss_3(
+                            outputs["pred_goals"][valid].unsqueeze(1),
+                            outputs["pred_trajs"][valid].unsqueeze(1),
+                            data["goal_lbl"][valid],
+                            data["traj_lbl"][valid],
+                            k_sample=1,
+                            output_dim=self.args.output_dim,
+                        )
+                        total_valid_gderror += valid_gde
+                        total_valid_aderror += valid_ade
+                        total_valid_fderror += valid_fde
+                    total_candidates += outputs["candidate_safe_mask"].numel()
+                    total_safe_candidates += int(outputs["candidate_safe_mask"].sum().item())
+                    total_valid_selections += int(outputs["selected_goal_valid"].sum().item())
+                    total_safe_trajectories += int(outputs["trajectory_map_safe"].sum().item())
+                    total_execution_valid += int(outputs["execution_valid"].sum().item())
+                else:
+                    # 기존 흐름 — MGP로 goal 예측, trajectory k개 반환
+                    outputs = inference_model.inference(
+                        **_spubert_inference_kwargs(data, scene=self.args.scene, d_sample=d_sample)
+                    )
+                    # shape: (batch, k, pred_len, 2)
+                    outputs["pred_trajs"] = torch.einsum("bkts,b->bkts", outputs["pred_trajs"], data["scales"])
+                    outputs["pred_goals"] = torch.einsum("bks,b->bks", outputs["pred_goals"], data["scales"])
+                    data["traj_lbl"] = torch.einsum("bts,b->bts", data["traj_lbl"], data["scales"])
+                    data["goal_lbl"] = torch.einsum("bs,b->bs", data["goal_lbl"], data["scales"])
+
+                    gderror, aderror, fderror = bom_loss_3(
+                        outputs["pred_goals"],
+                        outputs["pred_trajs"],
+                        data["goal_lbl"],
+                        data["traj_lbl"],
+                        k_sample,
+                        output_dim=self.args.output_dim,
+                    )
+
                 total_aderror += aderror
                 total_fderror += fderror
                 total_gderror += gderror
                 total_data += len(data["mgp_spatial_ids"])
 
+            if self.args.guided_inference:
+                safe_rate = total_safe_candidates / max(total_candidates, 1)
+                valid_rate = total_valid_selections / max(total_data, 1)
+                trajectory_safe_rate = total_safe_trajectories / max(total_data, 1)
+                execution_valid_rate = total_execution_valid / max(total_data, 1)
+                if total_execution_valid:
+                    valid_ade = float(total_valid_aderror / total_execution_valid)
+                    valid_fde = float(total_valid_fderror / total_execution_valid)
+                    valid_gde = float(total_valid_gderror / total_execution_valid)
+                else:
+                    valid_ade = valid_fde = valid_gde = float("nan")
+                print(
+                    f"[GUIDED] safe_candidate_rate={safe_rate:.6f} "
+                    f"selected_goal_valid_rate={valid_rate:.6f} "
+                    f"trajectory_map_safe_rate={trajectory_safe_rate:.6f} "
+                    f"execution_valid_rate={execution_valid_rate:.6f} "
+                    f"all_invalid={total_data - total_valid_selections}/{total_data} "
+                    f"valid_only_ADE={valid_ade:.6f} "
+                    f"valid_only_FDE={valid_fde:.6f} "
+                    f"valid_only_GDE={valid_gde:.6f}"
+                )
             return total_aderror / total_data, total_fderror / total_data, total_gderror / total_data
 
     def val_iteration(self, epoch, data_loader):
@@ -435,7 +585,13 @@ def _train_spubert_finetune(trainer, args, epoch: int):
         tgp_loss = outputs["tgp_loss"].mean()
         loss = mgp_loss + tgp_loss
         mse = outputs["ade_loss"].mean()
-
+        # 수정한 부분 #################
+        if torch.isnan(mgp_loss) or torch.isnan(tgp_loss) or torch.isinf(mgp_loss) or torch.isinf(tgp_loss):
+            print("[ERROR] NaN/Inf detected")
+            print("mgp_loss:", mgp_loss)
+            print("tgp_loss:", tgp_loss)
+            break
+        ########################
         mgp_loss.backward()
         tgp_loss.backward()
         if trainer.args.clip_grads:

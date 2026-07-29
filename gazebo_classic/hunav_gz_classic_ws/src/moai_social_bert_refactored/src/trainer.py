@@ -33,8 +33,9 @@ def _base_stream_length(obs_len: int, pred_len: int, num_nbr: int) -> int:
 def _scene_tokens(args) -> int:
     if not getattr(args, "scene", False):
         return 0
-    if hasattr(args, "num_patch"):
-        return int(getattr(args, "num_patch"))
+    configured = getattr(args, "num_patch", None)
+    if configured is not None:
+        return int(configured)
     map_length = estimate_map_length(float(args.env_range) * 2.0, float(args.env_resol))
     return int(estimate_num_patch(map_length, int(args.patch_size)))
 
@@ -45,6 +46,8 @@ def format_token_contract_report(args) -> str:
     pred_len = int(args.pred_len)
     num_nbr = int(args.num_nbr)
     base_stream_len = _base_stream_length(obs_len, pred_len, num_nbr)
+    guidance_conditioned = bool(getattr(args, "guidance_conditioned", False))
+    stream_len = base_stream_len + (1 if guidance_conditioned else 0)
 
     lines: list[str] = ["[TOKEN_CONTRACT]"]
     if framework == "sbert":
@@ -67,7 +70,7 @@ def format_token_contract_report(args) -> str:
     lines.extend(
         [
             f"framework=spubert mode={args.mode}",
-            f"base_stream_tokens={base_stream_len}",
+            f"base_stream_tokens={stream_len}",
             f"scene_patch_tokens={_scene_tokens(args)}",
         ]
     )
@@ -79,14 +82,24 @@ def format_token_contract_report(args) -> str:
             ]
         )
     else:
-        lines.extend(
-            [
-                f"mgp_stream_tokens={base_stream_len}",
-                f"tgp_stream_tokens={base_stream_len}",
-                "mgp_stream=[SOT] + obs + [PAD]*(pred-1) + [MSK] + neighbors([SEP] + obs)",
-                "tgp_stream=[SOT] + obs + [MSK]*(pred-1) + [GOAL] + neighbors([SEP] + obs)",
-            ]
-        )
+        if guidance_conditioned:
+            lines.extend(
+                [
+                    f"mgp_stream_tokens={stream_len}",
+                    f"tgp_stream_tokens={stream_len}",
+                    "mgp_stream=[SOT] + obs + [PAD]*(pred-1) + [MSK] + [GUIDANCE] + neighbors([SEP] + obs)",
+                    "tgp_stream=[SOT] + obs + [MSK]*pred + [GOAL] + neighbors([SEP] + obs)",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    f"mgp_stream_tokens={stream_len}",
+                    f"tgp_stream_tokens={stream_len}",
+                    "mgp_stream=[SOT] + obs + [PAD]*(pred-1) + [MSK] + neighbors([SEP] + obs)",
+                    "tgp_stream=[SOT] + obs + [MSK]*(pred-1) + [GOAL] + neighbors([SEP] + obs)",
+                ]
+            )
 
     if args.scene:
         lines.extend(
@@ -200,7 +213,8 @@ def run_train(argv: list[str] | None = None) -> int:
             metric_msg = ""
             if args.test and test_loader is not None and ((epoch + 1) % max(args.eval_interval, 1) == 0):
                 if args.framework == "spubert" and args.mode == "finetune":
-                    metrics = trainer.test(epoch, test_loader, args.d_sample, args.k_sample)
+                    metrics = trainer.test(epoch, test_loader, args.d_sample, args.k_sample,
+                                           use_gt_goal=getattr(args, "use_gt_goal", False))
                     writer.add_scalar("test/ade", float(metrics[0]), epoch)
                     writer.add_scalar("test/fde", float(metrics[1]), epoch)
                     writer.add_scalar("test/gde", float(metrics[2]), epoch)
@@ -259,7 +273,8 @@ def run_test(argv: list[str] | None = None) -> int:
     model.load_state_dict(state)
 
     if args.framework == "spubert":
-        ade, fde, gde = trainer.test(epoch=0, data_loader=test_loader, d_sample=args.d_sample, k_sample=args.k_sample)
+        ade, fde, gde = trainer.test(epoch=0, data_loader=test_loader, d_sample=args.d_sample, k_sample=args.k_sample,
+                                     use_gt_goal=getattr(args, "use_gt_goal", False))
         print(f"[TEST] ADE={float(ade):.6f} FDE={float(fde):.6f} GDE={float(gde):.6f}")
     else:
         ade, fde = trainer.test(epoch=0, data_loader=test_loader)

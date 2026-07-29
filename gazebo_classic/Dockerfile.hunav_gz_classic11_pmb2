@@ -144,17 +144,23 @@ RUN git clone -b ros2 https://github.com/wg-perception/people.git
 #RUN git clone -b humble https://github.com/robotics-upo/hunav_gazebo_wrapper.git
 
 
-# Install Groot2 v1.6.1 
+# Install Groot2 v1.6.1 for BehaviorTree debugging.
+# Groot2 is optional for Gazebo/Nav2 simulation, so keep the image build working
+# even when the upstream AppImage URL is temporarily blocked or unavailable.
 WORKDIR /opt/Groot2
-
-ADD https://s3.us-west-1.amazonaws.com/download.behaviortree.dev/groot2_linux_installer/Groot2-v1.6.1-x86_64.AppImage Groot2.AppImage
-
-RUN chmod +x Groot2.AppImage && \
-    ./Groot2.AppImage --appimage-extract && \
-    mkdir -p /opt/Groot2/bin && \
-    mv squashfs-root /opt/Groot2/squashfs && \
-    ln -s /opt/Groot2/squashfs/AppRun /opt/Groot2/bin/groot2 && \
-    rm Groot2.AppImage
+ARG GROOT2_URL="https://s3.us-west-1.amazonaws.com/download.behaviortree.dev/groot2_linux_installer/Groot2-v1.6.1-x86_64.AppImage"
+RUN set -eux; \
+    if wget -O Groot2.AppImage "$GROOT2_URL"; then \
+        chmod +x Groot2.AppImage; \
+        ./Groot2.AppImage --appimage-extract; \
+        mkdir -p /opt/Groot2/bin; \
+        mv squashfs-root /opt/Groot2/squashfs; \
+        ln -sf /opt/Groot2/squashfs/AppRun /opt/Groot2/bin/groot2; \
+        rm Groot2.AppImage; \
+    else \
+        echo "Warning: failed to download Groot2; continuing without optional Groot2 GUI."; \
+        rm -f Groot2.AppImage; \
+    fi
 
 
 WORKDIR /home/pmb2_ws/src

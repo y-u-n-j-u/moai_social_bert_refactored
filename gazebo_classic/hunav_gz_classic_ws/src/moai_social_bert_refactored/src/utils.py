@@ -439,7 +439,12 @@ class MultiKMeans:
     def fit_predict(self, X):
         _, batch_size, _ = X.shape
         device_obj = X.device
-        self.centroids = X[:, np.random.choice(batch_size, size=[self.n_clusters]), :]
+        if batch_size < self.n_clusters:
+            raise ValueError(
+                f"MultiKMeans needs at least {self.n_clusters} samples, got {batch_size}"
+            )
+        initial_indices = torch.randperm(batch_size, device=device_obj)[: self.n_clusters]
+        self.centroids = X[:, initial_indices, :]
         self.num_points_in_clusters = torch.ones(self.n_kmeans, self.n_clusters, device=device_obj)
 
         for _ in range(self.max_iter):
@@ -447,8 +452,13 @@ class MultiKMeans:
             uniques = [closest[i].unique(return_counts=True) for i in range(self.n_kmeans)]
             expanded_closest = closest[:, None].expand(-1, self.n_clusters, -1)
             mask = (expanded_closest == torch.arange(self.n_clusters, device=device_obj)[None, :, None]).float()
-            c_grad = mask @ X / mask.sum(-1, keepdim=True)
-            c_grad[c_grad != c_grad] = 0
+            cluster_sizes = mask.sum(-1, keepdim=True)
+            computed_centroids = (mask @ X) / cluster_sizes.clamp_min(1.0)
+            c_grad = torch.where(
+                cluster_sizes == 0,
+                self.centroids,
+                computed_centroids,
+            )
             error = (c_grad - self.centroids).pow(2).sum()
             for j in range(self.n_kmeans):
                 self.num_points_in_clusters[j, uniques[j][0]] += uniques[j][1]

@@ -319,10 +319,25 @@ namespace hunav
     }
     catch (const std::exception &e)
     {
-      RCLCPP_ERROR(
+      const std::string fallback_path = bt_dir_base_ + "/BTRegularNav.xml";
+      RCLCPP_WARN(
           this->get_logger(),
-          "Failed to load BT XML for agent %d: %s - Check %s for any format mistakes",
-          _agent.id, e.what(), fullpath.c_str());
+          "Failed to load BT XML for agent %d from %s: %s. "
+          "Falling back to %s",
+          _agent.id, fullpath.c_str(), e.what(), fallback_path.c_str());
+      try
+      {
+        trees_[_agent.id] =
+          factory_.createTreeFromFile(fallback_path, blackboard);
+      }
+      catch (const std::exception &fallback_error)
+      {
+        RCLCPP_ERROR(
+            this->get_logger(),
+            "Failed to load fallback BT for agent %d: %s",
+            _agent.id, fallback_error.what());
+        return;
+      }
     }
 
     if (_agent.id == 1)

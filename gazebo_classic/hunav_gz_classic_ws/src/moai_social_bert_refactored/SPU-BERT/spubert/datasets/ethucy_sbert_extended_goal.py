@@ -12,7 +12,7 @@ import pandas as pd
 import tqdm
 import yaml
 import cv2
-from .dataset import moai_social_bertDataset
+from .dataset_extended_goal import moai_social_bertDataset
 from .grid_map_numpy import RectangularGridMap
 from .util import is_target_outbound
 
@@ -24,14 +24,32 @@ class ETHUCYSBertDataset(moai_social_bertDataset):
         df_data.head()
         self.env = {}
         self.min_obs_len = self.args.min_obs_len if self.split == 'train' else self.args.obs_len
-        # num_scene = 0
-        # self.scales = {}
         with open(os.path.join(self.path, 'scales.yml'), 'r') as f:
             self.scales = yaml.load(f, Loader=yaml.FullLoader)
-        scene_trajs, meta, scene_ids, scene_frames, scene_start_frames = self.split_trajectories_by_scene(df_data, self.args.obs_len+self.args.pred_len)
+
+        # 확장 goal 설정: pred 끝보다 goal_extra_frames 만큼 더 앞의 위치를 goal로 사용
+        self.goal_extra_frames = getattr(args, 'goal_extra_frames', 10)
+        self.all_extended_goals = []
+
+        # (sceneId, trackId, frame) → (x_px, y_px) 빠른 조회용 딕셔너리
+        frame_lookup = {}
+        for _, row in df_data.iterrows():
+            scene = row['sceneId']
+            if scene not in frame_lookup:
+                frame_lookup[scene] = {}
+            frame_lookup[scene][(row['trackId'], row['frame'])] = (row['x'], row['y'])
+
+        # 씬별 frame 간격 계산
+        frame_gaps = {}
+        for scene_id, grp in df_data.groupby('sceneId'):
+            unique_frames = sorted(grp['frame'].unique())
+            frame_gaps[scene_id] = int(unique_frames[1] - unique_frames[0]) if len(unique_frames) > 1 else 10
+
+        total_len = self.args.obs_len + self.args.pred_len
+        scene_trajs, meta, scene_ids, scene_frames, scene_start_frames = self.split_trajectories_by_scene(df_data, total_len)
 
         if args.scene:
-            for trajs, scene_id, frames, start_frames in zip(scene_trajs, scene_ids, scene_frames, scene_start_frames):
+            for trajs, meta_df, scene_id, frames, start_frames in zip(scene_trajs, meta, scene_ids, scene_frames, scene_start_frames):
                 img_path = os.path.join(self.path, scene_id, 'oracle.png')
                 homo_path = os.path.join(self.path, scene_id + '_H.txt')
                 homo_mat = np.loadtxt(homo_path)
@@ -68,43 +86,65 @@ class ETHUCYSBertDataset(moai_social_bertDataset):
                 grid_map.set_value_from_xy_pos(unoccupied_xys[:, 0], unoccupied_xys[:, 1], 1.0)
                 self.envs[scene_id] = grid_map
 
+                # trackId, pred_end_frame 추출 (extended goal 조회용)
+                trackids = meta_df['trackId'].to_numpy().reshape(-1, total_len)[:, 0]
+                pred_end_frames = meta_df['frame'].to_numpy().reshape(-1, total_len)[:, -1]
+                fgap = frame_gaps[scene_id]
+
                 robot_only = getattr(self.args, 'robot_only', False)
                 for start_frame in start_frames:
-                    curr_trajs = trajs[frames == start_frame]
+                    mask = (frames == start_frame)
+                    curr_trajs = trajs[mask]
                     curr_trajs = self.scales[scene_id] * curr_trajs
+                    curr_trackids = trackids[mask]
+                    curr_pred_ends = pred_end_frames[mask]
                     idx_range = [0] if robot_only else range(len(curr_trajs))
                     for idx in idx_range:
                         tmp_curr_trajs = curr_trajs.copy()
                         if idx != 0:
                             tmp_curr_trajs[[0, idx]] = tmp_curr_trajs[[idx, 0]]
-                        # collision Filtering
-                        # vals, valid = grid_map.get_value_from_xy_pos(tmp_curr_trajs[0][:, 0], tmp_curr_trajs[0][:, 1])
-                        # if np.any(vals > 1):
-                        #     print("Trajectory is on structure.")
-                        #     continue
                         if is_target_outbound(tmp_curr_trajs[0], self.args.obs_len, traj_bound=self.args.view_range):
                             print("Target is outbound.")
                             continue
                         self.all_trajs.append(tmp_curr_trajs)
                         self.all_scenes.append(scene_id)
-                # self.all_trajs = self.all_trajs[:100]
+
+                        # extended goal 계산 (scene 모드: x,y swap 후 image2world)
+                        # 0 ~ goal_extra_frames 각각에 대해 goal 저장 (랜덤 샘플링용)
+                        goals_by_extra = {}
+                        for extra in range(0, self.goal_extra_frames + 1):
+                            ext_frame = curr_pred_ends[idx] + extra * fgap
+                            key = (curr_trackids[idx], ext_frame)
+                            if key in frame_lookup.get(scene_id, {}):
+                                x_px, y_px = frame_lookup[scene_id][key]
+                                px_arr = np.array([[y_px, x_px]])  # scene 모드: swap
+                                world_xy = self.image2world(px_arr, homo_mat) * self.scales[scene_id]
+                                goals_by_extra[extra] = world_xy[0]
+                        self.all_extended_goals.append(goals_by_extra)
+
                 if self.split == 'test' and self.args.viz and len(self.all_trajs) > 100:
                     break
         else:
-            for trajs, scene_id, frames, start_frames in zip(scene_trajs, scene_ids, scene_frames, scene_start_frames):
+            for trajs, meta_df, scene_id, frames, start_frames in zip(scene_trajs, meta, scene_ids, scene_frames, scene_start_frames):
                 homo_path = os.path.join(self.path, scene_id + '_H.txt')
                 homo_mat = np.loadtxt(homo_path)
                 num_ped, seq_len, sdim = trajs.shape
-                # if scene_id in ['eth', 'hotel']:
-                #     trajs[:, :, [0, 1]] = trajs[:, :, [1, 0]]
                 trajs = trajs.reshape(-1, 2)
                 trajs = self.image2world(trajs, homo_mat)
                 trajs = trajs.reshape(num_ped, seq_len, sdim)
 
+                # trackId, pred_end_frame 추출 (extended goal 조회용)
+                trackids = meta_df['trackId'].to_numpy().reshape(-1, total_len)[:, 0]
+                pred_end_frames = meta_df['frame'].to_numpy().reshape(-1, total_len)[:, -1]
+                fgap = frame_gaps[scene_id]
+
                 robot_only = getattr(self.args, 'robot_only', False)
                 for start_frame in start_frames:
-                    curr_trajs = trajs[frames == start_frame]
+                    mask = (frames == start_frame)
+                    curr_trajs = trajs[mask]
                     curr_trajs = self.scales[scene_id] * curr_trajs
+                    curr_trackids = trackids[mask]
+                    curr_pred_ends = pred_end_frames[mask]
                     idx_range = [0] if robot_only else range(len(curr_trajs))
                     for idx in idx_range:
                         tmp_curr_trajs = curr_trajs.copy()
@@ -115,6 +155,20 @@ class ETHUCYSBertDataset(moai_social_bertDataset):
                             continue
                         self.all_trajs.append(tmp_curr_trajs)
                         self.all_scenes.append(scene_id)
+
+                        # extended goal 계산 (non-scene 모드: swap 없이 image2world)
+                        # 0 ~ goal_extra_frames 각각에 대해 goal 저장 (랜덤 샘플링용)
+                        goals_by_extra = {}
+                        for extra in range(0, self.goal_extra_frames + 1):
+                            ext_frame = curr_pred_ends[idx] + extra * fgap
+                            key = (curr_trackids[idx], ext_frame)
+                            if key in frame_lookup.get(scene_id, {}):
+                                x_px, y_px = frame_lookup[scene_id][key]
+                                px_arr = np.array([[x_px, y_px]])
+                                world_xy = self.image2world(px_arr, homo_mat) * self.scales[scene_id]
+                                goals_by_extra[extra] = world_xy[0]
+                        self.all_extended_goals.append(goals_by_extra)
+
                 if self.split == 'test' and self.args.viz and len(self.all_trajs) > 100:
                     break
 
