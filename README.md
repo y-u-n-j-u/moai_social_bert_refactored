@@ -1,4 +1,117 @@
-# hunavsim_containers
+# Gazebo → guided SPU-BERT end-to-end pipeline
+
+이 브랜치는 하나의 저장소에서 다음 전체 흐름을 실행한다.
+
+```text
+HuNavSim + Gazebo + PMB2 + Nav2
+  → robot/pedestrian/RViz goal trajectory PKL 수집
+  → 8 m guidance point + heading-aligned 32×32 local map 생성
+  → RViz-goal episode 단위 train/val/test 분할
+  → 윤주 guided SPU-BERT 입력 shape 전수 검증
+  → MGP 후보 goal 생성 + map 필터 + TGP trajectory 학습
+```
+
+학습 checkpoint는 저장소에 포함하지 않는다. Gazebo 데이터로 from-scratch
+학습하면 `model_best.pth`가 로컬 `output/` 아래에 생성된다.
+
+## 권장 환경
+
+- Ubuntu 22.04
+- NVIDIA GPU 및 드라이버
+- Docker Engine
+- NVIDIA Container Toolkit
+
+## 1. Clone
+
+```bash
+git clone \
+  --branch agent/hunavsim-gazebo-nav2-spubert-integration \
+  https://github.com/wnsdnnn/moai_social_bert_refactored.git
+
+cd moai_social_bert_refactored
+```
+
+## 2. Docker 환경 구축
+
+```bash
+./scripts/setup.sh
+```
+
+이 명령은 다음 이미지 두 개를 만든다.
+
+- `pmb2_hunavsim`: ROS 2 Humble + HuNavSim + Gazebo Classic + PMB2 + Nav2
+- `moai-social-bert:cu124`: guided SPU-BERT 데이터 검증 및 학습
+
+## 3. Gazebo 실행 및 데이터 수집
+
+```bash
+./scripts/run_simulation.sh pmb2_run_001
+```
+
+터미널에서 scenario를 선택한 다음 RViz의 `Nav2 Goal`로 도달 가능한 목적지를
+여러 번 지정한다. 새로운 RViz goal을 보낼 때마다 새 episode가 시작되므로,
+한 번의 실행에서도 최소 3개 이상의 goal episode를 수집해야
+train/val/test를 분리할 수 있다.
+
+원본 PKL:
+
+```text
+gazebo_classic/hunav_gz_classic_ws/moai_recordings/pmb2_run_001.pkl
+```
+
+## 4. 후처리·분할·입력 검증
+
+두 번째 인자는 선택한 scenario가 사용하는 map 이름이다.
+
+```bash
+./scripts/prepare_dataset.sh \
+  gazebo_classic/hunav_gz_classic_ws/moai_recordings/pmb2_run_001.pkl \
+  compact_corridor
+```
+
+다른 주행을 추가하려면 이름을 바꿔 3번과 4번을 반복한다. 기존에 처리된
+모든 주행은 매번 다시 합쳐지고, `(recording_id, episode_id)` 단위로
+train/val/test가 생성된다. 따라서 같은 sliding-window episode가 서로 다른
+split에 들어가지 않는다.
+
+최종 split:
+
+```text
+gazebo_classic/hunav_gz_classic_ws/src/moai_social_bert_refactored/
+  data/processed/gazebo/splits_episode/
+    pmb2_true_goal_gp_v1_clean_social_train.pkl
+    pmb2_true_goal_gp_v1_clean_social_val.pkl
+    pmb2_true_goal_gp_v1_clean_social_test.pkl
+```
+
+## 5. 전체 검증과 학습
+
+```bash
+# 모델 설정과 경로만 확인
+./scripts/train.sh --dry_run
+
+# 단위 테스트 + 전 sample 입력 검증 + GPU forward/backward
+./scripts/validate.sh
+
+# 기본 200 epoch 학습
+./scripts/train.sh
+```
+
+학습 결과:
+
+```text
+gazebo_classic/hunav_gz_classic_ws/src/moai_social_bert_refactored/
+  output/spubert_moai_gazebo_guided_mgp_fs/model_best.pth
+```
+
+실행에 문제가 생기면 세부 수집 설명은
+[`gazebo_classic/PMB2_DATA_COLLECTION.md`](gazebo_classic/PMB2_DATA_COLLECTION.md),
+guided MGP/TGP 입력과 모델 설명은
+[`GAZEBO_GUIDED_MGP.md`](gazebo_classic/hunav_gz_classic_ws/src/moai_social_bert_refactored/GAZEBO_GUIDED_MGP.md)를 확인한다.
+
+---
+
+# Original HuNavSim containers
 
 **This is a work in progress version**
 

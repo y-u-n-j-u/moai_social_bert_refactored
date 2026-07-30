@@ -4,6 +4,22 @@ This branch can collect the robot target, surrounding HuNavSim pedestrians,
 the active RViz goal, and 20-step trajectory windows while PMB2 runs with Nav2.
 The learned robot checkpoint is not required for this collection mode.
 
+## End-to-end commands
+
+Repository root의 통합 명령을 사용하는 것이 가장 간단하다.
+
+```bash
+./scripts/setup.sh
+./scripts/run_simulation.sh pmb2_run_001
+./scripts/prepare_dataset.sh \
+  gazebo_classic/hunav_gz_classic_ws/moai_recordings/pmb2_run_001.pkl \
+  compact_corridor
+./scripts/validate.sh
+./scripts/train.sh
+```
+
+아래 내용은 각 단계를 직접 실행할 때의 세부 명령이다.
+
 ## 1. Build the image
 
 ```bash
@@ -74,3 +90,7 @@ The processed samples contain:
 
 Use a unique output name for every simulation run. Split by episode/run rather
 than randomly splitting overlapping windows.
+
+At least three independent RViz-goal episodes are required to create non-empty
+train, validation, and test partitions. The integrated dataset command assigns
+the complete `(recording_id, episode_id)` group to exactly one partition.

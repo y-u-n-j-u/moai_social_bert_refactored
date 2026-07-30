@@ -69,13 +69,13 @@ adapter 하나만 복사하면 안 된다. 위 모델·trainer·config 변경이
 
 ## 검증
 
-현재 Gazebo split은 train 219, val 49, test 57, 총 325개다. 아래 한 명령이
-단위 테스트, 325개 전수 입력 검증, RTX GPU forward/backward, guided 및
+수집한 Gazebo split에 대해 아래 한 명령이
+단위 테스트, 전 sample 입력 검증, RTX GPU forward/backward, guided 및
 기존 multi-candidate inference를 순서대로 실행한다.
 
 ```bash
-cd /home/kistmnl/social_nav/moai_social_bert_refactored
-sg docker -c './scripts/run_gazebo_validation_docker.sh'
+cd /path/to/cloned/repository
+./scripts/validate.sh
 ```
 
 확인하는 핵심 output shape은 다음과 같다.
@@ -103,11 +103,12 @@ multi trajectories   (B,20,12,2)
 발표용 PNG로 다시 만들려면:
 
 ```bash
-sg docker -c './scripts/run_gazebo_visualization_docker.sh'
+cd gazebo_classic/hunav_gz_classic_ws/src/moai_social_bert_refactored
+./scripts/run_gazebo_visualization_docker.sh
 ```
 
-기본 출력 위치는 sibling 프로젝트의
-`socially_aware_navigation/figures/gazebo_guided_mgp_results/`다.
+기본 출력 위치는 모델 프로젝트의
+`figures/gazebo_guided_mgp_results/`다.
 
 ## 학습
 
@@ -115,14 +116,14 @@ sg docker -c './scripts/run_gazebo_visualization_docker.sh'
 `train_mode: fs`인 from-scratch 재현 설정이다. 학습을 시작하려면:
 
 ```bash
-cd /home/kistmnl/social_nav/moai_social_bert_refactored
-sg docker -c './scripts/run_gazebo_train_docker.sh'
+cd /path/to/cloned/repository
+./scripts/train.sh
 ```
 
 먼저 설정만 확인하려면:
 
 ```bash
-sg docker -c './scripts/run_gazebo_train_docker.sh --dry_run'
+./scripts/train.sh --dry_run
 ```
 
 윤주 checkpoint를 나중에 받으면 해당 checkpoint가 기대하는 원 config를

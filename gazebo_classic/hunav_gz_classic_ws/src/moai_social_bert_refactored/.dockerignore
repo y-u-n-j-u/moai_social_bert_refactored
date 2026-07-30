@@ -1,0 +1,11 @@
+.git
+**/__pycache__
+**/*.py[cod]
+.venv
+data
+figures
+logs
+models
+output
+*.pth
+*.pt

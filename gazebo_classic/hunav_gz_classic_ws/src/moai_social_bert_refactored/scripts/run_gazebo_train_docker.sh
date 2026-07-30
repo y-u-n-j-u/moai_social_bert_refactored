@@ -16,6 +16,7 @@ docker build --tag "${image}" "${repo_root}"
 docker run --rm --gpus all --shm-size=8g \
   --user "$(id -u):$(id -g)" \
   --env HOME=/tmp \
+  --env MPLCONFIGDIR=/tmp/moai-matplotlib-cache \
   --volume "${repo_root}:/workspace" \
   --volume "${gazebo_data_root}:/data/gazebo:ro" \
   --workdir /workspace \
