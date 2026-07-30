@@ -55,6 +55,7 @@ class JackalTeleopDatasetLoggerNode(Node):
         self._last_goal_stamp: Optional[float] = None
         self._last_record_stamp: Optional[float] = None
         self._frame_count = 0
+        self._episode_id = 0
         self._last_flushed_sample_count = 0
         self._frames: Deque[Dict[str, Any]] = deque(maxlen=self.seq_len)
         self._samples: List[np.ndarray] = []
@@ -95,10 +96,17 @@ class JackalTeleopDatasetLoggerNode(Node):
         self._last_humans_stamp = self._now_float()
 
     def _on_goal(self, msg: PoseStamped) -> None:
+        # A new RViz goal starts a new collection episode. Keeping frames from
+        # the previous goal would create 20-step windows whose past and future
+        # belong to different navigation tasks.
+        if self._latest_goal is not None:
+            self._episode_id += 1
+        self._frames.clear()
+        self._last_record_stamp = None
         self._latest_goal = (float(msg.pose.position.x), float(msg.pose.position.y))
         self._last_goal_stamp = self._now_float()
         self.get_logger().info(
-            f"Updated dataset final_goal from {self.goal_topic}: "
+            f"Started dataset episode {self._episode_id} from {self.goal_topic}: "
             f"({self._latest_goal[0]:.3f}, {self._latest_goal[1]:.3f})"
         )
 
@@ -200,6 +208,7 @@ class JackalTeleopDatasetLoggerNode(Node):
         self._samples.append(trajs)
         self._sample_meta.append(
             {
+                "episode_id": int(self._episode_id),
                 "target": "robot",
                 "target_row": 0,
                 "neighbor_type": "humans",
@@ -249,7 +258,10 @@ class JackalTeleopDatasetLoggerNode(Node):
 
         payload = {
             "all_trajs": self._samples,
-            "all_scenes": [0] * len(self._samples),
+            "all_scenes": [
+                int(meta.get("episode_id", 0))
+                for meta in self._sample_meta
+            ],
             "scales": [1.0],
             "sample_meta": self._sample_meta,
             "metadata": {

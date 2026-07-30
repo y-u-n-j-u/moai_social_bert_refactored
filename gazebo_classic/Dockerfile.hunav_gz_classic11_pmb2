@@ -18,6 +18,8 @@ SHELL ["/bin/bash", "-c"]
 
 
 ENV DEBIAN_FRONTEND=noninteractive
+RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries \
+    && echo 'Acquire::ForceIPv4 "true";' >> /etc/apt/apt.conf.d/80-retries
 
 # we set distro ROS2 Humble
 ARG distro="humble"
@@ -31,7 +33,6 @@ ENV GAZEBO_RESOURCE_PATH=''
 RUN apt-get update && apt-get install -y \
 	wget \
  	git \
- 	bash-completion \
  	build-essential \
  	sudo \
  	nano \
@@ -85,7 +86,9 @@ RUN pip3 install \
   transformers==4.17.0 \
   typing_extensions==4.4.0 \
   gdown \
-  --extra-index-url https://download.pytorch.org/whl/cu116
+  --extra-index-url https://download.pytorch.org/whl/cu116 \
+  --trusted-host download.pytorch.org \
+  --trusted-host download-r2.pytorch.org
 
 RUN pip3 install \
   dill==0.3.4 \
@@ -110,6 +113,7 @@ RUN apt-get update && apt-get install -y \
   ros-humble-twist-mux \
   ros-humble-pal-gazebo-plugins \
   ros-humble-pal-urdf-utils \
+  ros-humble-diagnostic-updater \
   && rm -rf /var/lib/apt/lists/*
 # required by pmb2 robot simulation	
 ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp

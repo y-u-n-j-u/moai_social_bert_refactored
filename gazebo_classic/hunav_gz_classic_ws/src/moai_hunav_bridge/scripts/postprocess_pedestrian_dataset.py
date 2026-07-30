@@ -33,22 +33,38 @@ def _parse_simple_yaml(path: Path) -> dict[str, Any]:
     return out
 
 
+def _read_pgm_token(stream) -> bytes:
+    token = bytearray()
+    while True:
+        char = stream.read(1)
+        if not char:
+            return bytes(token)
+        if char == b"#" and not token:
+            stream.readline()
+            continue
+        if char.isspace():
+            if token:
+                return bytes(token)
+            continue
+        token.extend(char)
+
+
 def _read_pgm(path: Path) -> np.ndarray:
-    tokens: list[str] = []
     with path.open("rb") as f:
-        for raw_line in f:
-            line = raw_line.decode("ascii", errors="ignore").strip()
-            if not line or line.startswith("#"):
-                continue
-            if "#" in line:
-                line = line.split("#", 1)[0]
-            tokens.extend(line.split())
-    if not tokens or tokens[0] != "P2":
-        raise ValueError(f"Only ASCII P2 PGM is supported: {path}")
-    width = int(tokens[1])
-    height = int(tokens[2])
-    max_value = int(tokens[3])
-    pixels = np.asarray([int(v) for v in tokens[4:]], dtype=np.float32)
+        magic = _read_pgm_token(f)
+        width = int(_read_pgm_token(f))
+        height = int(_read_pgm_token(f))
+        max_value = int(_read_pgm_token(f))
+        if magic == b"P2":
+            pixels = np.asarray(
+                [int(_read_pgm_token(f)) for _ in range(width * height)],
+                dtype=np.float32,
+            )
+        elif magic == b"P5":
+            dtype = np.uint8 if max_value < 256 else np.dtype(">u2")
+            pixels = np.frombuffer(f.read(), dtype=dtype).astype(np.float32)
+        else:
+            raise ValueError(f"Unsupported PGM format {magic!r}: {path}")
     if pixels.size != width * height:
         raise ValueError(f"PGM size mismatch: expected {width * height}, got {pixels.size}")
     pixels = pixels.reshape(height, width)
@@ -61,8 +77,16 @@ def load_map(map_yaml: Path) -> dict[str, Any]:
     if not image_path.is_absolute():
         image_path = map_yaml.parent / image_path
     gray = _read_pgm(image_path)
-    # ROS occupancy maps are usually bright=free, dark=occupied.
-    occupied = (gray < 0.5).astype(np.float32)
+    # Preserve the Gazebo adapter's source encoding:
+    # 0=free, 0.5=unknown, 1=occupied. The model adapter later maps this to
+    # 0=unknown/padding, 1=free, 2=occupied.
+    negate = bool(int(info.get("negate", 0)))
+    occupancy_probability = gray if negate else (1.0 - gray)
+    occupied_thresh = float(info.get("occupied_thresh", 0.65))
+    free_thresh = float(info.get("free_thresh", 0.196))
+    occupied = np.full(gray.shape, 0.5, dtype=np.float32)
+    occupied[occupancy_probability > occupied_thresh] = 1.0
+    occupied[occupancy_probability < free_thresh] = 0.0
     return {
         "yaml_path": str(map_yaml),
         "image_path": str(image_path),
@@ -93,7 +117,8 @@ def local_map_patch(
     center_row, center_col = world_to_pixel(float(center_xy[0]), float(center_xy[1]), map_data)
     half = raw_size // 2
 
-    crop = np.ones((raw_size, raw_size), dtype=np.float32)
+    # Cells outside the source map are unknown, not occupied.
+    crop = np.full((raw_size, raw_size), 0.5, dtype=np.float32)
     src_r0 = max(0, center_row - half)
     src_r1 = min(occ.shape[0], center_row - half + raw_size)
     src_c0 = max(0, center_col - half)
@@ -386,6 +411,7 @@ def make_model_sample(
     target_past = trajs[0, :obs_len].astype(np.float32)
     target_future = trajs[0, obs_len : obs_len + pred_len].astype(np.float32)
     neighbor_past = trajs[1:, :obs_len].astype(np.float32)
+    neighbor_future = trajs[1:, obs_len : obs_len + pred_len].astype(np.float32)
     neighbor_mask = np.isfinite(neighbor_past[..., 0]).any(axis=1).astype(np.float32)
     local_map = local_map_patch(target_past[-1], map_data, args.map_size_m, args.map_grid_size)
     final_goal = xy_from_meta(meta, "final_goal")
@@ -398,6 +424,7 @@ def make_model_sample(
     return {
         "target_past": target_past,
         "neighbor_past": neighbor_past,
+        "neighbor_future": neighbor_future,
         "neighbor_mask": neighbor_mask,
         "guidance_point": guidance_point.astype(np.float32),
         "guidance_traj": guidance_traj,
@@ -919,7 +946,7 @@ def main() -> None:
     parser.add_argument("--max-social-distance", type=float, default=3.0)
     parser.add_argument("--max-speed", type=float, default=3.5)
     parser.add_argument("--collision-distance", type=float, default=0.65)
-    parser.add_argument("--map-size-m", type=float, default=15.0)
+    parser.add_argument("--map-size-m", type=float, default=8.0)
     parser.add_argument("--map-grid-size", type=int, default=32)
     parser.add_argument("--guidance-radius", type=float, default=8.0)
     parser.add_argument("--between-humans-only", action="store_true")
@@ -1019,7 +1046,16 @@ def main() -> None:
         "local_map_grid_size": args.map_grid_size,
         "guidance_radius": args.guidance_radius,
         "guidance_policy": "circle_line_intersection_to_final_goal",
-        "input_keys": ["target_past", "neighbor_past", "neighbor_mask", "guidance_point", "local_map"],
+        "input_keys": [
+            "target_past",
+            "target_future",
+            "neighbor_past",
+            "neighbor_future",
+            "neighbor_mask",
+            "final_goal",
+            "guidance_point",
+            "local_map",
+        ],
         "filters": {
             "min_neighbors": args.min_neighbors,
             "min_obs_disp": args.min_obs_disp,

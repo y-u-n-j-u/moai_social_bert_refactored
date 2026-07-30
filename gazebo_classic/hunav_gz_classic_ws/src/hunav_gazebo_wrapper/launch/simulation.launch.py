@@ -106,6 +106,12 @@ def generate_launch_description():
     robot_spubert_d_sample = LaunchConfiguration('robot_spubert_d_sample')
     robot_spubert_replan_period = LaunchConfiguration('robot_spubert_replan_period')
     robot_spubert_fallback_to_nav2 = LaunchConfiguration('robot_spubert_fallback_to_nav2')
+    robot_save_training_pkl = LaunchConfiguration('robot_save_training_pkl')
+    robot_training_pkl_path = LaunchConfiguration('robot_training_pkl_path')
+    robot_training_record_dt = LaunchConfiguration('robot_training_record_dt')
+    robot_training_sample_stride = LaunchConfiguration('robot_training_sample_stride')
+    robot_training_flush_every = LaunchConfiguration('robot_training_flush_every')
+    robot_training_max_samples = LaunchConfiguration('robot_training_max_samples')
     learned_agent_motion = PythonExpression(
         ["'", agent_motion_model, "' in ['social_bert', 'spubert', 'moai_spubert']"]
     )
@@ -535,6 +541,34 @@ def generate_launch_description():
             {'rollout_angular_samples': 9},
         ],
         condition=IfCondition(PythonExpression(["'", jackal_spubert_controller, "' == 'True' and '", robot_type, "' == 'jackal'"]))
+    )
+
+    robot_dataset_logger_node = Node(
+        package='moai_hunav_bridge',
+        executable='jackal_teleop_dataset_logger_node',
+        name='robot_target_dataset_logger',
+        output='screen',
+        parameters=[
+            {'use_sim_time': True},
+            {'enabled': robot_save_training_pkl},
+            {'robot_topic': '/robot_states'},
+            {'human_states_topic': '/human_states'},
+            {'goal_topic': '/goal_pose'},
+            {'output_path': robot_training_pkl_path},
+            {'obs_len': 8},
+            {'pred_len': 12},
+            {'record_dt': robot_training_record_dt},
+            {'guidance_point_radius': spubert_guidance_point_radius},
+            {'require_goal': True},
+            {'sample_stride': robot_training_sample_stride},
+            {'flush_every': robot_training_flush_every},
+            {'max_samples': robot_training_max_samples},
+            {'stale_timeout': 2.0},
+        ],
+        condition=IfCondition(PythonExpression([
+            "'", robot_save_training_pkl, "' == 'True' and '", robot_type,
+            "' in ['jackal', 'pmb2']"
+        ]))
     )
 
     metrics_file = PathJoinSubstitution([
@@ -983,6 +1017,39 @@ def generate_launch_description():
         default_value=EnvironmentVariable('HUNAV_ROBOT_SPUBERT_FALLBACK_NAV2', default_value='True'),
         description='Fall back to standard NavigateToPose when a learned path is unsafe.'
     )
+    declare_robot_save_training_pkl = DeclareLaunchArgument(
+        'robot_save_training_pkl',
+        default_value=EnvironmentVariable('HUNAV_ROBOT_SAVE_TRAINING_PKL', default_value='False'),
+        description='Record the robot target, surrounding humans, and active RViz goal as training windows.'
+    )
+    declare_robot_training_pkl_path = DeclareLaunchArgument(
+        'robot_training_pkl_path',
+        default_value=EnvironmentVariable(
+            'HUNAV_ROBOT_TRAINING_PKL_PATH',
+            default_value='/home/hunav_gz_classic_ws/moai_recordings/robot_target_all_trajs.pkl'
+        ),
+        description='Output path for robot-target Gazebo trajectory samples.'
+    )
+    declare_robot_training_record_dt = DeclareLaunchArgument(
+        'robot_training_record_dt',
+        default_value=EnvironmentVariable('HUNAV_ROBOT_TRAINING_RECORD_DT', default_value='0.4'),
+        description='Seconds between recorded robot/human frames.'
+    )
+    declare_robot_training_sample_stride = DeclareLaunchArgument(
+        'robot_training_sample_stride',
+        default_value=EnvironmentVariable('HUNAV_ROBOT_TRAINING_SAMPLE_STRIDE', default_value='1'),
+        description='Sliding-window stride in recorded frames.'
+    )
+    declare_robot_training_flush_every = DeclareLaunchArgument(
+        'robot_training_flush_every',
+        default_value=EnvironmentVariable('HUNAV_ROBOT_TRAINING_FLUSH_EVERY', default_value='10'),
+        description='Persist the pkl after this many new samples.'
+    )
+    declare_robot_training_max_samples = DeclareLaunchArgument(
+        'robot_training_max_samples',
+        default_value=EnvironmentVariable('HUNAV_ROBOT_TRAINING_MAX_SAMPLES', default_value='0'),
+        description='Maximum robot-target samples; 0 means unlimited.'
+    )
     declare_frame_to_publish = DeclareLaunchArgument(
         'global_frame_to_publish', default_value='map',
         description='Name of the global frame in which the position of the agents are provided'
@@ -1129,6 +1196,12 @@ def generate_launch_description():
     ld.add_action(declare_robot_spubert_d_sample)
     ld.add_action(declare_robot_spubert_replan_period)
     ld.add_action(declare_robot_spubert_fallback_to_nav2)
+    ld.add_action(declare_robot_save_training_pkl)
+    ld.add_action(declare_robot_training_pkl_path)
+    ld.add_action(declare_robot_training_record_dt)
+    ld.add_action(declare_robot_training_sample_stride)
+    ld.add_action(declare_robot_training_flush_every)
+    ld.add_action(declare_robot_training_max_samples)
     ld.add_action(declare_robot_name)
     ld.add_action(declare_frame_to_publish)
     ld.add_action(declare_use_navgoal)
@@ -1160,6 +1233,7 @@ def generate_launch_description():
     ld.add_action(human_obstacle_cloud_node)
     ld.add_action(spubert_nav2_bridge_node)
     ld.add_action(spubert_jackal_controller_node)
+    ld.add_action(robot_dataset_logger_node)
 
     # launch Gazebo after worldGenerator 
     ld.add_action(gz_launch_event)
