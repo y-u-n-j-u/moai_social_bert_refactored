@@ -275,7 +275,12 @@ class SpubertNav2BridgeNode(Node):
 
         if self._runtime is None and self.execution_mode == "spubert":
             self._fallback_active = True
-        if self.execution_mode in {"nav2", "monitor"} or self._runtime is None:
+        # Humble bt_navigator already subscribes to /goal_pose. In standard
+        # nav2/monitor mode it receives this same message directly; relaying it
+        # again as NavigateToPose would preempt the goal with a duplicate.
+        if self.execution_mode in {"nav2", "monitor"}:
+            self._publish_status("goal_received_by_standard_nav2")
+        elif self._runtime is None:
             self._activate_nav2("RViz goal relay")
 
     def _on_predicted_humans(self, msg: MarkerArray) -> None:
@@ -306,12 +311,6 @@ class SpubertNav2BridgeNode(Node):
             return
 
         if self.execution_mode == "nav2":
-            if (
-                self._navigate_dispatched_generation != self._goal_generation
-                and self._navigate_goal_handle is None
-                and not self._navigate_goal_pending
-            ):
-                self._activate_nav2("waiting for standard Nav2")
             return
         if self._fallback_active:
             if (

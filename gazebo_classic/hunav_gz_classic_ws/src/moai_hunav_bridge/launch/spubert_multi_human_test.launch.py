@@ -87,18 +87,18 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "environment_name",
-                default_value="simple_corridor",
-                description="HuNavSim/Gazebo environment name, for example simple_corridor, cafe, house, or warehouse.",
+                default_value="training_corridor",
+                description="HuNavSim/Gazebo training environment name.",
             ),
             DeclareLaunchArgument(
                 "configuration_file",
-                default_value="agents_simple_corridor_5.yaml",
-                description="HuNavSim scenario YAML file, for example agents_simple_corridor_5.yaml or agents_cafe.yaml.",
+                default_value="agents_training_corridor_medium.yaml",
+                description="HuNavSim low, medium, or high density training scenario YAML.",
             ),
             DeclareLaunchArgument(
                 "update_rate",
                 default_value="10.0",
-                description="HuNavSim update rate. Lower this for heavier scenarios such as cafe with 10 agents.",
+                description="HuNavSim update rate. Lower this for high-density scenarios.",
             ),
             DeclareLaunchArgument(
                 "agent_motion_model",

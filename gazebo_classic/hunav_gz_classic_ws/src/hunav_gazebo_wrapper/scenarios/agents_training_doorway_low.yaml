@@ -1,0 +1,68 @@
+hunav_loader:
+  ros__parameters:
+    yaml_base_name: agents_training_doorway_low
+    simulator: Gazebo Classic
+    map: training_doorway
+    publish_people: true
+    global_goals:
+      1:
+        x: -5.500
+        y: -0.450
+      2:
+        x: 5.500
+        y: -0.450
+      3:
+        x: 5.500
+        y: 0.450
+      4:
+        x: -5.500
+        y: 0.450
+    agents:
+      - agent1
+      - agent2
+    agent1:
+      id: 1
+      group_id: -1
+      skin: 0
+      max_vel: 1.25
+      radius: 0.35
+      goal_radius: 0.30
+      cyclic_goals: true
+      init_pose:
+        x: -5.500
+        y: -0.450
+        z: 1.250
+        h: 0.00000
+      behavior:
+        type: Regular
+        configuration: 0
+        goal_force_factor: 2.0
+        obstacle_force_factor: 10.0
+        social_force_factor: 5.0
+        other_force_factor: 20.0
+      goals:
+        - 2
+        - 1
+    agent2:
+      id: 2
+      group_id: -1
+      skin: 1
+      max_vel: 1.30
+      radius: 0.35
+      goal_radius: 0.30
+      cyclic_goals: true
+      init_pose:
+        x: 5.500
+        y: 0.450
+        z: 1.250
+        h: 3.14159
+      behavior:
+        type: Regular
+        configuration: 1
+        goal_force_factor: 2.0
+        obstacle_force_factor: 10.0
+        social_force_factor: 5.0
+        other_force_factor: 20.0
+      goals:
+        - 4
+        - 3

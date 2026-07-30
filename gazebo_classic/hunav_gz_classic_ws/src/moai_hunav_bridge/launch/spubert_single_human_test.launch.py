@@ -99,8 +99,8 @@ def generate_launch_description():
                     )
                 ),
                 launch_arguments={
-                    "environment_name": "simple_corridor",
-                    "configuration_file": "agents_single_corridor.yaml",
+                    "environment_name": "training_corridor",
+                    "configuration_file": "agents_training_corridor_low.yaml",
                     "robot_type": "jackal",
                     "robot_name": "jackal",
                     "navigation": "False",

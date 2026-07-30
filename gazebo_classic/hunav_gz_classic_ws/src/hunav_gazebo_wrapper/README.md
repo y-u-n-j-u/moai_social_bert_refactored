@@ -2,8 +2,9 @@
 
 **V2.0 IS UNDER DEVELOMPMENT AND IMPROVEMENT!!!**
 
-A ROS2 wrapper to use the [HuNavSim](https://github.com/robotics-upo/hunav_sim) with the Gazebo Simulator (tested with ROS Humble and Gazebo 11). 
-Different scenarios (a cafe, a warehouse, and a house) are included. A set of different human models are available too.
+A ROS2 wrapper to use the [HuNavSim](https://github.com/robotics-upo/hunav_sim) with the Gazebo Simulator (tested with ROS Humble and Gazebo 11).
+This branch provides controlled corridor, intersection, and doorway training
+maps with low, medium, and high pedestrian-density scenarios.
 
 ![](https://github.com/robotics-upo/hunav_gazebo_wrapper/blob/master/media/images/threateningscared.png)
 
@@ -72,9 +73,11 @@ colcon build --packages-select hunav_gazebo_wrapper
 
 ## Example launching
 
-* Example of a Gazebo world of a café with a static actor (Actor3) playing the role of the robot:
+* Launch the medium-density corridor scenario:
 ```sh
-ros2 launch hunav_gazebo_wrapper example_cafe.launch.py
+ros2 launch hunav_gazebo_wrapper simulation.launch.py \
+  environment_name:=training_corridor \
+  configuration_file:=agents_training_corridor_medium.yaml
 ```
 * You can modify the hunav agents spawned by modifiying the agents' configuration file in:
   ```[your_workspace]/src/hunav_sim/hunav_agent_manager/config/agents.yaml```
@@ -84,7 +87,8 @@ ros2 launch hunav_gazebo_wrapper example_cafe.launch.py
 ros2 launch hunav_rviz2_panel hunav_rviz2_launch.py
 ```
 
-* If you want to use your robot instead, you can check the launch file *pmb2_cafe.launch.py*, and replace the pmb2 robot by yours, and spawn it in Gazebo.
+* The integrated repository launcher starts PMB2, Nav2, logging, and optional
+  automatic goals with the selected scenario.
 
 
 ## Acknowledgements

@@ -28,7 +28,10 @@ amcl:
     robot_model_type: "nav2_amcl::DifferentialMotionModel"
     save_pose_rate: 0.5
     sigma_hit: 0.2
-    tf_broadcast: true
+    # Gazebo's ground-truth localization node publishes map->odom. AMCL is
+    # still available for visualization, but must not overwrite that transform
+    # in a symmetric corridor containing moving pedestrians.
+    tf_broadcast: false
     transform_tolerance: 1.0
     update_min_a: 0.2
     update_min_d: 0.25
@@ -49,13 +52,9 @@ behavior_server:
     costmap_topic: local_costmap/costmap_raw
     footprint_topic: local_costmap/published_footprint
     cycle_frequency: 10.0
-    behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]
-    spin:
-      plugin: "nav2_behaviors/Spin"
-    backup:
-      plugin: "nav2_behaviors/BackUp"
-    drive_on_heading:
-      plugin: "nav2_behaviors/DriveOnHeading"
+    # A blocked social-navigation corridor should make the robot yield and
+    # replan, not spin into nearby pedestrians or blindly reverse.
+    behavior_plugins: ["wait"]
     wait:
       plugin: "nav2_behaviors/Wait"
     global_frame: odom
@@ -76,7 +75,9 @@ bt_navigator:
     enable_groot_monitoring: True
     groot_zmq_publisher_port: 1666
     groot_zmq_server_port: 1667
-    default_bt_xml_filename: "navigate_w_replanning_and_recovery.xml"
+    default_bt_xml_filename: "/home/hunav_gz_classic_ws/install/hunav_gazebo_wrapper/share/hunav_gazebo_wrapper/behavior_trees/navigate_to_pose_w_wait_and_replanning.xml"
+    default_nav_to_pose_bt_xml: "/home/hunav_gz_classic_ws/install/hunav_gazebo_wrapper/share/hunav_gazebo_wrapper/behavior_trees/navigate_to_pose_w_wait_and_replanning.xml"
+    default_nav_through_poses_bt_xml: "/home/hunav_gz_classic_ws/install/hunav_gazebo_wrapper/share/hunav_gazebo_wrapper/behavior_trees/navigate_through_poses_w_wait_and_replanning.xml"
     plugin_lib_names:
     - nav2_compute_path_to_pose_action_bt_node
     - nav2_compute_path_through_poses_action_bt_node
@@ -133,9 +134,11 @@ bt_navigator_navigate_to_pose_rclcpp_node:
 controller_server:
   ros__parameters:
     use_sim_time: true
-    controller_frequency: 20.0
+    # 10 Hz is sufficient for PMB2 and avoids repeating an expensive DWB
+    # search while a pedestrian temporarily blocks the corridor.
+    controller_frequency: 10.0
     min_x_velocity_threshold: 0.001
-    min_y_velocity_threshold: 0.5
+    min_y_velocity_threshold: 0.001
     min_theta_velocity_threshold: 0.001
     failure_tolerance: 0.3
     progress_checker_plugin: "progress_checker"
@@ -147,7 +150,9 @@ controller_server:
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
       required_movement_radius: 0.5
-      movement_time_allowance: 10.0
+      # A pedestrian may legitimately require the robot to yield for several
+      # seconds. Do not enter the Nav2 recovery tree too early.
+      movement_time_allowance: 20.0
     # Goal checker parameters
     general_goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
@@ -156,14 +161,24 @@ controller_server:
       stateful: False
     # DWB parameters
     FollowPath:
-      plugin: "dwb_core::DWBLocalPlanner"
-      debug_trajectory_details: True
-      min_vel_x: 0.25
+      # A corridor waypoint can be directly behind the robot. Rotate in place
+      # until the global path is in front, then hand control to DWB.
+      plugin: "nav2_rotation_shim_controller::RotationShimController"
+      primary_controller: "dwb_core::DWBLocalPlanner"
+      angular_dist_threshold: 0.785
+      forward_sampling_distance: 0.5
+      rotate_to_heading_angular_vel: 0.8
+      max_angular_accel: 3.2
+      simulate_ahead_time: 1.0
+      debug_trajectory_details: False
+      # Allow smooth yielding all the way to zero velocity. The previous
+      # 0.45 m/s minimum caused abrupt stop/recovery behavior near people.
+      min_vel_x: 0.0
       min_vel_y: 0.0
       max_vel_x: 1.50
       max_vel_y: 0.0
       max_vel_theta: 1.00
-      min_speed_xy: 0.45
+      min_speed_xy: 0.0
       max_speed_xy: 1.50
       min_speed_theta: 0.0
       acc_lim_x: 2.2
@@ -172,12 +187,14 @@ controller_server:
       decel_lim_x: -2.2
       decel_lim_y: 0.0
       decel_lim_theta: -3.2
-      vx_samples: 40
-      vy_samples: 5
-      vtheta_samples: 20
-      sim_time: 2.2
-      linear_granularity: 0.05
-      angular_granularity: 0.025
+      # PMB2 is differential-drive, so sampling lateral velocity is wasted.
+      # 20*1*12 = 240 candidates, down from 40*5*20 = 4000.
+      vx_samples: 20
+      vy_samples: 1
+      vtheta_samples: 12
+      sim_time: 1.5
+      linear_granularity: 0.075
+      angular_granularity: 0.05
       transform_tolerance: 0.2
       xy_goal_tolerance: 0.35
       trans_stopped_velocity: 0.10
@@ -206,37 +223,24 @@ global_costmap:
       robot_radius: 0.275
       resolution: 0.05
       track_unknown_space: true
-      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
-      obstacle_layer:
-        plugin: "nav2_costmap_2d::ObstacleLayer"
-        enabled: True
-        # Keep moving people out of the global layer. Navfn needs a stable
-        # topological route; pedestrian avoidance is handled by the local layer.
-        observation_sources: scan
-        scan:
-          topic: /scan_raw
-          max_obstacle_height: 2.0
-          clearing: True
-          marking: True
-          data_type: "LaserScan"
-          raytrace_max_range: 3.0
-          raytrace_min_range: 0.0
-          obstacle_max_range: 2.5
-          obstacle_min_range: 0.0
+      # The global planner needs a stable topological route. Laser returns from
+      # moving people must not make a whole corridor globally unreachable;
+      # pedestrians remain in the local voxel layer below.
+      plugins: ["static_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.5
-        inflation_radius: 0.80
+        inflation_radius: 0.55
       always_send_full_costmap: True
 
 local_costmap:
   local_costmap:
     ros__parameters:
       update_frequency: 5.0
-      publish_frequency: 2.0
+      publish_frequency: 1.0
       global_frame: odom
       robot_base_frame: base_link
       use_sim_time: true
@@ -251,11 +255,14 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.5
-        inflation_radius: 0.80
+        # Human points already include a 0.35 m body ring. A moderate local
+        # inflation preserves clearance without sealing a temporarily crowded
+        # corridor. The source cloud already draws a 0.35 m human body ring.
+        inflation_radius: 0.30
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: True
-        publish_voxel_map: True
+        publish_voxel_map: False
         origin_z: 0.0
         z_resolution: 0.05
         z_voxels: 16
@@ -284,7 +291,9 @@ local_costmap:
           obstacle_max_range: 6.0
           obstacle_min_range: 0.0
           observation_persistence: 0.0
-          expected_update_rate: 0.2
+          # Publisher runs at 5 Hz. A small margin avoids false stale warnings
+          # from scheduler jitter at the exact 0.20 s boundary.
+          expected_update_rate: 0.3
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True

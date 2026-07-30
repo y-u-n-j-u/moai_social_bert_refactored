@@ -14,6 +14,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (PathJoinSubstitution, TextSubstitution,
                             LaunchConfiguration, PythonExpression, EnvironmentVariable)
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 from launch.event_handlers import (OnExecutionComplete, OnProcessExit,
                                 OnProcessIO, OnProcessStart, OnShutdown)
@@ -112,6 +113,16 @@ def generate_launch_description():
     robot_training_sample_stride = LaunchConfiguration('robot_training_sample_stride')
     robot_training_flush_every = LaunchConfiguration('robot_training_flush_every')
     robot_training_max_samples = LaunchConfiguration('robot_training_max_samples')
+    auto_goal_enabled = LaunchConfiguration('auto_goal_enabled')
+    auto_goal_mode = LaunchConfiguration('auto_goal_mode')
+    auto_goal_waypoints = LaunchConfiguration('auto_goal_waypoints')
+    auto_goal_seed = LaunchConfiguration('auto_goal_seed')
+    auto_goal_min_distance = LaunchConfiguration('auto_goal_min_distance')
+    auto_goal_max_distance = LaunchConfiguration('auto_goal_max_distance')
+    auto_goal_clearance = LaunchConfiguration('auto_goal_clearance')
+    auto_goal_min_episode_duration = LaunchConfiguration('auto_goal_min_episode_duration')
+    auto_goal_timeout = LaunchConfiguration('auto_goal_timeout')
+    auto_goal_max_goals = LaunchConfiguration('auto_goal_max_goals')
     learned_agent_motion = PythonExpression(
         ["'", agent_motion_model, "' in ['social_bert', 'spubert', 'moai_spubert']"]
     )
@@ -470,10 +481,33 @@ def generate_launch_description():
             {'human_states_topic': '/human_states'},
             {'predicted_paths_topic': '/moai/social_bert_predicted_paths'},
             {'cloud_topic': '/moai/human_obstacle_cloud'},
+            {'publish_rate': 5.0},
+            {'current_ring_points': 6},
+            {'clearing_ring_points': 36},
         ],
         condition=IfCondition(PythonExpression([
             "'", navigation, "' == 'True' and '", robot_type,
             "' in ['jackal', 'pmb2']"
+        ]))
+    )
+
+    # The PAL Humble velocity_smoother is active and subscribed to
+    # /cmd_vel_nav, but it intermittently emits no /cmd_vel messages in this
+    # Gazebo image. PMB2's diff-drive controller already enforces acceleration
+    # limits, so relay Nav2 commands to the existing twist_mux input.
+    pmb2_cmd_vel_passthrough_node = Node(
+        package='moai_hunav_bridge',
+        executable='cmd_vel_passthrough_node',
+        name='cmd_vel_passthrough',
+        output='screen',
+        parameters=[
+            {'use_sim_time': True},
+            {'input_topic': '/cmd_vel_nav'},
+            {'output_topic': '/cmd_vel'},
+        ],
+        condition=IfCondition(PythonExpression([
+            "'", navigation, "' == 'True' and '", robot_type,
+            "' == 'pmb2' and '", robot_path_planner, "' == 'nav2'"
         ]))
     )
 
@@ -559,6 +593,8 @@ def generate_launch_description():
             {'pred_len': 12},
             {'record_dt': robot_training_record_dt},
             {'guidance_point_radius': spubert_guidance_point_radius},
+            {'goal_reached_tolerance': 0.6},
+            {'episode_timeout': ParameterValue(auto_goal_timeout, value_type=float)},
             {'require_goal': True},
             {'sample_stride': robot_training_sample_stride},
             {'flush_every': robot_training_flush_every},
@@ -568,6 +604,34 @@ def generate_launch_description():
         condition=IfCondition(PythonExpression([
             "'", robot_save_training_pkl, "' == 'True' and '", robot_type,
             "' in ['jackal', 'pmb2']"
+        ]))
+    )
+
+    random_goal_publisher_node = Node(
+        package='moai_hunav_bridge',
+        executable='random_goal_publisher_node',
+        name='random_goal_publisher',
+        output='screen',
+        parameters=[
+            {'use_sim_time': True},
+            {'goal_topic': '/goal_pose'},
+            {'map_topic': '/map'},
+            {'robot_topic': '/robot_states'},
+            {'map_frame': 'map'},
+            {'goal_mode': auto_goal_mode},
+            {'environment_name': LaunchConfiguration('environment_name')},
+            {'waypoint_route': auto_goal_waypoints},
+            {'seed': auto_goal_seed},
+            {'min_goal_distance': ParameterValue(auto_goal_min_distance, value_type=float)},
+            {'max_goal_distance': ParameterValue(auto_goal_max_distance, value_type=float)},
+            {'clearance': ParameterValue(auto_goal_clearance, value_type=float)},
+            {'min_episode_duration': ParameterValue(auto_goal_min_episode_duration, value_type=float)},
+            {'goal_timeout': ParameterValue(auto_goal_timeout, value_type=float)},
+            {'max_goals': auto_goal_max_goals},
+        ],
+        condition=IfCondition(PythonExpression([
+            "'", auto_goal_enabled, "' == 'True' and '", navigation,
+            "' == 'True' and '", robot_type, "' == 'pmb2'"
         ]))
     )
 
@@ -593,6 +657,24 @@ def generate_launch_description():
         condition=IfCondition(use_static_map_odom)
     )
 
+    ground_truth_localization_node = Node(
+        package='moai_hunav_bridge',
+        executable='ground_truth_localization_node',
+        name='ground_truth_localization',
+        output='screen',
+        parameters=[
+            {'use_sim_time': True},
+            {'truth_topic': '/ground_truth_odom'},
+            {'wheel_odom_topic': '/mobile_base_controller/odom'},
+            {'map_frame': 'map'},
+            {'odom_frame': 'odom'},
+        ],
+        condition=IfCondition(PythonExpression([
+            "'", navigation, "' == 'True' and '", robot_type,
+            "' == 'pmb2' and '", use_static_map_odom, "' == 'False'"
+        ]))
+    )
+
     manager_launch_event = RegisterEventHandler(
         OnProcessStart(
             target_action=hunav_loader_node,
@@ -607,7 +689,7 @@ def generate_launch_description():
     )
 
     declare_agents_conf_file = DeclareLaunchArgument(
-        'configuration_file', default_value='agents_warehouse.yaml',
+        'configuration_file', default_value='agents_training_corridor_medium.yaml',
         description='Specify configuration file name in the cofig directory'
     )
     declare_metrics_conf_file = DeclareLaunchArgument(
@@ -619,7 +701,7 @@ def generate_launch_description():
     #     description='Specify world file name'
     # )
     declare_arg_environment = DeclareLaunchArgument(
-        'environment_name', default_value='cafe',
+        'environment_name', default_value='training_corridor',
         description='Specify the name of the environment. This is used to load the Gazebo world file and map file.'
     )
 
@@ -628,7 +710,7 @@ def generate_launch_description():
         description='Whether to fill the agents obstacles with closest Gazebo obstacle or not'
     )
     declare_update_rate = DeclareLaunchArgument(
-        'update_rate', default_value=EnvironmentVariable('HUNAV_UPDATE_RATE', default_value='50.0'),
+        'update_rate', default_value=EnvironmentVariable('HUNAV_UPDATE_RATE', default_value='30.0'),
         description='Update rate of the plugin'
     )
     declare_robot_name = DeclareLaunchArgument(
@@ -1050,6 +1132,56 @@ def generate_launch_description():
         default_value=EnvironmentVariable('HUNAV_ROBOT_TRAINING_MAX_SAMPLES', default_value='0'),
         description='Maximum robot-target samples; 0 means unlimited.'
     )
+    declare_auto_goal_enabled = DeclareLaunchArgument(
+        'auto_goal_enabled',
+        default_value=EnvironmentVariable('HUNAV_AUTO_GOAL', default_value='False'),
+        description='Automatically publish validated /goal_pose episodes.'
+    )
+    declare_auto_goal_mode = DeclareLaunchArgument(
+        'auto_goal_mode',
+        default_value=EnvironmentVariable('HUNAV_AUTO_GOAL_MODE', default_value='waypoint'),
+        description='Automatic goal policy: waypoint (basic curriculum) or random.'
+    )
+    declare_auto_goal_waypoints = DeclareLaunchArgument(
+        'auto_goal_waypoints',
+        default_value=EnvironmentVariable('HUNAV_AUTO_GOAL_WAYPOINTS', default_value=''),
+        description="Optional waypoint override using 'x,y;x,y' format."
+    )
+    declare_auto_goal_seed = DeclareLaunchArgument(
+        'auto_goal_seed',
+        default_value=EnvironmentVariable('HUNAV_AUTO_GOAL_SEED', default_value='-1'),
+        description='Random seed used by automatic goal generation; negative uses system randomness.'
+    )
+    declare_auto_goal_min_distance = DeclareLaunchArgument(
+        'auto_goal_min_distance',
+        default_value=EnvironmentVariable('HUNAV_AUTO_GOAL_MIN_DISTANCE', default_value='6.0'),
+        description='Minimum robot-to-goal distance in meters.'
+    )
+    declare_auto_goal_max_distance = DeclareLaunchArgument(
+        'auto_goal_max_distance',
+        default_value=EnvironmentVariable('HUNAV_AUTO_GOAL_MAX_DISTANCE', default_value='20.0'),
+        description='Maximum robot-to-goal distance in meters; 0 disables the maximum.'
+    )
+    declare_auto_goal_clearance = DeclareLaunchArgument(
+        'auto_goal_clearance',
+        default_value=EnvironmentVariable('HUNAV_AUTO_GOAL_CLEARANCE', default_value='0.55'),
+        description='Required free-map clearance around each random goal in meters.'
+    )
+    declare_auto_goal_min_episode_duration = DeclareLaunchArgument(
+        'auto_goal_min_episode_duration',
+        default_value=EnvironmentVariable('HUNAV_AUTO_GOAL_MIN_EPISODE_DURATION', default_value='12.0'),
+        description='Minimum seconds before replacing a reached goal.'
+    )
+    declare_auto_goal_timeout = DeclareLaunchArgument(
+        'auto_goal_timeout',
+        default_value=EnvironmentVariable('HUNAV_AUTO_GOAL_TIMEOUT', default_value='60.0'),
+        description='Replace an unreached goal after this many seconds.'
+    )
+    declare_auto_goal_max_goals = DeclareLaunchArgument(
+        'auto_goal_max_goals',
+        default_value=EnvironmentVariable('HUNAV_AUTO_GOAL_MAX_GOALS', default_value='0'),
+        description='Number of automatic goals; 0 means unlimited.'
+    )
     declare_frame_to_publish = DeclareLaunchArgument(
         'global_frame_to_publish', default_value='map',
         description='Name of the global frame in which the position of the agents are provided'
@@ -1202,6 +1334,16 @@ def generate_launch_description():
     ld.add_action(declare_robot_training_sample_stride)
     ld.add_action(declare_robot_training_flush_every)
     ld.add_action(declare_robot_training_max_samples)
+    ld.add_action(declare_auto_goal_enabled)
+    ld.add_action(declare_auto_goal_mode)
+    ld.add_action(declare_auto_goal_waypoints)
+    ld.add_action(declare_auto_goal_seed)
+    ld.add_action(declare_auto_goal_min_distance)
+    ld.add_action(declare_auto_goal_max_distance)
+    ld.add_action(declare_auto_goal_clearance)
+    ld.add_action(declare_auto_goal_min_episode_duration)
+    ld.add_action(declare_auto_goal_timeout)
+    ld.add_action(declare_auto_goal_max_goals)
     ld.add_action(declare_robot_name)
     ld.add_action(declare_frame_to_publish)
     ld.add_action(declare_use_navgoal)
@@ -1231,13 +1373,16 @@ def generate_launch_description():
     # hunav evaluator
     ld.add_action(hunav_evaluator_node)
     ld.add_action(human_obstacle_cloud_node)
+    ld.add_action(pmb2_cmd_vel_passthrough_node)
     ld.add_action(spubert_nav2_bridge_node)
     ld.add_action(spubert_jackal_controller_node)
     ld.add_action(robot_dataset_logger_node)
+    ld.add_action(random_goal_publisher_node)
 
     # launch Gazebo after worldGenerator 
     ld.add_action(gz_launch_event)
     ld.add_action(static_tf_node)
+    ld.add_action(ground_truth_localization_node)
 
     # spawn robot in Gazebo after gzserver has started
     ld.add_action(robot_launch_event)

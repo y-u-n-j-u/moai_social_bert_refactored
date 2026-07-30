@@ -73,9 +73,9 @@ while true; do
             yaml_name=$(basename "$selected_yaml")
             echo ""
             echo "Launching..."
-            echo -e "\e[33mros2 launch hunav_gazebo_wrapper simulation.launch.py environment_name:=$map_name configuration_file:=$yaml_name robot_type:=$HUNAV_ROBOT_TYPE robot_name:=$HUNAV_ROBOT_NAME agent_motion_model:=$HUNAV_AGENT_MOTION_MODEL navigation:=$HUNAV_NAVIGATION update_rate:=${HUNAV_UPDATE_RATE:-50.0}\e[0m"
+            echo -e "\e[33mros2 launch hunav_gazebo_wrapper simulation.launch.py environment_name:=$map_name configuration_file:=$yaml_name robot_type:=$HUNAV_ROBOT_TYPE robot_name:=$HUNAV_ROBOT_NAME agent_motion_model:=$HUNAV_AGENT_MOTION_MODEL navigation:=$HUNAV_NAVIGATION update_rate:=${HUNAV_UPDATE_RATE:-30.0}\e[0m"
             echo ""
-            ros2 launch hunav_gazebo_wrapper simulation.launch.py environment_name:=$map_name configuration_file:=$yaml_name robot_type:=$HUNAV_ROBOT_TYPE robot_name:=$HUNAV_ROBOT_NAME agent_motion_model:=$HUNAV_AGENT_MOTION_MODEL navigation:=$HUNAV_NAVIGATION update_rate:=${HUNAV_UPDATE_RATE:-50.0}
+            ros2 launch hunav_gazebo_wrapper simulation.launch.py environment_name:=$map_name configuration_file:=$yaml_name robot_type:=$HUNAV_ROBOT_TYPE robot_name:=$HUNAV_ROBOT_NAME agent_motion_model:=$HUNAV_AGENT_MOTION_MODEL navigation:=$HUNAV_NAVIGATION update_rate:=${HUNAV_UPDATE_RATE:-30.0}
         elif [ "$opt" -eq "$bash_option" ]; then
             echo -e "\e[33mTo open a new terminal inside this Docker container, open a new terminal on your host and run:\e[0m"
             echo -e "\e[3m\e[32mdocker exec -it hunavsim_pmb2 bash\e[0m"

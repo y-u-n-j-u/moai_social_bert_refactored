@@ -338,18 +338,20 @@ bool WorldGenerator::processXML()
 
   // CREATE PHYSICS TAG
   // <physics type="ode">
-  //   <max_step_size>0.01</max_step_size>
+  //   <max_step_size>0.002</max_step_size>
   //   <real_time_factor>1</real_time_factor>
-  //   <real_time_update_rate>100</real_time_update_rate>
+  //   <real_time_update_rate>500</real_time_update_rate>
   // </physics>
   tinyxml2::XMLElement* physics_tag = doc.NewElement("physics");
   physics_tag->SetAttribute("type", "ode");
   tinyxml2::XMLElement* max_step = doc.NewElement("max_step_size");
-  max_step->SetText(0.001);  // 0.01
+  // Keep PMB2 contact dynamics stable while cutting the original 1000 Hz
+  // physics load in half.
+  max_step->SetText(0.002);
   tinyxml2::XMLElement* time_factor = doc.NewElement("real_time_factor");
   time_factor->SetText(1);
   tinyxml2::XMLElement* time_rate = doc.NewElement("real_time_update_rate");
-  time_rate->SetText(1000);  // 100
+  time_rate->SetText(500);
 
   // Check if the tag <physics> exists
   tinyxml2::XMLElement* physics =
@@ -376,7 +378,7 @@ bool WorldGenerator::processXML()
       phy->InsertFirstChild(max_step);
       mss = phy->FirstChildElement("max_step_size");
     }
-    mss->SetText(0.001);  // 0.01
+    mss->SetText(0.002);
 
     XMLElement* rtf = phy->FirstChildElement("real_time_factor");
     if (rtf == nullptr)
@@ -392,7 +394,7 @@ bool WorldGenerator::processXML()
       phy->InsertAfterChild(time_factor, time_rate);
       rtur = phy->FirstChildElement("real_time_update_rate");
     }
-    rtur->SetText(1000);  // 100
+    rtur->SetText(500);
   }
 
   // CREATE PLUGIN TAG

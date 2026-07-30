@@ -8,7 +8,7 @@
 ```text
 RViz SetGoal (/goal_pose)
   -> spubert_nav2_bridge_node
-     -> nav2 mode: Nav2 NavigateToPose
+     -> nav2 mode: bt_navigator가 /goal_pose를 직접 처리 (bridge는 상태만 관찰)
      -> monitor mode: Nav2 주행 + SPU-BERT 경로만 시각화
      -> spubert mode: guided SPU-BERT 12점 경로
         -> 안전성 검사
@@ -149,10 +149,10 @@ Gazebo world와 RViz/Nav2 occupancy map은 별도 파일이다. 장애물을 수
 두 파일을 함께 갱신해야 한다.
 
 ```text
-hunav_gazebo_wrapper/worlds/compact_corridor.world
-hunav_gazebo_wrapper/maps/compact_corridor.pgm
-hunav_gazebo_wrapper/maps/compact_corridor.yaml
+hunav_gazebo_wrapper/worlds/training_corridor.world
+hunav_gazebo_wrapper/maps/training_corridor.pgm
+hunav_gazebo_wrapper/maps/training_corridor.yaml
 ```
 
-현재 compact corridor의 네 내부 장애물과 외벽 중심은 두 표현에서 일치하도록
-검증되어 있다.
+세 학습 맵은 `scripts/generate_training_maps.py`의 동일한 사각형 정의로
+Gazebo collision과 occupancy grid를 함께 생성하므로 두 표현의 좌표가 일치한다.

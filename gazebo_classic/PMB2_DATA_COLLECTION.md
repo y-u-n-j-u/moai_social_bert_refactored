@@ -13,7 +13,7 @@ Repository root의 통합 명령을 사용하는 것이 가장 간단하다.
 ./scripts/run_simulation.sh pmb2_run_001
 ./scripts/prepare_dataset.sh \
   gazebo_classic/hunav_gz_classic_ws/moai_recordings/pmb2_run_001.pkl \
-  compact_corridor
+  training_corridor
 ./scripts/validate.sh
 ./scripts/train.sh
 ```
@@ -47,8 +47,31 @@ HUNAV_UPDATE_RATE=10.0 \
 ```
 
 Choose a scenario from the terminal menu. After Gazebo and RViz open, use
-RViz `Nav2 Goal` to send a goal. Every new RViz goal starts a new episode and
+RViz `2D Goal Pose`, which publishes `/goal_pose`, to send a goal. The PAL
+action-based `Nav2 Goal` tool is intentionally removed from this image. Every
+new RViz goal starts a new episode and
 clears the unfinished 20-frame window, so samples do not cross goal changes.
+
+For unattended basic waypoint collection:
+
+```bash
+HUNAV_AUTO_GOAL=True \
+HUNAV_AUTO_GOAL_MAX_GOALS=20 \
+./scripts/run_simulation.sh pmb2_auto_001
+```
+
+The default automation alternates between two safe centerline waypoints:
+`corridor=(-8,0)<->(8,0)`, `doorway=(-5.5,0)<->(5.5,0)`, and
+`intersection=(-7.5,0)<->(7.5,0)`. Nav2 `ComputePathToPose` validates every
+leg before publication. Use `HUNAV_AUTO_GOAL_MODE=random` only for the later
+generalization stage. Do not send manual RViz goals while automatic goal
+generation is enabled.
+
+Training scenarios use 30 Hz HuNav updates and 500 Hz Gazebo physics. In
+simulation, `/ground_truth_odom` corrects `map->odom` so AMCL drift in a
+symmetric corridor cannot place the robot inside a wall. Samples are buffered
+per goal and committed only after the robot reaches that goal; timed-out,
+replaced, and interrupted episodes are discarded.
 
 The container bind-mounts the workspace, so the raw file is written on the
 host at:
@@ -72,7 +95,7 @@ scenario selected in step 2:
 ```bash
 python3 /home/hunav_gz_classic_ws/src/moai_hunav_bridge/scripts/postprocess_pedestrian_dataset.py \
   --input /home/hunav_gz_classic_ws/moai_recordings/pmb2_run_001.pkl \
-  --map-yaml /home/hunav_gz_classic_ws/src/hunav_gazebo_wrapper/maps/compact_corridor.yaml \
+  --map-yaml /home/hunav_gz_classic_ws/src/hunav_gazebo_wrapper/maps/training_corridor.yaml \
   --out-dir /home/hunav_gz_classic_ws/moai_recordings/processed/pmb2_run_001 \
   --name pmb2_run_001 \
   --map-size-m 8.0 \

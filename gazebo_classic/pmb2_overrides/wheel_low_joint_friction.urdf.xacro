@@ -1,0 +1,66 @@
+<?xml version="1.0"?>
+
+<!--
+  PMB2 wheel macro for Gazebo data collection.
+
+  The upstream joint uses damping=1.0 and friction=2.0.  With the Humble
+  gazebo_ros2_control velocity interface, low-speed differential commands
+  (especially in-place Nav2 rotation) cannot overcome that joint friction.
+  Contact friction remains defined by wheel.gazebo.xacro; only the internal
+  revolute-joint resistance is reduced here.
+-->
+<robot xmlns:xacro="http://ros.org/wiki/xacro">
+
+  <xacro:include filename="$(find pmb2_description)/urdf/wheels/wheel.gazebo.xacro"/>
+
+  <xacro:macro name="wheel" params="side reflect radius width torque velocity separation parent">
+    <link name="wheel_${side}_link">
+      <inertial>
+        <origin xyz="0 0 ${-0.00207 * reflect}" rpy="0 0 0"/>
+        <mass value="1.82362"/>
+        <inertia ixx="0.00499743171" ixy="${ 0.00000004464 * reflect}" ixz="-0.00000002245" iyy="0.00499741733" iyz="${-0.00000000164 * reflect}" izz="0.00839239692"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="${-90.0 * (1 - reflect) * deg_to_rad} 0 0"/>
+        <geometry>
+          <mesh filename="package://pmb2_description/meshes/wheels/wheel.stl"/>
+        </geometry>
+        <material name="DarkGrey"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${radius}" length="${width}"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <link name="suspension_${side}_link">
+      <inertial>
+        <origin xyz="0 0 -0.02" rpy="0 0 0"/>
+        <mass value="10"/>
+        <inertia ixx="1.0" ixy="0" ixz="0" iyy="1.0" iyz="0" izz="1.0"/>
+      </inertial>
+      <kinematic>0</kinematic>
+      <gravity>1</gravity>
+    </link>
+
+    <joint name="suspension_${side}_joint" type="fixed">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <axis xyz="0 0 1"/>
+      <child link="suspension_${side}_link"/>
+      <parent link="${parent}"/>
+    </joint>
+
+    <joint name="wheel_${side}_joint" type="continuous">
+      <parent link="suspension_${side}_link"/>
+      <child link="wheel_${side}_link"/>
+      <origin xyz="0 ${-separation / 2 * reflect} 0.0" rpy="${-90.0 * deg_to_rad} 0 0"/>
+      <axis xyz="0 0 1"/>
+      <limit effort="${torque}" velocity="${velocity / radius}"/>
+      <dynamics damping="0.1" friction="0.05"/>
+    </joint>
+
+    <xacro:wheel_gazebo side="${side}"/>
+  </xacro:macro>
+</robot>

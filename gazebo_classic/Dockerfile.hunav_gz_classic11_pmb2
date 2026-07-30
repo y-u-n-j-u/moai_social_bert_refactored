@@ -183,6 +183,16 @@ RUN source /opt/ros/humble/setup.bash && colcon build --symlink-install
 RUN source /home/pmb2_ws/install/setup.bash
 RUN echo "source /home/pmb2_ws/install/setup.bash" >> /root/.bashrc 
 
+# The PAL PMB2 RViz config ships only Nav2's action-based GoalTool.  The
+# dataset logger and the SPU-BERT/Nav2 bridge intentionally share the
+# /goal_pose PoseStamped topic, so replace that tool with RViz's topic-based
+# SetGoal tool. Nav2's bt_navigator consumes /goal_pose directly in nav2 mode;
+# the bridge uses the same final goal for guided inference in spubert mode.
+RUN rviz="/home/pmb2_ws/install/pmb2_2dnav/share/pmb2_2dnav/config/rviz/navigation.rviz" \
+    && perl -0pi -e 's@    - Class: nav2_rviz_plugins/GoalTool@    - Class: rviz_default_plugins/SetGoal\n      Topic:\n        Depth: 5\n        Durability Policy: Volatile\n        History Policy: Keep Last\n        Reliability Policy: Reliable\n        Value: /goal_pose@' "$rviz" \
+    && grep -q 'Class: rviz_default_plugins/SetGoal' "$rviz" \
+    && ! grep -q 'Class: nav2_rviz_plugins/GoalTool' "$rviz"
+
 # Add PATH for Groot2
 RUN echo '# Add Groot2 to PATH' >> /etc/bash.bashrc && \
     echo 'export PATH="/opt/Groot2/bin:$PATH"' >> /etc/bash.bashrc

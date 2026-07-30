@@ -44,7 +44,7 @@ docker run -it \
     --env="HUNAV_USE_GAZEBO_GUI=${HUNAV_USE_GAZEBO_GUI:-True}" \
     --env="HUNAV_USE_RVIZ=${HUNAV_USE_RVIZ:-True}" \
     --env="HUNAV_USE_STATIC_MAP_ODOM=${HUNAV_USE_STATIC_MAP_ODOM:-$default_static_map_odom}" \
-    --env="HUNAV_UPDATE_RATE=${HUNAV_UPDATE_RATE:-10.0}" \
+    --env="HUNAV_UPDATE_RATE=${HUNAV_UPDATE_RATE:-30.0}" \
     --env="HUNAV_JACKAL_LASER=${HUNAV_JACKAL_LASER:-0}" \
     --env="HUNAV_JACKAL_REALSENSE=${HUNAV_JACKAL_REALSENSE:-0}" \
     --env="HUNAV_JACKAL_SPUBERT_CONTROLLER=${HUNAV_JACKAL_SPUBERT_CONTROLLER:-False}" \
@@ -62,6 +62,16 @@ docker run -it \
     --env="HUNAV_ROBOT_TRAINING_SAMPLE_STRIDE=${HUNAV_ROBOT_TRAINING_SAMPLE_STRIDE:-1}" \
     --env="HUNAV_ROBOT_TRAINING_FLUSH_EVERY=${HUNAV_ROBOT_TRAINING_FLUSH_EVERY:-10}" \
     --env="HUNAV_ROBOT_TRAINING_MAX_SAMPLES=${HUNAV_ROBOT_TRAINING_MAX_SAMPLES:-0}" \
+    --env="HUNAV_AUTO_GOAL=${HUNAV_AUTO_GOAL:-False}" \
+    --env="HUNAV_AUTO_GOAL_MODE=${HUNAV_AUTO_GOAL_MODE:-waypoint}" \
+    --env="HUNAV_AUTO_GOAL_WAYPOINTS=${HUNAV_AUTO_GOAL_WAYPOINTS:-}" \
+    --env="HUNAV_AUTO_GOAL_SEED=${HUNAV_AUTO_GOAL_SEED:--1}" \
+    --env="HUNAV_AUTO_GOAL_MIN_DISTANCE=${HUNAV_AUTO_GOAL_MIN_DISTANCE:-6.0}" \
+    --env="HUNAV_AUTO_GOAL_MAX_DISTANCE=${HUNAV_AUTO_GOAL_MAX_DISTANCE:-20.0}" \
+    --env="HUNAV_AUTO_GOAL_CLEARANCE=${HUNAV_AUTO_GOAL_CLEARANCE:-0.55}" \
+    --env="HUNAV_AUTO_GOAL_MIN_EPISODE_DURATION=${HUNAV_AUTO_GOAL_MIN_EPISODE_DURATION:-12.0}" \
+    --env="HUNAV_AUTO_GOAL_TIMEOUT=${HUNAV_AUTO_GOAL_TIMEOUT:-60.0}" \
+    --env="HUNAV_AUTO_GOAL_MAX_GOALS=${HUNAV_AUTO_GOAL_MAX_GOALS:-0}" \
     --env="HUNAV_SOCIAL_BERT_PREDICTOR=${HUNAV_SOCIAL_BERT_PREDICTOR:-spubert}" \
     --env="HUNAV_SPUBERT_MODEL_PATH=${HUNAV_SPUBERT_MODEL_PATH:-/home/hunav_gz_classic_ws/src/moai_social_bert_refactored/output/ethucy/univ/spubert.pth}" \
     --env="HUNAV_SPUBERT_REPO_PATH=${HUNAV_SPUBERT_REPO_PATH:-/home/hunav_gz_classic_ws/src/moai_social_bert_refactored/runtime/SPUBERT}" \
@@ -120,6 +130,7 @@ docker run -it \
     --mount type=bind,source=$cwd/entrypoint.bash,target=/entrypoint.bash,readonly \
     --mount type=bind,source=$cwd/hunav_gz_classic_ws,target=/home/hunav_gz_classic_ws \
     --mount type=bind,source=$cwd/pmb2_overrides/sick_tim571_laser_gpu.gazebo.xacro,target=/home/pmb2_ws/install/pmb2_description/share/pmb2_description/urdf/sensors/sick_tim571_laser_gpu.gazebo.xacro,readonly \
+    --mount type=bind,source=$cwd/pmb2_overrides/wheel_low_joint_friction.urdf.xacro,target=/home/pmb2_ws/install/pmb2_description/share/pmb2_description/urdf/wheels/wheel.urdf.xacro,readonly \
     --mount type=bind,source=$cwd/pmb2_overrides/mobile_base_controller_public_sim_fast.yaml,target=/home/pmb2_ws/install/pmb2_controller_configuration/share/pmb2_controller_configuration/config/mobile_base_controller_public_sim.yaml,readonly \
     pmb2_hunavsim \
     bash

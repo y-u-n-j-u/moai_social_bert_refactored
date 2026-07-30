@@ -39,6 +39,8 @@ class JackalTeleopDatasetLoggerNode(Node):
         self.pred_len = int(self.declare_parameter("pred_len", 12).value)
         self.record_dt = float(self.declare_parameter("record_dt", 0.4).value)
         self.guidance_point_radius = float(self.declare_parameter("guidance_point_radius", 8.0).value)
+        self.goal_reached_tolerance = float(self.declare_parameter("goal_reached_tolerance", 0.6).value)
+        self.episode_timeout = float(self.declare_parameter("episode_timeout", 60.0).value)
         self.require_goal = self._as_bool(self.declare_parameter("require_goal", True).value)
         self.sample_stride = int(self.declare_parameter("sample_stride", 1).value)
         self.flush_every = int(self.declare_parameter("flush_every", 10).value)
@@ -50,6 +52,8 @@ class JackalTeleopDatasetLoggerNode(Node):
         self._latest_robot: Optional[Tuple[float, float]] = None
         self._latest_humans: Dict[int, Tuple[float, float]] = {}
         self._latest_goal: Optional[Tuple[float, float]] = None
+        self._goal_active = False
+        self._has_received_goal = False
         self._last_robot_stamp: Optional[float] = None
         self._last_humans_stamp: Optional[float] = None
         self._last_goal_stamp: Optional[float] = None
@@ -58,6 +62,11 @@ class JackalTeleopDatasetLoggerNode(Node):
         self._episode_id = 0
         self._last_flushed_sample_count = 0
         self._frames: Deque[Dict[str, Any]] = deque(maxlen=self.seq_len)
+        # Keep samples pending until the robot actually reaches the episode
+        # goal. Timed-out, aborted, and interrupted runs must not contaminate
+        # the training file with stationary tails.
+        self._pending_samples: List[np.ndarray] = []
+        self._pending_meta: List[Dict[str, Any]] = []
         self._samples: List[np.ndarray] = []
         self._sample_meta: List[Dict[str, Any]] = []
 
@@ -70,7 +79,8 @@ class JackalTeleopDatasetLoggerNode(Node):
         self.get_logger().info(
             f"Robot target dataset logger {state}; robot={self.robot_topic}, humans={self.human_states_topic}, "
             f"goal={self.goal_topic}, require_goal={self.require_goal}, "
-            f"guidance_radius={self.guidance_point_radius:.2f}, output={self.output_path}"
+            f"guidance_radius={self.guidance_point_radius:.2f}, "
+            f"goal_reached_tolerance={self.goal_reached_tolerance:.2f}, output={self.output_path}"
         )
 
     @staticmethod
@@ -99,11 +109,15 @@ class JackalTeleopDatasetLoggerNode(Node):
         # A new RViz goal starts a new collection episode. Keeping frames from
         # the previous goal would create 20-step windows whose past and future
         # belong to different navigation tasks.
-        if self._latest_goal is not None:
+        if self._goal_active:
+            self._discard_pending_episode("replaced before reaching its goal")
+        if self._has_received_goal:
             self._episode_id += 1
         self._frames.clear()
         self._last_record_stamp = None
         self._latest_goal = (float(msg.pose.position.x), float(msg.pose.position.y))
+        self._goal_active = True
+        self._has_received_goal = True
         self._last_goal_stamp = self._now_float()
         self.get_logger().info(
             f"Started dataset episode {self._episode_id} from {self.goal_topic}: "
@@ -113,16 +127,44 @@ class JackalTeleopDatasetLoggerNode(Node):
     def _on_timer(self) -> None:
         if not self.enabled:
             return
-        if self.max_samples > 0 and len(self._samples) >= self.max_samples:
-            return
 
         stamp = self._now_float()
         if stamp <= 0.0:
+            return
+        if (
+            self._goal_active
+            and self._last_goal_stamp is not None
+            and self.episode_timeout > 0.0
+            and stamp - self._last_goal_stamp >= self.episode_timeout
+        ):
+            self._discard_pending_episode(
+                f"goal timeout after {self.episode_timeout:.1f} seconds"
+            )
+            self._goal_active = False
+            self._flush(force=True)
             return
         record_dt = max(self.record_dt, 1e-3)
         if self._last_record_stamp is not None and stamp - self._last_record_stamp < record_dt:
             return
         if not self._has_fresh_state(stamp):
+            return
+        if self._goal_is_reached():
+            pending_count = len(self._pending_samples)
+            self._commit_pending_episode()
+            self.get_logger().info(
+                f"Closed dataset episode {self._episode_id}: robot reached goal within "
+                f"{max(0.0, self.goal_reached_tolerance):.2f} m; "
+                f"committed {pending_count} samples"
+            )
+            self._goal_active = False
+            self._frames.clear()
+            self._last_record_stamp = None
+            self._flush(force=True)
+            return
+        if (
+            self.max_samples > 0
+            and len(self._samples) + len(self._pending_samples) >= self.max_samples
+        ):
             return
 
         self._last_record_stamp = stamp
@@ -151,14 +193,32 @@ class JackalTeleopDatasetLoggerNode(Node):
             return False
         if self.require_goal and self._latest_goal is None:
             return False
+        if self.require_goal and not self._goal_active:
+            return False
         if stamp - self._last_robot_stamp > self.stale_timeout:
             return False
         if stamp - self._last_humans_stamp > self.stale_timeout:
             return False
         return True
 
+    def _goal_is_reached(self) -> bool:
+        if not self._goal_active or self._latest_robot is None or self._latest_goal is None:
+            return False
+        tolerance = max(0.0, self.goal_reached_tolerance)
+        if tolerance <= 0.0:
+            return False
+        return float(
+            np.hypot(
+                self._latest_goal[0] - self._latest_robot[0],
+                self._latest_goal[1] - self._latest_robot[1],
+            )
+        ) <= tolerance
+
     def _append_sample_from_window(self) -> None:
-        if self.max_samples > 0 and len(self._samples) >= self.max_samples:
+        if (
+            self.max_samples > 0
+            and len(self._samples) + len(self._pending_samples) >= self.max_samples
+        ):
             return
 
         frames = list(self._frames)
@@ -205,8 +265,8 @@ class JackalTeleopDatasetLoggerNode(Node):
         current_xy = trajs[0, self.obs_len - 1]
         guidance_point = self._guidance_point_from_goal(current_xy, final_goal)
 
-        self._samples.append(trajs)
-        self._sample_meta.append(
+        self._pending_samples.append(trajs)
+        self._pending_meta.append(
             {
                 "episode_id": int(self._episode_id),
                 "target": "robot",
@@ -226,6 +286,26 @@ class JackalTeleopDatasetLoggerNode(Node):
                 "guidance_policy": "circle_line_intersection_to_final_goal",
             }
         )
+
+    def _commit_pending_episode(self) -> None:
+        if not self._pending_samples:
+            return
+        self._samples.extend(self._pending_samples)
+        self._sample_meta.extend(self._pending_meta)
+        self._pending_samples.clear()
+        self._pending_meta.clear()
+
+    def _discard_pending_episode(self, reason: str) -> None:
+        count = len(self._pending_samples)
+        self._pending_samples.clear()
+        self._pending_meta.clear()
+        self._frames.clear()
+        self._last_record_stamp = None
+        if count > 0:
+            self.get_logger().warning(
+                f"Discarded {count} samples from incomplete episode "
+                f"{self._episode_id}: {reason}"
+            )
 
     def _guidance_point_from_goal(
         self,
@@ -279,6 +359,8 @@ class JackalTeleopDatasetLoggerNode(Node):
                 "human_states_topic": self.human_states_topic,
                 "goal_topic": self.goal_topic,
                 "require_goal": self.require_goal,
+                "goal_reached_tolerance": float(max(0.0, self.goal_reached_tolerance)),
+                "episode_timeout": float(max(0.0, self.episode_timeout)),
                 "final_goal_source": "rviz_goal_pose_when_available",
                 "guidance_policy": "circle_line_intersection_to_final_goal",
                 "guidance_radius": float(max(0.0, self.guidance_point_radius)),
@@ -294,6 +376,9 @@ class JackalTeleopDatasetLoggerNode(Node):
             self.get_logger().info(f"Saved {len(self._samples)} robot-target samples to {self.output_path}")
 
     def close(self) -> None:
+        if self._goal_active:
+            self._discard_pending_episode("simulation stopped before goal completion")
+            self._goal_active = False
         self._flush(force=True)
 
 

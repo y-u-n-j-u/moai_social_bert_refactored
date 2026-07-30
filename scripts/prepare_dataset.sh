@@ -9,7 +9,7 @@ Usage:
 Examples:
   ./scripts/prepare_dataset.sh \
     gazebo_classic/hunav_gz_classic_ws/moai_recordings/pmb2_run_001.pkl \
-    compact_corridor
+    training_corridor
 
   ./scripts/prepare_dataset.sh /absolute/run.pkl /absolute/map.yaml run_001
 
