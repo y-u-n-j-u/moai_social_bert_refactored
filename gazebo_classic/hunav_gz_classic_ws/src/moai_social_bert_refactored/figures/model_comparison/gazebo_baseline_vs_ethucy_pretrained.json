@@ -1,0 +1,41 @@
+{
+  "baseline": {
+    "test_samples": 225,
+    "all_sample_ade": 1.0207801857259537,
+    "all_sample_fde": 2.1462825887070762,
+    "all_sample_gde": 1.4466378375556734,
+    "safe_candidate_rate": 0.958,
+    "selected_goal_valid_rate": 0.9822222222222222,
+    "trajectory_map_safe_rate": 0.9155555555555556,
+    "execution_valid_rate": 0.8977777777777778,
+    "all_candidates_invalid": 4,
+    "valid_only_ade": 0.8184701527404313,
+    "valid_only_fde": 1.765275814229309,
+    "valid_only_gde": 1.3882196143564611
+  },
+  "ethucy_pretrained": {
+    "test_samples": 225,
+    "all_sample_ade": 0.9512965177165137,
+    "all_sample_fde": 2.00630828373962,
+    "all_sample_gde": 1.6598292705085542,
+    "safe_candidate_rate": 0.9093333333333333,
+    "selected_goal_valid_rate": 0.9466666666666667,
+    "trajectory_map_safe_rate": 0.9555555555555556,
+    "execution_valid_rate": 0.9022222222222223,
+    "all_candidates_invalid": 12,
+    "valid_only_ade": 0.7562827445896976,
+    "valid_only_fde": 1.6383836110090386,
+    "valid_only_gde": 1.466475966161695
+  },
+  "relative_error_change_percent": {
+    "all_sample_ade": -6.806917785147346,
+    "all_sample_fde": -6.521709009985351,
+    "all_sample_gde": 14.737028675615308
+  },
+  "rate_change_percentage_points": {
+    "safe_candidate_rate": -4.866666666666664,
+    "selected_goal_valid_rate": -3.5555555555555562,
+    "trajectory_map_safe_rate": 4.0000000000000036,
+    "execution_valid_rate": 0.4444444444444473
+  }
+}

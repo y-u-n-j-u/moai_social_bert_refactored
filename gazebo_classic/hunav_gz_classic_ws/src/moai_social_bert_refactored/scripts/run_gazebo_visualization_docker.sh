@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 gazebo_data_root="${GAZEBO_DATA_ROOT:-${repo_root}/data/processed/gazebo/splits_episode}"
 checkpoint="${MOAI_CHECKPOINT:-${repo_root}/output/spubert_moai_gazebo_guided_mgp_fs/model_best.pth}"
 output_dir="${GAZEBO_GUIDED_FIGURES:-${repo_root}/figures/gazebo_guided_mgp_results}"
+config="${MOAI_CONFIG:-configs/spubert/moai_social_nav_ext_scene_guided_fs.yaml}"
 font_path="${MOAI_KOREAN_FONT:-/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc}"
 image="${MOAI_IMAGE:-moai-social-bert:cu124}"
 
@@ -36,7 +37,7 @@ docker run --rm --gpus all --shm-size=4g \
   "${font_mount[@]}" \
   "${image}" \
   python scripts/visualize_gazebo_guided_results.py \
-    --config configs/spubert/moai_social_nav_ext_scene_smoke_fs.yaml \
+    --config "${config}" \
     --checkpoint /checkpoints/model_best.pth \
     --output-dir /results \
     "${font_option[@]}"

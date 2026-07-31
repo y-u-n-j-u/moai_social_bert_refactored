@@ -20,13 +20,13 @@ data:
   input_dim: 2
   output_dim: 2
   goal_dim: 2
-  local_map_size_m: 8.0
+  local_map_size_m: 20.0
   local_map_grid_size: 32
 
 scene:
   enabled: true
-  env_range: 4.0
-  env_resol: 0.25
+  env_range: 10.0
+  env_resol: 0.625
   patch_size: 16
   num_patch: 4
   binary: false

@@ -1,18 +1,18 @@
 experiment:
-  name: spubert_moai_gazebo_guided_mgp_baseline
+  name: spubert_ethucy_all_scene_pretrain
   framework: spubert
-  task: finetune
+  task: pretrain
   seed: 20
 
 data:
-  dataset_name: moai_social_nav_ext
-  dataset_path: /data/gazebo
-  dataset_split: pmb2_true_goal_gp_v1_clean_social
+  dataset_name: ethucy_sbert
+  dataset_path: ./data/processed
+  dataset_split: ethucy_all
   obs_len: 8
   pred_len: 12
-  min_obs_len: 8
+  min_obs_len: 2
   num_nbr: 4
-  augment: false
+  augment: true
   sampling: 1.0
   view_range: 20.0
   view_angle: 1.0471975512
@@ -20,8 +20,6 @@ data:
   input_dim: 2
   output_dim: 2
   goal_dim: 2
-  local_map_size_m: 20.0
-  local_map_grid_size: 32
 
 scene:
   enabled: true
@@ -30,8 +28,6 @@ scene:
   patch_size: 16
   num_patch: 4
   binary: false
-  map_align_to_target: true
-  map_source_unknown_value: 0.5
 
 model:
   backbone:
@@ -52,45 +48,38 @@ model:
       k_sample: 20
       d_sample: 400
       normal: false
-      guidance_conditioned: true
-      reject_unknown_goals: true
+      guidance_conditioned: false
 
 loss:
   traj_weight: 1.0
   goal_weight: 1.0
   kld_weight: 1.0
   col_weight: 0.0
-  cvae_sigma: 1.0
-  kld_clamp: null
 
 train:
   train_mode: fs
   batch_size: 32
   test_batch_size: 32
-  epoch: 30
+  epoch: 20
   eval_interval: 1
   checkpoint_interval: 5
-  patience: 7
+  patience: -1
   lr_scheduler: it_linear
   clip_grads: false
   num_cycle: 0
-  evaluate_on_test: true
+  evaluate_on_test: false
   use_gt_goal: false
-  guided_inference: true
+  guided_inference: false
   optimizer:
     name: adamw
     lr: 5.0e-5
     weight_decay: 0.01
     eps: 1.0e-8
-  scheduler:
-    warm_up: 0.0
-    decay_step: 10
-    decay_gamma: 0.5
 
 runtime:
   cuda: true
   num_worker: 0
-  model_dir: ./output/spubert_moai_gazebo_guided_mgp_baseline_map20m
+  model_dir: ./output/spubert_ethucy_all_scene_pretrain
   checkpoint: ""
   pretrain_checkpoint: ""
   viz: false

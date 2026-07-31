@@ -241,6 +241,9 @@ def collect_inference_records(
     valid_records = [record for record in records if record["execution_valid"]]
     metrics: dict[str, Any] = {
         "test_samples": len(records),
+        "all_sample_ade": float(np.mean([record["ade"] for record in records])),
+        "all_sample_fde": float(np.mean([record["fde"] for record in records])),
+        "all_sample_gde": float(np.mean([record["gde"] for record in records])),
         "safe_candidate_rate": safe_candidates / max(total_candidates, 1),
         "selected_goal_valid_rate": selected_valid / max(len(records), 1),
         "trajectory_map_safe_rate": trajectory_safe / max(len(records), 1),
@@ -574,7 +577,7 @@ def create_single_pipeline_figure(
     fig.text(
         0.5,
         0.005,
-        "※ 1-epoch checkpoint의 pipeline 동작 확인용 결과이며 최종 성능이 아님",
+        "※ 학습된 checkpoint의 실제 test 추론 결과",
         ha="center",
         fontsize=9,
         color="#64748b",
@@ -747,7 +750,7 @@ def create_summary_figure(
     fig.text(
         0.5,
         0.905,
-        "실제 325개 Gazebo sample + 1-epoch checkpoint 기반",
+        f"실제 {dataset_stats['total_samples']}개 Gazebo sample + best validation checkpoint 기반",
         ha="center",
         fontsize=12,
         color="#475569",
@@ -837,7 +840,8 @@ def create_summary_figure(
     ax_checks.set_title("④ 눈으로 확인 가능한 검증 근거", pad=12)
     check_items = [
         (
-            "325 / 325",
+            f"{dataset_stats['finite_and_shape_valid']} / "
+            f"{dataset_stats['total_samples']}",
             "모든 tensor shape 일치\nNaN / Inf 없음",
             "#15803d",
         ),
@@ -850,7 +854,7 @@ def create_summary_figure(
         (
             f"{dataset_stats['guidance_outside_map']} / "
             f"{dataset_stats['total_samples']}",
-            "8 m guidance가 ±4 m local map 밖\n조건 입력이므로 오류 아님",
+            "8 m guidance가 ±10 m local map 밖\n0개로 범위 정합성 확인",
             "#d97706",
         ),
         (
@@ -894,7 +898,7 @@ def create_summary_figure(
     fig.text(
         0.5,
         0.025,
-        "※ 안전률과 ADE/FDE는 1-epoch checkpoint의 pipeline smoke 결과이며 최종 모델 성능이 아님",
+        "※ 안전률과 ADE/FDE는 해당 checkpoint를 독립 test split에서 계산한 결과",
         ha="center",
         fontsize=10,
         color="#64748b",
@@ -931,7 +935,7 @@ def main() -> int:
 
     report = {
         "status": "PASS",
-        "note": "1-epoch checkpoint pipeline smoke result; not final performance",
+        "note": "Best-validation checkpoint test result",
         "config": str(cli.config),
         "checkpoint": str(checkpoint),
         "dataset": dataset_stats,

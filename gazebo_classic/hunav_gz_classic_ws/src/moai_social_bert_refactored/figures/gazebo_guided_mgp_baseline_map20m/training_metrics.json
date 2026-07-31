@@ -1,0 +1,27 @@
+{
+  "epochs_completed": 30,
+  "first_epoch": {
+    "epoch": 1,
+    "train_loss": 6.63557,
+    "val_loss": 4.912757,
+    "ade": 1.786348,
+    "fde": 3.611434,
+    "gde": 3.505452
+  },
+  "best_validation_epoch": {
+    "epoch": 29,
+    "train_loss": 2.011099,
+    "val_loss": 2.142793,
+    "ade": 1.019486,
+    "fde": 2.145301,
+    "gde": 1.445507
+  },
+  "last_epoch": {
+    "epoch": 30,
+    "train_loss": 1.99856,
+    "val_loss": 2.146463,
+    "ade": 1.018182,
+    "fde": 2.142698,
+    "gde": 1.446094
+  }
+}

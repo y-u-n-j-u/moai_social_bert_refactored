@@ -1,0 +1,18 @@
+{
+  "epochs_completed": 20,
+  "first_epoch": {
+    "epoch": 1,
+    "train_loss": 0.628304,
+    "val_loss": 0.628304
+  },
+  "best_validation_epoch": {
+    "epoch": 20,
+    "train_loss": 0.074494,
+    "val_loss": 0.074494
+  },
+  "last_epoch": {
+    "epoch": 20,
+    "train_loss": 0.074494,
+    "val_loss": 0.074494
+  }
+}

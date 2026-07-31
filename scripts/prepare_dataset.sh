@@ -79,7 +79,7 @@ docker run --rm \
   --map-yaml "/maps/$(basename "${map_input}")" \
   --out-dir /output \
   --name "${run_name}" \
-  --map-size-m 8.0 \
+  --map-size-m 20.0 \
   --map-grid-size 32 \
   --guidance-radius 8.0
 

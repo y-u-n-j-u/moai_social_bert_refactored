@@ -1,5 +1,5 @@
 experiment:
-  name: spubert_moai_gazebo_guided_mgp_baseline
+  name: spubert_moai_gazebo_guided_ethucy_pretrained
   framework: spubert
   task: finetune
   seed: 20
@@ -64,7 +64,7 @@ loss:
   kld_clamp: null
 
 train:
-  train_mode: fs
+  train_mode: pt
   batch_size: 32
   test_batch_size: 32
   epoch: 30
@@ -90,9 +90,9 @@ train:
 runtime:
   cuda: true
   num_worker: 0
-  model_dir: ./output/spubert_moai_gazebo_guided_mgp_baseline_map20m
+  model_dir: ./output/spubert_moai_gazebo_guided_ethucy_pretrained
   checkpoint: ""
-  pretrain_checkpoint: ""
+  pretrain_checkpoint: ./output/spubert_ethucy_all_scene_pretrain/pretrain_model_best.pth
   viz: false
   shuffle: true
   dry_run: false
