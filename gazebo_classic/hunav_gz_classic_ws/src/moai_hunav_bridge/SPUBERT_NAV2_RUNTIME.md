@@ -120,6 +120,30 @@ RViz 표시:
   선택 경로와 reject 이유
 - `/moai/human_obstacle_cloud`: Nav2 costmap에 들어가는 현재/예측 보행자 장애물
 
+## 런타임 거절 원인 기록과 시각화
+
+`scripts/run_simulation.sh <run_name>`으로 실행하면 각 예측의 후보 goal, TGP,
+보행자 예측, map 충돌 step, 최대 step 거리, goal 진행량과 최소 보행자
+안전거리가 다음 파일에 자동 저장된다.
+
+```text
+gazebo_classic/hunav_gz_classic_ws/moai_recordings/<run_name>_spubert_diagnostics.jsonl
+```
+
+실험이 끝난 뒤 호스트 PC에서 다음처럼 분석한다.
+
+```bash
+cd /home/kistmnl/social_nav/hunavsim_containers
+
+python3 \
+  gazebo_classic/hunav_gz_classic_ws/src/moai_social_bert_refactored/scripts/analyze_spubert_runtime_diagnostics.py \
+  gazebo_classic/hunav_gz_classic_ws/moai_recordings/<run_name>_spubert_diagnostics.jsonl \
+  --examples-per-reason 3
+```
+
+입력 파일 옆의 `<run_name>_spubert_diagnostics_analysis/`에 `summary.json`,
+`reason_counts.csv`, `reason_counts.png`와 원인별 대표 경로 그림이 생성된다.
+
 `guided_path_valid`가 반복해서 확인된 뒤 다음처럼 실제 모델 경로 실행을 켠다.
 
 ```bash

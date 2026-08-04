@@ -41,18 +41,6 @@ hunav_loader:
       12:
         x: -7.200
         y: -0.250
-      13:
-        x: 0.250
-        y: -7.200
-      14:
-        x: 0.250
-        y: 7.200
-      15:
-        x: -0.250
-        y: 7.200
-      16:
-        x: -0.250
-        y: -7.200
     agents:
       - agent1
       - agent2
@@ -60,8 +48,6 @@ hunav_loader:
       - agent4
       - agent5
       - agent6
-      - agent7
-      - agent8
     agent1:
       id: 1
       group_id: -1
@@ -78,10 +64,10 @@ hunav_loader:
       behavior:
         type: Regular
         configuration: 0
-        goal_force_factor: 2.0
-        obstacle_force_factor: 10.0
-        social_force_factor: 5.0
-        other_force_factor: 20.0
+        goal_force_factor: 2.5
+        obstacle_force_factor: 7.0
+        social_force_factor: 3.5
+        other_force_factor: 10.0
       goals:
         - 2
         - 1
@@ -101,10 +87,10 @@ hunav_loader:
       behavior:
         type: Regular
         configuration: 1
-        goal_force_factor: 2.0
-        obstacle_force_factor: 10.0
-        social_force_factor: 5.0
-        other_force_factor: 20.0
+        goal_force_factor: 2.5
+        obstacle_force_factor: 7.0
+        social_force_factor: 3.5
+        other_force_factor: 10.0
       goals:
         - 4
         - 3
@@ -124,10 +110,10 @@ hunav_loader:
       behavior:
         type: Regular
         configuration: 0
-        goal_force_factor: 2.0
-        obstacle_force_factor: 10.0
-        social_force_factor: 5.0
-        other_force_factor: 20.0
+        goal_force_factor: 2.5
+        obstacle_force_factor: 7.0
+        social_force_factor: 3.5
+        other_force_factor: 10.0
       goals:
         - 6
         - 5
@@ -147,10 +133,10 @@ hunav_loader:
       behavior:
         type: Regular
         configuration: 1
-        goal_force_factor: 2.0
-        obstacle_force_factor: 10.0
-        social_force_factor: 5.0
-        other_force_factor: 20.0
+        goal_force_factor: 2.5
+        obstacle_force_factor: 7.0
+        social_force_factor: 3.5
+        other_force_factor: 10.0
       goals:
         - 8
         - 7
@@ -170,10 +156,10 @@ hunav_loader:
       behavior:
         type: Regular
         configuration: 0
-        goal_force_factor: 2.0
-        obstacle_force_factor: 10.0
-        social_force_factor: 5.0
-        other_force_factor: 20.0
+        goal_force_factor: 2.5
+        obstacle_force_factor: 7.0
+        social_force_factor: 3.5
+        other_force_factor: 10.0
       goals:
         - 10
         - 9
@@ -193,56 +179,10 @@ hunav_loader:
       behavior:
         type: Regular
         configuration: 1
-        goal_force_factor: 2.0
-        obstacle_force_factor: 10.0
-        social_force_factor: 5.0
-        other_force_factor: 20.0
+        goal_force_factor: 2.5
+        obstacle_force_factor: 7.0
+        social_force_factor: 3.5
+        other_force_factor: 10.0
       goals:
         - 12
         - 11
-    agent7:
-      id: 7
-      group_id: -1
-      skin: 1
-      max_vel: 1.30
-      radius: 0.35
-      goal_radius: 0.30
-      cyclic_goals: true
-      init_pose:
-        x: 0.250
-        y: -7.200
-        z: 1.250
-        h: 1.57080
-      behavior:
-        type: Regular
-        configuration: 0
-        goal_force_factor: 2.0
-        obstacle_force_factor: 10.0
-        social_force_factor: 5.0
-        other_force_factor: 20.0
-      goals:
-        - 14
-        - 13
-    agent8:
-      id: 8
-      group_id: -1
-      skin: 2
-      max_vel: 1.35
-      radius: 0.35
-      goal_radius: 0.30
-      cyclic_goals: true
-      init_pose:
-        x: -0.250
-        y: 7.200
-        z: 1.250
-        h: -1.57080
-      behavior:
-        type: Regular
-        configuration: 1
-        goal_force_factor: 2.0
-        obstacle_force_factor: 10.0
-        social_force_factor: 5.0
-        other_force_factor: 20.0
-      goals:
-        - 16
-        - 15

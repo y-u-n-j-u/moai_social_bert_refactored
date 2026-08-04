@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import math
+import os
 from collections import deque
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import rclpy
 from builtin_interfaces.msg import Duration
@@ -68,6 +70,13 @@ class SpubertNav2BridgeNode(Node):
                 "status_topic",
                 "/moai/spubert_robot_planner_status",
             ).value
+        )
+        diagnostics_path = str(
+            self.declare_parameter("diagnostics_path", "").value
+        ).strip()
+        self.diagnostics_path = (
+            os.path.abspath(os.path.expanduser(diagnostics_path))
+            if diagnostics_path else ""
         )
         self.follow_path_action = str(
             self.declare_parameter("follow_path_action", "/follow_path").value
@@ -158,6 +167,16 @@ class SpubertNav2BridgeNode(Node):
         self._last_status = ""
         self._runtime: Optional[GuidedSpubertRuntime] = None
         self._map_provider: Optional[OccupancyMapProvider] = None
+        self._diagnostics_file = None
+
+        if self.diagnostics_path:
+            os.makedirs(os.path.dirname(self.diagnostics_path), exist_ok=True)
+            self._diagnostics_file = open(
+                self.diagnostics_path, "w", encoding="utf-8", buffering=1
+            )
+            self.get_logger().info(
+                f"Writing guided runtime diagnostics to {self.diagnostics_path}"
+            )
 
         self._robot_sub = self.create_subscription(
             Agent,
@@ -339,10 +358,13 @@ class SpubertNav2BridgeNode(Node):
             )
         except Exception as exc:
             self.get_logger().error(f"Guided robot inference failed: {exc}")
+            self._record_event("inference_error", {"error": str(exc)})
             self._handle_invalid_path("inference_error")
             return
 
-        valid, reason = self._validate_result(result)
+        diagnostics = self._path_diagnostics(result)
+        valid, reason = self._validate_result(result, diagnostics)
+        self._record_diagnostic(result, valid, reason, diagnostics)
         self._publish_debug(result, valid=valid, reason=reason)
         if not valid:
             self._handle_invalid_path(reason)
@@ -389,6 +411,7 @@ class SpubertNav2BridgeNode(Node):
     def _validate_result(
         self,
         result: GuidedInferenceResult,
+        diagnostics: Dict[str, Any],
     ) -> Tuple[bool, str]:
         if not result.selected_goal_valid:
             return False, "no_map_safe_goal"
@@ -403,50 +426,208 @@ class SpubertNav2BridgeNode(Node):
         if self._map_provider is None:
             return False, "map_unavailable"
 
-        footprint_radius = self.robot_radius + self.static_safety_margin
-        if (
-            self._map_provider.path_collision_cost(
-                result.path_world,
-                radius=footprint_radius,
-                weight=1.0,
-            )
-            > 0.0
-        ):
+        if diagnostics["footprint_collision_count"] > 0:
             return False, "robot_footprint_collision"
 
         current = (
             float(self._robot.position.position.x),
             float(self._robot.position.position.y),
         )
-        max_step = (
-            max(self.max_robot_speed, 0.01)
-            * max(self.prediction_dt, 0.01)
-            * max(self.max_step_ratio, 1.0)
-        )
-        previous = current
-        for point in result.path_world:
-            if math.hypot(point[0] - previous[0], point[1] - previous[1]) > max_step:
-                return False, "kinematic_jump"
-            previous = point
+        if diagnostics["max_step_m"] > diagnostics["allowed_step_m"]:
+            return False, "kinematic_jump"
 
+        if diagnostics["goal_progress_m"] < self.min_path_progress:
+            return False, "insufficient_goal_progress"
+
+        if diagnostics["min_human_clearance_m"] < 0.0:
+            return False, "predicted_human_clearance"
+        return True, "valid"
+
+    def _path_diagnostics(self, result: GuidedInferenceResult) -> Dict[str, Any]:
+        current = (
+            float(self._robot.position.position.x),
+            float(self._robot.position.position.y),
+        )
         goal = (
             float(self._goal.pose.position.x),
             float(self._goal.pose.position.y),
         )
+        footprint_radius = self.robot_radius + self.static_safety_margin
+        collision_steps = [
+            index
+            for index, point in enumerate(result.path_world)
+            if self._map_provider.path_collision_cost(
+                [point], radius=footprint_radius, weight=1.0
+            ) > 0.0
+        ] if self._map_provider is not None else []
+
+        previous = current
+        step_distances = []
+        for point in result.path_world:
+            step_distances.append(math.hypot(point[0] - previous[0], point[1] - previous[1]))
+            previous = point
+        max_step_m = max(step_distances, default=0.0)
+        max_step_index = step_distances.index(max_step_m) if step_distances else -1
+        allowed_step_m = (
+            max(self.max_robot_speed, 0.01)
+            * max(self.prediction_dt, 0.01)
+            * max(self.max_step_ratio, 1.0)
+        )
+
         goal_dx = goal[0] - current[0]
         goal_dy = goal[1] - current[1]
         goal_distance = max(math.hypot(goal_dx, goal_dy), 1e-6)
-        endpoint = result.path_world[-1]
-        progress = (
+        endpoint = result.path_world[-1] if result.path_world else current
+        goal_progress_m = (
             (endpoint[0] - current[0]) * goal_dx
             + (endpoint[1] - current[1]) * goal_dy
         ) / goal_distance
-        if progress < self.min_path_progress:
-            return False, "insufficient_goal_progress"
+        human = self._minimum_human_diagnostic(result.path_world)
 
-        if self._minimum_human_distance(result.path_world, clearance=True) < 0.0:
-            return False, "predicted_human_clearance"
-        return True, "valid"
+        return {
+            "selected_goal_valid": bool(result.selected_goal_valid),
+            "trajectory_map_safe": bool(result.trajectory_map_safe),
+            "execution_valid": bool(result.execution_valid),
+            "footprint_radius_m": float(footprint_radius),
+            "footprint_collision_steps": collision_steps,
+            "footprint_collision_count": len(collision_steps),
+            "step_distances_m": step_distances,
+            "max_step_m": float(max_step_m),
+            "max_step_index": int(max_step_index),
+            "allowed_step_m": float(allowed_step_m),
+            "goal_progress_m": float(goal_progress_m),
+            "required_goal_progress_m": float(self.min_path_progress),
+            **human,
+        }
+
+    def _minimum_human_diagnostic(self, path: Sequence[XY]) -> Dict[str, Any]:
+        best = {
+            "min_human_center_distance_m": math.inf,
+            "min_human_required_distance_m": 0.0,
+            "min_human_clearance_m": math.inf,
+            "min_human_step": -1,
+            "min_human_agent_id": -1,
+            "min_human_position": None,
+            "min_human_robot_position": None,
+        }
+        for step_index, (robot_x, robot_y) in enumerate(path):
+            horizon = self.prediction_dt * (step_index + 1)
+            for agent_id, human in self._humans.items():
+                predicted = self._predicted_human_paths.get(agent_id, [])
+                if predicted:
+                    human_x, human_y = predicted[min(step_index, len(predicted) - 1)]
+                else:
+                    human_x = float(human.position.position.x) + float(human.velocity.linear.x) * horizon
+                    human_y = float(human.position.position.y) + float(human.velocity.linear.y) * horizon
+                center = math.hypot(robot_x - human_x, robot_y - human_y)
+                required = max(
+                    self.min_human_center_distance,
+                    self.robot_radius + max(float(human.radius), 0.35) + self.human_safety_margin,
+                )
+                clearance = center - required
+                if clearance < best["min_human_clearance_m"]:
+                    best = {
+                        "min_human_center_distance_m": float(center),
+                        "min_human_required_distance_m": float(required),
+                        "min_human_clearance_m": float(clearance),
+                        "min_human_step": int(step_index),
+                        "min_human_agent_id": int(agent_id),
+                        "min_human_position": [float(human_x), float(human_y)],
+                        "min_human_robot_position": [float(robot_x), float(robot_y)],
+                    }
+        return best
+
+    def _record_diagnostic(
+        self,
+        result: GuidedInferenceResult,
+        valid: bool,
+        reason: str,
+        diagnostics: Dict[str, Any],
+    ) -> None:
+        robot = self._robot
+        goal = self._goal
+        if self._diagnostics_file is None or robot is None or goal is None:
+            return
+        humans = []
+        for agent_id, human in sorted(self._humans.items()):
+            predicted = self._predicted_human_paths.get(agent_id, [])
+            if not predicted:
+                predicted = [
+                    (
+                        float(human.position.position.x)
+                        + float(human.velocity.linear.x) * self.prediction_dt * step,
+                        float(human.position.position.y)
+                        + float(human.velocity.linear.y) * self.prediction_dt * step,
+                    )
+                    for step in range(1, self.pred_len + 1)
+                ]
+            humans.append({
+                "id": int(agent_id),
+                "current": [
+                    float(human.position.position.x),
+                    float(human.position.position.y),
+                ],
+                "radius": float(human.radius),
+                "predicted": [
+                    [float(x), float(y)]
+                    for x, y in predicted
+                ],
+            })
+        self._record_event("prediction", {
+            "goal_generation": int(self._goal_generation),
+            "valid": bool(valid),
+            "reason": str(reason),
+            "robot": [
+                float(robot.position.position.x),
+                float(robot.position.position.y),
+            ],
+            "robot_yaw": float(robot.yaw),
+            "robot_history": [[float(x), float(y)] for x, y in self._robot_history],
+            "final_goal": [
+                float(goal.pose.position.x),
+                float(goal.pose.position.y),
+            ],
+            "guidance_point": list(result.guidance_point_world),
+            "candidate_goals": [list(point) for point in result.candidate_goals_world],
+            "selected_goal": list(result.selected_goal_world),
+            "path": [list(point) for point in result.path_world],
+            "humans": humans,
+            "metrics": diagnostics,
+            "map_yaml_path": (
+                str(self._map_provider.yaml_path)
+                if self._map_provider is not None else ""
+            ),
+        })
+
+    def _record_event(self, event: str, payload: Dict[str, Any]) -> None:
+        if self._diagnostics_file is None:
+            return
+        record = {
+            "event": event,
+            "stamp_ns": int(self.get_clock().now().nanoseconds),
+            "mode": self.execution_mode,
+            **payload,
+        }
+        try:
+            self._diagnostics_file.write(
+                json.dumps(self._json_safe(record), ensure_ascii=False) + "\n"
+            )
+        except Exception as exc:
+            self.get_logger().error(f"Disabling runtime diagnostics after write failure: {exc}")
+            self._diagnostics_file.close()
+            self._diagnostics_file = None
+
+    @classmethod
+    def _json_safe(cls, value):
+        if hasattr(value, "item") and callable(value.item):
+            return cls._json_safe(value.item())
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        if isinstance(value, dict):
+            return {str(key): cls._json_safe(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [cls._json_safe(item) for item in value]
+        return value
 
     def _minimum_human_distance(
         self,
@@ -853,6 +1034,9 @@ class SpubertNav2BridgeNode(Node):
 
     def destroy_node(self):
         self._cancel_active_navigation()
+        if self._diagnostics_file is not None:
+            self._diagnostics_file.close()
+            self._diagnostics_file = None
         return super().destroy_node()
 
 

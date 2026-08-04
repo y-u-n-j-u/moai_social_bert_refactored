@@ -86,14 +86,15 @@ SPECS = [
         ],
         start_occupied=True,
         tracks=[
-            ((-8.0, -1.10), (8.0, -1.10)),
-            ((8.0, 1.10), (-8.0, 1.10)),
-            ((-7.5, 0.35), (7.5, 0.35)),
-            ((7.5, -0.35), (-7.5, -0.35)),
-            ((-6.5, 1.45), (6.5, 1.45)),
-            ((6.5, -1.45), (-6.5, -1.45)),
+            ((-8.0, -1.35), (8.0, -1.35)),
+            ((8.0, 1.35), (-8.0, 1.35)),
+            ((-7.5, -0.45), (7.5, -0.45)),
+            ((7.5, 0.45), (-7.5, 0.45)),
         ],
-        densities=[("low", 2), ("medium", 4), ("high", 6)],
+        # Four agents are enough to create head-on and following interactions.
+        # Six simultaneously spawned cyclic agents repeatedly deadlocked in the
+        # same narrow section and produced long near-zero-speed trajectories.
+        densities=[("low", 2), ("medium", 3), ("high", 4)],
     ),
     MapSpec(
         name="training_intersection",
@@ -120,7 +121,9 @@ SPECS = [
             ((0.25, -7.2), (0.25, 7.2)),
             ((-0.25, 7.2), (-0.25, -7.2)),
         ],
-        densities=[("low", 4), ("medium", 6), ("high", 8)],
+        # Increase density progressively instead of starting the low scenario
+        # with all four crossing directions active.
+        densities=[("low", 2), ("medium", 4), ("high", 6)],
     ),
     MapSpec(
         name="training_doorway",
@@ -129,8 +132,11 @@ SPECS = [
         free_regions=[],
         occupied=[
             *outer_walls(14.0, 12.0),
-            Rect("divider_north", 2.50, 3.375, 0.25, 5.25),
-            Rect("divider_south", 2.50, -3.375, 0.25, 5.25),
+            # A 3.2 m opening leaves enough room for PMB2 and pedestrians to
+            # pass without frequent doorway deadlocks while preserving a
+            # meaningful bottleneck for social-navigation training.
+            Rect("divider_north", 2.50, 3.80, 0.25, 4.40),
+            Rect("divider_south", 2.50, -3.80, 0.25, 4.40),
             Rect("table_left_north", -3.8, 3.4, 1.4, 1.0, 0.85, (0.65, 0.42, 0.22)),
             Rect("table_left_south", -3.8, -3.4, 1.4, 1.0, 0.85, (0.65, 0.42, 0.22)),
             Rect("table_right_north", 5.0, 3.4, 1.2, 1.2, 0.85, (0.65, 0.42, 0.22)),
@@ -138,14 +144,15 @@ SPECS = [
         ],
         start_occupied=False,
         tracks=[
-            ((-5.5, -0.45), (5.5, -0.45)),
-            ((5.5, 0.45), (-5.5, 0.45)),
-            ((-5.0, 0.10), (5.0, 0.10)),
-            ((5.0, -0.10), (-5.0, -0.10)),
-            ((-4.8, 0.55), (4.8, 0.55)),
-            ((4.8, -0.55), (-4.8, -0.55)),
+            ((-5.5, -0.55), (5.5, -0.55)),
+            ((5.5, 0.55), (-5.5, 0.55)),
+            # Additional agents start longitudinally staggered on the same
+            # directional lanes instead of occupying nearly identical lateral
+            # coordinates in the doorway at simulation start.
+            ((-3.0, -0.55), (5.0, -0.55)),
+            ((3.0, 0.55), (-5.0, 0.55)),
         ],
-        densities=[("low", 2), ("medium", 4), ("high", 6)],
+        densities=[("low", 2), ("medium", 3), ("high", 4)],
     ),
 ]
 
@@ -294,10 +301,10 @@ def scenario_text(spec: MapSpec, density: str, count: int) -> str:
       behavior:
         type: Regular
         configuration: {(index - 1) % 2}
-        goal_force_factor: 2.0
-        obstacle_force_factor: 10.0
-        social_force_factor: 5.0
-        other_force_factor: 20.0
+        goal_force_factor: 2.5
+        obstacle_force_factor: 7.0
+        social_force_factor: 3.5
+        other_force_factor: 10.0
       goals:
         - {end_goal}
         - {start_goal}"""

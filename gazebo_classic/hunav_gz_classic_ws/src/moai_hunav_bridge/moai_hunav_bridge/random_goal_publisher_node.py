@@ -21,11 +21,13 @@ from std_srvs.srv import Trigger
 XY = Tuple[float, float]
 
 DEFAULT_WAYPOINT_ROUTES = {
-    # Basic curriculum routes stay on the centerline. Pedestrian timing,
-    # direction, speed, and density provide the interaction variation.
-    "training_corridor": ((-8.0, 0.0), (8.0, 0.0)),
-    "training_doorway": ((-5.5, 0.0), (5.5, 0.0)),
-    "training_intersection": ((-7.5, 0.0), (7.5, 0.0)),
+    # Keep robot waiting endpoints away from pedestrian cyclic goals.  The
+    # previous centerline endpoints were only 0.55--0.67 m from a human goal,
+    # less than the 0.70 m combined radii, so pedestrians correctly stopped
+    # instead of entering an unavoidable collision with a stationary PMB2.
+    "training_corridor": ((-6.0, 0.0), (6.0, 0.0)),
+    "training_doorway": ((-4.0, 0.0), (4.0, 0.0)),
+    "training_intersection": ((-6.0, 0.0), (6.0, 0.0)),
 }
 
 
@@ -62,6 +64,10 @@ class RandomGoalPublisherNode(Node):
             self.declare_parameter("min_episode_duration", 12.0).value
         )
         self.goal_timeout = float(self.declare_parameter("goal_timeout", 60.0).value)
+        self.no_progress_timeout = float(
+            self.declare_parameter("no_progress_timeout", 15.0).value
+        )
+        self.progress_radius = float(self.declare_parameter("progress_radius", 0.15).value)
         self.next_goal_delay = float(self.declare_parameter("next_goal_delay", 2.0).value)
         self.max_goals = int(self.declare_parameter("max_goals", 0).value)
         self.max_sampling_attempts = int(
@@ -79,6 +85,8 @@ class RandomGoalPublisherNode(Node):
         self._robot_xy: Optional[XY] = None
         self._goal_xy: Optional[XY] = None
         self._goal_started_at: Optional[float] = None
+        self._progress_anchor_xy: Optional[XY] = None
+        self._progress_anchor_at: Optional[float] = None
         self._path_candidate: Optional[XY] = None
         self._path_check_pending = False
         self._next_goal_at = math.inf
@@ -186,14 +194,17 @@ class RandomGoalPublisherNode(Node):
             distance = math.dist(self._robot_xy, self._goal_xy)
             reached = distance <= self.reached_tolerance
             timed_out = elapsed >= self.goal_timeout
-            if (reached and elapsed >= self.min_episode_duration) or timed_out:
-                reason = "reached" if reached else "timeout"
+            stalled = self._goal_has_stalled(now)
+            if (reached and elapsed >= self.min_episode_duration) or timed_out or stalled:
+                reason = "reached" if reached else ("stalled" if stalled else "timeout")
                 self.get_logger().info(
                     f"Goal {self._published_goals} finished: {reason}, "
                     f"elapsed={elapsed:.1f}s, remaining={distance:.2f}m"
                 )
                 self._goal_xy = None
                 self._goal_started_at = None
+                self._progress_anchor_xy = None
+                self._progress_anchor_at = None
                 self._next_goal_at = now + max(self.next_goal_delay, 0.0)
 
         if (
@@ -233,6 +244,14 @@ class RandomGoalPublisherNode(Node):
         return None
 
     def _request_nav_ready(self) -> None:
+        # On some Nav2 Humble runs the lifecycle manager advertises is_active
+        # but does not answer the Trigger request.  The planner action server
+        # is only usable after planner activation, so it is also a reliable
+        # readiness signal and prevents automatic collection from waiting
+        # forever on that service response.
+        if self._path_client.server_is_ready():
+            self._set_nav_ready("ComputePathToPose action server is ready")
+            return
         if self._nav_ready_request_pending:
             return
         if not self._nav_ready_client.service_is_ready():
@@ -255,11 +274,17 @@ class RandomGoalPublisherNode(Node):
             return
         if response is None or not bool(response.success):
             return
+        self._set_nav_ready("lifecycle manager is active")
+
+    def _set_nav_ready(self, source: str) -> None:
+        if self._nav_ready:
+            return
         self._nav_ready = True
         self._waiting_logged = False
         self._next_goal_at = self._now() + max(self.startup_delay, 0.0)
         self.get_logger().info(
-            f"Nav2 is active; first automatic goal starts after {self.startup_delay:.1f}s"
+            f"Nav2 is active ({source}); first automatic goal starts after "
+            f"{self.startup_delay:.1f}s"
         )
 
     def _validate_path(self, candidate: XY) -> None:
@@ -377,11 +402,27 @@ class RandomGoalPublisherNode(Node):
         self._goal_pub.publish(message)
         self._goal_xy = goal_xy
         self._goal_started_at = now
+        self._progress_anchor_xy = self._robot_xy
+        self._progress_anchor_at = now
         self._published_goals += 1
         self.get_logger().info(
             f"Published automatic goal {self._published_goals}: "
             f"({goal_xy[0]:.2f}, {goal_xy[1]:.2f})"
         )
+
+    def _goal_has_stalled(self, now: float) -> bool:
+        if (
+            self.no_progress_timeout <= 0.0
+            or self._robot_xy is None
+            or self._progress_anchor_xy is None
+            or self._progress_anchor_at is None
+        ):
+            return False
+        if math.dist(self._robot_xy, self._progress_anchor_xy) >= max(self.progress_radius, 0.0):
+            self._progress_anchor_xy = self._robot_xy
+            self._progress_anchor_at = now
+            return False
+        return now - self._progress_anchor_at >= self.no_progress_timeout
 
     def _make_goal_message(self, goal_xy: XY) -> PoseStamped:
         robot = self._robot_xy

@@ -35,10 +35,16 @@ class HumanObstacleCloudNode(Node):
         self.predicted_horizon_points = int(self.declare_parameter("predicted_horizon_points", 8).value)
         self.clearing_ring_points = int(self.declare_parameter("clearing_ring_points", 72).value)
         self.clearing_ring_radius = float(self.declare_parameter("clearing_ring_radius", 7.5).value)
+        self.state_timeout = float(self.declare_parameter("state_timeout", 0.5).value)
+        self.prediction_timeout = float(self.declare_parameter("prediction_timeout", 0.8).value)
 
         self._last_humans: Agents | None = None
         self._last_robot: Agent | None = None
         self._predicted_paths: Dict[int, List[Tuple[float, float]]] = {}
+        self._last_humans_at: float | None = None
+        self._last_robot_at: float | None = None
+        self._predicted_paths_at: float | None = None
+        self._stale_state_warned = False
 
         self._human_sub = self.create_subscription(Agents, self.human_states_topic, self._on_humans, 10)
         self._robot_sub = self.create_subscription(Agent, self.robot_states_topic, self._on_robot, 10)
@@ -52,9 +58,11 @@ class HumanObstacleCloudNode(Node):
 
     def _on_humans(self, msg: Agents) -> None:
         self._last_humans = msg
+        self._last_humans_at = self._now()
 
     def _on_robot(self, msg: Agent) -> None:
         self._last_robot = msg
+        self._last_robot_at = self._now()
 
     def _on_markers(self, msg: MarkerArray) -> None:
         predicted: Dict[int, List[Tuple[float, float]]] = {}
@@ -66,35 +74,54 @@ class HumanObstacleCloudNode(Node):
                 continue
             predicted[agent_id] = [(float(point.x), float(point.y)) for point in marker.points[1:]]
         self._predicted_paths = predicted
+        self._predicted_paths_at = self._now()
 
     def _publish_cloud(self) -> None:
-        if self._last_humans is None or self._last_robot is None:
-            return
-
+        now = self._now()
         stamp = self.get_clock().now().to_msg()
         points: List[Tuple[float, float, float]] = []
+        states_are_fresh = (
+            self._last_humans is not None
+            and self._last_robot is not None
+            and self._is_fresh(self._last_humans_at, self.state_timeout, now)
+            and self._is_fresh(self._last_robot_at, self.state_timeout, now)
+        )
+        predictions_are_fresh = self._is_fresh(
+            self._predicted_paths_at,
+            self.prediction_timeout,
+            now,
+        )
 
-        for agent in self._last_humans.agents:
-            ax = float(agent.position.position.x)
-            ay = float(agent.position.position.y)
-            radius = max(float(agent.radius), 0.35)
-            local_x, local_y = self._world_to_robot(ax, ay)
-            points.append((local_x, local_y, self.human_z))
-            ring_count = max(self.current_ring_points, 0)
-            for idx in range(ring_count):
-                angle = 2.0 * pi * idx / max(ring_count, 1)
-                ring_x, ring_y = self._world_to_robot(
-                    ax + radius * cos(angle),
-                    ay + radius * sin(angle),
-                )
-                points.append((ring_x, ring_y, self.human_z))
+        if states_are_fresh:
+            self._stale_state_warned = False
+            assert self._last_humans is not None
+            for agent in self._last_humans.agents:
+                ax = float(agent.position.position.x)
+                ay = float(agent.position.position.y)
+                radius = max(float(agent.radius), 0.35)
+                local_x, local_y = self._world_to_robot(ax, ay)
+                points.append((local_x, local_y, self.human_z))
+                ring_count = max(self.current_ring_points, 0)
+                for idx in range(ring_count):
+                    angle = 2.0 * pi * idx / max(ring_count, 1)
+                    ring_x, ring_y = self._world_to_robot(
+                        ax + radius * cos(angle),
+                        ay + radius * sin(angle),
+                    )
+                    points.append((ring_x, ring_y, self.human_z))
 
-            path = self._predicted_paths.get(int(agent.id), [])
-            stride = max(self.predicted_stride, 1)
-            horizon = max(self.predicted_horizon_points, 0)
-            for px, py in path[::stride][:horizon]:
-                local_x, local_y = self._world_to_robot(px, py)
-                points.append((local_x, local_y, self.predicted_z))
+                path = self._predicted_paths.get(int(agent.id), []) if predictions_are_fresh else []
+                stride = max(self.predicted_stride, 1)
+                horizon = max(self.predicted_horizon_points, 0)
+                for px, py in path[::stride][:horizon]:
+                    local_x, local_y = self._world_to_robot(px, py)
+                    points.append((local_x, local_y, self.predicted_z))
+        elif (self._last_humans is not None or self._last_robot is not None) and not self._stale_state_warned:
+            self.get_logger().warning(
+                "Human/robot state became stale; publishing clearing rays only "
+                "instead of re-marking old pedestrian positions"
+            )
+            self._stale_state_warned = True
 
         # These points lie beyond obstacle_max_range but within
         # raytrace_max_range. They clear stale pedestrian cells without being
@@ -118,6 +145,19 @@ class HumanObstacleCloudNode(Node):
         ]
         header = Header(stamp=stamp, frame_id=self.robot_frame)
         self._pub.publish(point_cloud2.create_cloud(header, fields, points))
+
+    def _now(self) -> float:
+        return self.get_clock().now().nanoseconds * 1e-9
+
+    @staticmethod
+    def _is_fresh(stamp: float | None, timeout: float, now: float) -> bool:
+        if stamp is None:
+            return False
+        if timeout <= 0.0:
+            return True
+        # Treat a backwards simulation-clock jump as fresh; callbacks will
+        # replace the state immediately after a Gazebo reset.
+        return now < stamp or now - stamp <= timeout
 
     def _world_to_robot(self, x: float, y: float) -> Tuple[float, float]:
         robot = self._last_robot

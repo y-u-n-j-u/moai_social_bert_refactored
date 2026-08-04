@@ -67,6 +67,13 @@ namespace hunav
   // 1) Parameters local to this node
   pub_tf_     = this->declare_parameter<bool>("publish_tf", true);
   pub_forces_ = this->declare_parameter<bool>("publish_sfm_forces", true);
+  const bool pedestrians_avoid_robot =
+    this->declare_parameter<bool>("pedestrians_avoid_robot", true);
+  btfunc_.setPedestriansAvoidRobot(pedestrians_avoid_robot);
+  RCLCPP_INFO(
+    get_logger(), "Pedestrian/robot coupling: %s",
+    pedestrians_avoid_robot ? "reciprocal (pedestrians avoid robot)" :
+                              "one-way (robot yields; pedestrians ignore robot)");
 
   // 2) Create service client to get parameters from hunav_loader
   get_parameters_client_ = this->create_client<hunav_msgs::srv::GetParameters>("/hunav_parameters");

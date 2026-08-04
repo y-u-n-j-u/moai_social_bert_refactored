@@ -63,6 +63,10 @@ public:
     global_goals_ = goals;
   }
 
+  void setPedestriansAvoidRobot(bool enabled) {
+    agent_manager_.setPedestriansAvoidRobot(enabled);
+  }
+
   void updateAllAgents(const hunav_msgs::msg::Agent::SharedPtr robot,
                        const hunav_msgs::msg::Agents::SharedPtr msg) {
     agent_manager_.updateAllAgents(robot, msg);

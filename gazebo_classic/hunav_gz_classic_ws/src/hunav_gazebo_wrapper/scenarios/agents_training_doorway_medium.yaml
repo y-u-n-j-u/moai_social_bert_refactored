@@ -7,33 +7,26 @@ hunav_loader:
     global_goals:
       1:
         x: -5.500
-        y: -0.450
+        y: -0.550
       2:
         x: 5.500
-        y: -0.450
+        y: -0.550
       3:
         x: 5.500
-        y: 0.450
+        y: 0.550
       4:
         x: -5.500
-        y: 0.450
+        y: 0.550
       5:
-        x: -5.000
-        y: 0.100
+        x: -3.000
+        y: -0.550
       6:
         x: 5.000
-        y: 0.100
-      7:
-        x: 5.000
-        y: -0.100
-      8:
-        x: -5.000
-        y: -0.100
+        y: -0.550
     agents:
       - agent1
       - agent2
       - agent3
-      - agent4
     agent1:
       id: 1
       group_id: -1
@@ -44,16 +37,16 @@ hunav_loader:
       cyclic_goals: true
       init_pose:
         x: -5.500
-        y: -0.450
+        y: -0.550
         z: 1.250
         h: 0.00000
       behavior:
         type: Regular
         configuration: 0
-        goal_force_factor: 2.0
-        obstacle_force_factor: 10.0
-        social_force_factor: 5.0
-        other_force_factor: 20.0
+        goal_force_factor: 2.5
+        obstacle_force_factor: 7.0
+        social_force_factor: 3.5
+        other_force_factor: 10.0
       goals:
         - 2
         - 1
@@ -67,16 +60,16 @@ hunav_loader:
       cyclic_goals: true
       init_pose:
         x: 5.500
-        y: 0.450
+        y: 0.550
         z: 1.250
         h: 3.14159
       behavior:
         type: Regular
         configuration: 1
-        goal_force_factor: 2.0
-        obstacle_force_factor: 10.0
-        social_force_factor: 5.0
-        other_force_factor: 20.0
+        goal_force_factor: 2.5
+        obstacle_force_factor: 7.0
+        social_force_factor: 3.5
+        other_force_factor: 10.0
       goals:
         - 4
         - 3
@@ -89,40 +82,17 @@ hunav_loader:
       goal_radius: 0.30
       cyclic_goals: true
       init_pose:
-        x: -5.000
-        y: 0.100
+        x: -3.000
+        y: -0.550
         z: 1.250
         h: 0.00000
       behavior:
         type: Regular
         configuration: 0
-        goal_force_factor: 2.0
-        obstacle_force_factor: 10.0
-        social_force_factor: 5.0
-        other_force_factor: 20.0
+        goal_force_factor: 2.5
+        obstacle_force_factor: 7.0
+        social_force_factor: 3.5
+        other_force_factor: 10.0
       goals:
         - 6
         - 5
-    agent4:
-      id: 4
-      group_id: -1
-      skin: 3
-      max_vel: 1.40
-      radius: 0.35
-      goal_radius: 0.30
-      cyclic_goals: true
-      init_pose:
-        x: 5.000
-        y: -0.100
-        z: 1.250
-        h: 3.14159
-      behavior:
-        type: Regular
-        configuration: 1
-        goal_force_factor: 2.0
-        obstacle_force_factor: 10.0
-        social_force_factor: 5.0
-        other_force_factor: 20.0
-      goals:
-        - 8
-        - 7

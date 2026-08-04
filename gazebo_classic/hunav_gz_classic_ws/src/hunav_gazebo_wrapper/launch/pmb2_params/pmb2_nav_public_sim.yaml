@@ -149,68 +149,101 @@ controller_server:
     # Progress checker parameters
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
-      required_movement_radius: 0.5
+      required_movement_radius: 0.15
       # A pedestrian may legitimately require the robot to yield for several
       # seconds. Do not enter the Nav2 recovery tree too early.
-      movement_time_allowance: 20.0
+      movement_time_allowance: 12.0
     # Goal checker parameters
     general_goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.35
       yaw_goal_tolerance: 6.28
       stateful: False
-    # DWB parameters
+    # MPPI parameters. Unlike DWB's small fixed velocity lattice, MPPI samples
+    # complete 2.8 s control sequences. This gives the PMB2 a way around a
+    # moving person instead of repeatedly selecting zero velocity until the
+    # progress checker clears the costmap.
     FollowPath:
-      # A corridor waypoint can be directly behind the robot. Rotate in place
-      # until the global path is in front, then hand control to DWB.
-      plugin: "nav2_rotation_shim_controller::RotationShimController"
-      primary_controller: "dwb_core::DWBLocalPlanner"
-      angular_dist_threshold: 0.785
-      forward_sampling_distance: 0.5
-      rotate_to_heading_angular_vel: 0.8
-      max_angular_accel: 3.2
-      simulate_ahead_time: 1.0
-      debug_trajectory_details: False
-      # Allow smooth yielding all the way to zero velocity. The previous
-      # 0.45 m/s minimum caused abrupt stop/recovery behavior near people.
-      min_vel_x: 0.0
-      min_vel_y: 0.0
-      max_vel_x: 1.50
-      max_vel_y: 0.0
-      max_vel_theta: 1.00
-      min_speed_xy: 0.0
-      max_speed_xy: 1.50
-      min_speed_theta: 0.0
-      acc_lim_x: 2.2
-      acc_lim_y: 0.0
-      acc_lim_theta: 3.2
-      decel_lim_x: -2.2
-      decel_lim_y: 0.0
-      decel_lim_theta: -3.2
-      # PMB2 is differential-drive, so sampling lateral velocity is wasted.
-      # 20*1*12 = 240 candidates, down from 40*5*20 = 4000.
-      vx_samples: 20
-      vy_samples: 1
-      vtheta_samples: 12
-      sim_time: 1.5
-      linear_granularity: 0.075
-      angular_granularity: 0.05
+      plugin: "nav2_mppi_controller::MPPIController"
+      time_steps: 28
+      model_dt: 0.10
+      batch_size: 1200
+      vx_std: 0.30
+      vy_std: 0.0
+      wz_std: 0.60
+      vx_max: 0.90
+      vx_min: -0.10
+      vy_max: 0.0
+      wz_max: 1.00
+      iteration_count: 1
+      prune_distance: 2.5
       transform_tolerance: 0.2
-      xy_goal_tolerance: 0.35
-      trans_stopped_velocity: 0.10
-      short_circuit_trajectory_evaluation: True
-      stateful: False
-      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
-      BaseObstacle.scale: 0.15
-      PathAlign.scale: 8.0
-      PathAlign.forward_point_distance: 0.1
-      GoalAlign.scale: 8.0
-      GoalAlign.forward_point_distance: 0.1
-      PathDist.scale: 8.0
-      GoalDist.scale: 48.0
-      RotateToGoal.scale: 8.0
-      RotateToGoal.slowing_factor: 5.0
-      RotateToGoal.lookahead_time: -1.0
+      temperature: 0.30
+      gamma: 0.015
+      motion_model: "DiffDrive"
+      visualize: false
+      retry_attempt_limit: 2
+      reset_period: 1.0
+      regenerate_noises: true
+      critics: ["ConstraintCritic", "CostCritic", "GoalCritic", "GoalAngleCritic", "PathAlignCritic", "PathFollowCritic", "PathAngleCritic", "PreferForwardCritic", "TwirlingCritic"]
+      ConstraintCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 4.0
+      GoalCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        threshold_to_consider: 1.8
+      GoalAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.0
+        threshold_to_consider: 0.5
+      PreferForwardCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 4.0
+        threshold_to_consider: 0.5
+      CostCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.0
+        critical_cost: 300.0
+        # PMB2 is configured as a circular robot (robot_radius), not a polygon
+        # footprint, so MPPI must use point/circle collision checking here.
+        consider_footprint: false
+        collision_cost: 1000000.0
+        near_goal_distance: 0.7
+      PathAlignCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 4.0
+        max_path_occupancy_ratio: 0.05
+        trajectory_point_step: 3
+        threshold_to_consider: 0.5
+        offset_from_furthest: 12
+        use_path_orientations: false
+      PathFollowCritic:
+        enabled: true
+        cost_power: 1
+        # Keep progress attractive when a moving person temporarily puts the
+        # global path in inflated cost-space.
+        cost_weight: 5.0
+        offset_from_furthest: 5
+        threshold_to_consider: 1.8
+      PathAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 2.0
+        offset_from_furthest: 4
+        threshold_to_consider: 0.5
+        max_angle_to_furthest: 1.0
+        forward_preference: true
+      TwirlingCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.0
 
 global_costmap:
   global_costmap:
@@ -251,7 +284,7 @@ local_costmap:
       robot_radius: 0.275
       # The static layer is required even when the laser is unavailable or an
       # actor is not represented by laser returns.
-      plugins: ["static_layer", "voxel_layer", "inflation_layer"]
+      plugins: ["static_layer", "voxel_layer", "human_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.5
@@ -268,7 +301,10 @@ local_costmap:
         z_voxels: 16
         max_obstacle_height: 2.0
         mark_threshold: 0
-        observation_sources: scan human_cloud
+        # Keep lidar voxels independent from the 2-D human clearing source.
+        # Otherwise old scan voxels and human points at different heights can
+        # keep each other marked after a person has moved away.
+        observation_sources: scan
         scan:
           topic: /scan_raw
           max_obstacle_height: 2.0
@@ -279,6 +315,10 @@ local_costmap:
           raytrace_min_range: 0.0
           obstacle_max_range: 2.5
           obstacle_min_range: 0.0
+      human_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: human_cloud
         human_cloud:
           topic: /moai/human_obstacle_cloud
           max_obstacle_height: 2.0

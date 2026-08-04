@@ -125,6 +125,7 @@ public:
 
   std::string robotName;
   bool useRobot;
+  bool useGazeboObstacles;
   std::string globalFrame;
 
   bool waitForGoal;
@@ -182,6 +183,10 @@ void HuNavPlugin::Load(gazebo::physics::WorldPtr _world, sdf::ElementPtr _sdf)
     hnav_->robotAgent.angular_vel = 0.0;
     hnav_->init_robotAgent = hnav_->robotAgent;
   }
+
+  hnav_->useGazeboObstacles = _sdf->Get<bool>("use_gazebo_obs", false).first;
+  RCLCPP_INFO(hnav_->rosnode->get_logger(), "Gazebo obstacles for pedestrians: %s",
+              hnav_->useGazeboObstacles ? "enabled" : "disabled");
 
   if (_sdf->HasElement("global_frame_to_publish"))
     hnav_->globalFrame = _sdf->Get<std::string>("global_frame_to_publish");
@@ -259,7 +264,8 @@ void HuNavPlugin::Load(gazebo::physics::WorldPtr _world, sdf::ElementPtr _sdf)
 
   // Reset();
   hnav_->InitializeAgents();
-  hnav_->HandleObstacles2();
+  if (hnav_->useGazeboObstacles)
+    hnav_->HandleObstacles2();
 
   hnav_->lastUpdate = _world->SimTime();
 
@@ -672,48 +678,73 @@ void HuNavPluginPrivate::HandleObstacles2()
   for (size_t i = 0; i < pedestrians.size(); ++i)
   {
     gazebo::physics::ModelPtr agent = world->ModelByName(pedestrians[i].name);
+    if (!agent)
+      continue;
 
-    double minDist = 5.0; //10000.0;
+    const double maxObstacleDistance = 5.0;
     pedestrians[i].closest_obs.clear();
 
     for (size_t j = 0; j < world->ModelCount(); ++j)
     {
       gazebo::physics::ModelPtr modelObstacle = world->ModelByIndex(j);
+      if (!modelObstacle)
+        continue;
 
-      // Avoid to compute the other actors as obstacles
-      for (size_t k = 0; k < pedestrians.size(); ++k)
+      // Pedestrians interact through the social-force agent list, and the
+      // robot is handled there as well when reciprocal avoidance is enabled.
+      // Treating either of them again as a Gazebo obstacle duplicates the
+      // repulsive force. The old loop used `break`, which only left the inner
+      // loop and therefore failed to skip the model.
+      bool isPedestrianModel = false;
+      for (const auto &pedestrian : pedestrians)
       {
-        if ((int)modelObstacle->GetId() == pedestrians[k].id)
-          break;
-      }
-
-      // Avoid the agent itself and the indicated models
-      if (agent->GetId() != modelObstacle->GetId() && std::find(this->ignoreModels.begin(), this->ignoreModels.end(),
-                                                                modelObstacle->GetName()) == this->ignoreModels.end())
-      {
-
-        // Iterate through all links in the model
-        for (auto link : modelObstacle->GetLinks())
+        if (static_cast<int>(modelObstacle->GetId()) == pedestrian.id ||
+            modelObstacle->GetName() == pedestrian.name ||
+            modelObstacle->GetName() == pedestrian.name + "_body")
         {
-          // Iterate through all collisions in the link
-          for (auto collision : link->GetCollisions())
-          {
-            // Get the bounding box of the collision
-            auto bbox = collision->BoundingBox();
+          isPedestrianModel = true;
+          break;
+        }
+      }
+      if (isPedestrianModel || (useRobot && modelObstacle->GetName() == robotName))
+        continue;
 
-            ignition::math::Vector3d actorPos = agent->WorldPose().Pos();
-            auto closestObs = GetClosestPointOnBoundingBox(actorPos, modelObstacle->BoundingBox()); 
-            ignition::math::Vector3d offset = closestObs - actorPos;
-            double dist = offset.Length();
-            if (dist > 0 && dist < minDist)
+      if (agent->GetId() == modelObstacle->GetId() ||
+          std::find(ignoreModels.begin(), ignoreModels.end(), modelObstacle->GetName()) != ignoreModels.end())
+        continue;
+
+      const ignition::math::Vector3d actorPos = agent->WorldPose().Pos();
+      for (const auto &link : modelObstacle->GetLinks())
+      {
+        for (const auto &collision : link->GetCollisions())
+        {
+          // Use the collision's own box. The previous implementation looped
+          // over collisions but repeatedly sampled the whole model box,
+          // adding the same force point many times for multi-link models.
+          const auto closestObs = GetClosestPointOnBoundingBox(actorPos, collision->BoundingBox());
+          const double dist = (closestObs - actorPos).Length();
+          if (dist <= 0.0 || dist >= maxObstacleDistance)
+            continue;
+
+          bool duplicate = false;
+          for (const auto &existing : pedestrians[i].closest_obs)
+          {
+            const double dx = existing.x - closestObs.X();
+            const double dy = existing.y - closestObs.Y();
+            if (dx * dx + dy * dy < 1e-6)
             {
-              geometry_msgs::msg::Point p;
-              p.x = closestObs.X();
-              p.y = closestObs.Y();
-              p.z = 0.0;
-              pedestrians[i].closest_obs.push_back(p);
+              duplicate = true;
+              break;
             }
           }
+          if (duplicate)
+            continue;
+
+          geometry_msgs::msg::Point p;
+          p.x = closestObs.X();
+          p.y = closestObs.Y();
+          p.z = 0.0;
+          pedestrians[i].closest_obs.push_back(p);
         }
       }
     }
@@ -941,6 +972,14 @@ void HuNavPluginPrivate::UpdateGazeboPedestrians(const gazebo::common::UpdateInf
     return;
   }
 
+  // Updating poses already happens in Gazebo's world-update callback. Pause
+  // the world at most once for the whole batch instead of once per person;
+  // repeated pause/unpause transitions were visible as frame hitches in dense
+  // encounters.
+  const bool wasPaused = world->IsPaused();
+  if (!wasPaused)
+    world->SetPaused(true);
+
   // update the Gazebo actors
   for (auto a : _agents.agents)
   {
@@ -953,12 +992,20 @@ void HuNavPluginPrivate::UpdateGazeboPedestrians(const gazebo::common::UpdateInf
     double yaw = normalizeAngle(a.yaw + M_PI_2);
     double currAngle = actorPose.Rot().Yaw();
     double diff = normalizeAngle(yaw - currAngle);
-    if (std::fabs(diff) > IGN_DTOR(10))
+    if (a.linear_vel < 0.12)
     {
-      // Keep the actor body aligned with the commanded walking direction.
-      // The original 0.01 blend makes the visual yaw lag behind the position
-      // update for several seconds, which looks like side-stepping.
-      yaw = normalizeAngle(currAngle + (diff * 0.35));
+      // Near a force-equilibrium point the SFM heading can alternate even
+      // though the pedestrian barely translates.  Do not render that heading
+      // noise as an actor spinning in place.
+      yaw = currAngle;
+    }
+    else if (std::fabs(diff) > IGN_DTOR(5))
+    {
+      // Bound each visual turn instead of applying a fixed fraction of a
+      // possibly alternating heading error.  At the default 30 Hz this caps
+      // the actor at roughly 150 degrees/s while still following real turns.
+      const double maxYawStep = IGN_DTOR(5);
+      yaw = normalizeAngle(currAngle + std::copysign(std::min(std::fabs(diff), maxYawStep), diff));
     }
 
     auto entity_lin_vel = gazebo_ros::Convert<ignition::math::Vector3d>(a.velocity.linear);
@@ -1032,8 +1079,6 @@ void HuNavPluginPrivate::UpdateGazeboPedestrians(const gazebo::common::UpdateInf
     //             "y:%.2f, th:%.2f",
     //             actor->GetId(), actorPose.Pos().X(), actorPose.Pos().Y(),
     //             actorPose.Rot().Euler().Z());
-    bool is_paused = world->IsPaused();
-    world->SetPaused(true);
     model->SetWorldPose(actorPose);  //, true, true); // false, false);
     if (useCollision)
     {
@@ -1041,8 +1086,6 @@ void HuNavPluginPrivate::UpdateGazeboPedestrians(const gazebo::common::UpdateInf
       actorPose.Rot() = ignition::math::Quaterniond(0,0, yaw);
       body_model->SetWorldPose(actorPose);  //, true, true); // false, false);
     }
-    world->SetPaused(is_paused);
-
     // actor->SetLinearVel(entity_lin_vel);
     // actor->SetAngularVel(entity_ang_vel);
     // RCLCPP_INFO(
@@ -1162,6 +1205,9 @@ void HuNavPluginPrivate::UpdateGazeboPedestrians(const gazebo::common::UpdateInf
     actor->SetScriptTime(actor->ScriptTime() + (distanceTraveled * animationFactor));
     // lastUpdate = _info.simTime;
   }
+
+  if (!wasPaused)
+    world->SetPaused(false);
 }
 
 /////////////////////////////////////////////////
@@ -1192,7 +1238,8 @@ void HuNavPluginPrivate::OnUpdate(const gazebo::common::UpdateInfo& _info)
   // }
 
   // update closest obstacle (fill pedestrians obstacles)
-  HandleObstacles2();
+  if (useGazeboObstacles)
+    HandleObstacles2();
   // get robot state (fill robotAgent)
   if (!GetRobot())
     return;

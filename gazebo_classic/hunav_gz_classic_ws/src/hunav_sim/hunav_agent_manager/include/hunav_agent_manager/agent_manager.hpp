@@ -241,6 +241,11 @@ public:
   void clearAndSetAgentGoals(int id, const std::list<sfm::Goal> &goals);
   void setAgentGroupId(int id, int group_id);
 
+  /// Configure whether pedestrians include the robot in their SFM forces.
+  /// Disabling this is useful for one-way-coupled data collection: pedestrians
+  /// keep moving naturally while the robot remains responsible for yielding.
+  void setPedestriansAvoidRobot(bool enabled) { pedestrians_avoid_robot_ = enabled; }
+
   void restoreAgentGoals(int agent_id, const std::list<sfm::Goal>& goals);
   void overrideAgentGoals(int agent_id, int target_id);
 
@@ -298,6 +303,7 @@ protected:
   bool robot_received_;
   bool agents_initialized_;
   bool robot_initialized_;
+  bool pedestrians_avoid_robot_;
   std::mutex mutex_;
   // std::vector<hunav_msgs::msg::Agent> agents_;
   // std::vector<sfm::Agent> sfm_agents_;

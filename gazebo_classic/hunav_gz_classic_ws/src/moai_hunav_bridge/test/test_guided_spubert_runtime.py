@@ -1,7 +1,10 @@
 import math
+import sys
+import types
 import unittest
 
 from moai_hunav_bridge.guided_spubert_runtime import (
+    GuidedSpubertRuntime,
     guidance_point,
     heading_from_history,
     local_to_world,
@@ -42,6 +45,23 @@ class GuidedSpubertGeometryTest(unittest.TestCase):
     def test_moving_history_uses_motion_heading(self):
         yaw = heading_from_history([(0.0, 0.0), (0.0, 2.0)], -1.0)
         self.assertAlmostEqual(yaw, math.pi / 2.0)
+
+    def test_incompatible_spubert_package_is_discarded(self):
+        package = types.ModuleType("spubert")
+        package.__file__ = "/old/workspace/spubert/__init__.py"
+        child = types.ModuleType("spubert.model")
+        child.__file__ = "/old/workspace/spubert/model.py"
+        sys.modules["spubert"] = package
+        sys.modules["spubert.model"] = child
+        try:
+            GuidedSpubertRuntime._discard_incompatible_module(
+                "spubert", "/new/model/SPU-BERT"
+            )
+            self.assertNotIn("spubert", sys.modules)
+            self.assertNotIn("spubert.model", sys.modules)
+        finally:
+            sys.modules.pop("spubert", None)
+            sys.modules.pop("spubert.model", None)
 
 
 if __name__ == "__main__":

@@ -94,13 +94,13 @@
 
     <model name="divider_north">
       <static>true</static>
-      <pose>2.500 3.375 0.500 0 0 0</pose>
+      <pose>2.500 3.800 0.500 0 0 0</pose>
       <link name="link">
         <collision name="collision">
-          <geometry><box><size>0.250 5.250 1.000</size></box></geometry>
+          <geometry><box><size>0.250 4.400 1.000</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>0.250 5.250 1.000</size></box></geometry>
+          <geometry><box><size>0.250 4.400 1.000</size></box></geometry>
           <material>
             <ambient>0.35 0.38 0.40 1</ambient>
             <diffuse>0.35 0.38 0.40 1</diffuse>
@@ -111,13 +111,13 @@
 
     <model name="divider_south">
       <static>true</static>
-      <pose>2.500 -3.375 0.500 0 0 0</pose>
+      <pose>2.500 -3.800 0.500 0 0 0</pose>
       <link name="link">
         <collision name="collision">
-          <geometry><box><size>0.250 5.250 1.000</size></box></geometry>
+          <geometry><box><size>0.250 4.400 1.000</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>0.250 5.250 1.000</size></box></geometry>
+          <geometry><box><size>0.250 4.400 1.000</size></box></geometry>
           <material>
             <ambient>0.35 0.38 0.40 1</ambient>
             <diffuse>0.35 0.38 0.40 1</diffuse>

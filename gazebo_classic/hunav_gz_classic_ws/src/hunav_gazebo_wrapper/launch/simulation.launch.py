@@ -41,6 +41,7 @@ def generate_launch_description():
     use_static_map_odom = LaunchConfiguration('use_static_map_odom')
     robot_type = LaunchConfiguration('robot_type')
     agent_motion_model = LaunchConfiguration('agent_motion_model')
+    pedestrians_avoid_robot = LaunchConfiguration('pedestrians_avoid_robot')
     social_bert_predictor = LaunchConfiguration('social_bert_predictor')
     spubert_model_path = LaunchConfiguration('spubert_model_path')
     spubert_repo_path = LaunchConfiguration('spubert_repo_path')
@@ -107,6 +108,7 @@ def generate_launch_description():
     robot_spubert_d_sample = LaunchConfiguration('robot_spubert_d_sample')
     robot_spubert_replan_period = LaunchConfiguration('robot_spubert_replan_period')
     robot_spubert_fallback_to_nav2 = LaunchConfiguration('robot_spubert_fallback_to_nav2')
+    robot_spubert_diagnostics_path = LaunchConfiguration('robot_spubert_diagnostics_path')
     robot_save_training_pkl = LaunchConfiguration('robot_save_training_pkl')
     robot_training_pkl_path = LaunchConfiguration('robot_training_pkl_path')
     robot_training_record_dt = LaunchConfiguration('robot_training_record_dt')
@@ -122,6 +124,8 @@ def generate_launch_description():
     auto_goal_clearance = LaunchConfiguration('auto_goal_clearance')
     auto_goal_min_episode_duration = LaunchConfiguration('auto_goal_min_episode_duration')
     auto_goal_timeout = LaunchConfiguration('auto_goal_timeout')
+    auto_goal_no_progress_timeout = LaunchConfiguration('auto_goal_no_progress_timeout')
+    auto_goal_progress_radius = LaunchConfiguration('auto_goal_progress_radius')
     auto_goal_max_goals = LaunchConfiguration('auto_goal_max_goals')
     learned_agent_motion = PythonExpression(
         ["'", agent_motion_model, "' in ['social_bert', 'spubert', 'moai_spubert']"]
@@ -396,7 +400,10 @@ def generate_launch_description():
         executable='hunav_agent_manager',
         name='hunav_agent_manager',
         output='screen',
-        parameters=[{'use_sim_time': True}],
+        parameters=[
+            {'use_sim_time': True},
+            {'pedestrians_avoid_robot': pedestrians_avoid_robot},
+        ],
         condition=UnlessCondition(learned_agent_motion)
     )
 
@@ -483,7 +490,17 @@ def generate_launch_description():
             {'cloud_topic': '/moai/human_obstacle_cloud'},
             {'publish_rate': 5.0},
             {'current_ring_points': 6},
-            {'clearing_ring_points': 36},
+            # Never keep re-marking an old human position when Gazebo or DDS
+            # misses a few updates under load. The node keeps publishing
+            # clearing rays while state is stale.
+            {'state_timeout': 0.5},
+            {'prediction_timeout': 0.8},
+            # The local costmap has 5 cm cells and a 5 m square rolling
+            # window. 36 radial clearing rays are roughly 40--60 cm apart at
+            # the window edge, so moving people leave uncleared "ghost"
+            # obstacle cells that eventually seal corridors. 720 rays keep
+            # adjacent rays below one cell over the whole local window.
+            {'clearing_ring_points': 480},
         ],
         condition=IfCondition(PythonExpression([
             "'", navigation, "' == 'True' and '", robot_type,
@@ -526,6 +543,7 @@ def generate_launch_description():
             {'path_topic': '/moai/spubert_robot_path'},
             {'marker_topic': '/moai/spubert_robot_path_markers'},
             {'status_topic': '/moai/spubert_robot_planner_status'},
+            {'diagnostics_path': robot_spubert_diagnostics_path},
             {'model_repo_path': robot_spubert_repo_path},
             {'model_config_path': robot_spubert_config_path},
             {'model_checkpoint_path': robot_spubert_checkpoint_path},
@@ -627,6 +645,8 @@ def generate_launch_description():
             {'clearance': ParameterValue(auto_goal_clearance, value_type=float)},
             {'min_episode_duration': ParameterValue(auto_goal_min_episode_duration, value_type=float)},
             {'goal_timeout': ParameterValue(auto_goal_timeout, value_type=float)},
+            {'no_progress_timeout': ParameterValue(auto_goal_no_progress_timeout, value_type=float)},
+            {'progress_radius': ParameterValue(auto_goal_progress_radius, value_type=float)},
             {'max_goals': auto_goal_max_goals},
         ],
         condition=IfCondition(PythonExpression([
@@ -706,7 +726,8 @@ def generate_launch_description():
     )
 
     declare_gz_obs = DeclareLaunchArgument(
-        'use_gazebo_obs', default_value='True',
+        'use_gazebo_obs',
+        default_value=EnvironmentVariable('HUNAV_USE_GAZEBO_OBSTACLES', default_value='True'),
         description='Whether to fill the agents obstacles with closest Gazebo obstacle or not'
     )
     declare_update_rate = DeclareLaunchArgument(
@@ -740,6 +761,14 @@ def generate_launch_description():
         'agent_motion_model',
         default_value=EnvironmentVariable('HUNAV_AGENT_MOTION_MODEL', default_value='hunav'),
         description='Agent motion model: hunav uses HuNavSim social force/BT; spubert uses the MOAI predictor bridge. social_bert is kept as a legacy alias.'
+    )
+    declare_pedestrians_avoid_robot = DeclareLaunchArgument(
+        'pedestrians_avoid_robot',
+        default_value=EnvironmentVariable('HUNAV_PEDESTRIANS_AVOID_ROBOT', default_value='True'),
+        description=(
+            'Whether HuNav pedestrians react to the robot. Set False during '
+            'dataset collection so Nav2 yields without reciprocal deadlock.'
+        )
     )
     declare_social_bert_predictor = DeclareLaunchArgument(
         'social_bert_predictor',
@@ -1099,6 +1128,13 @@ def generate_launch_description():
         default_value=EnvironmentVariable('HUNAV_ROBOT_SPUBERT_FALLBACK_NAV2', default_value='True'),
         description='Fall back to standard NavigateToPose when a learned path is unsafe.'
     )
+    declare_robot_spubert_diagnostics_path = DeclareLaunchArgument(
+        'robot_spubert_diagnostics_path',
+        default_value=EnvironmentVariable(
+            'HUNAV_ROBOT_SPUBERT_DIAGNOSTICS_PATH', default_value=''
+        ),
+        description='Optional JSONL output containing every guided prediction and rejection metric.'
+    )
     declare_robot_save_training_pkl = DeclareLaunchArgument(
         'robot_save_training_pkl',
         default_value=EnvironmentVariable('HUNAV_ROBOT_SAVE_TRAINING_PKL', default_value='False'),
@@ -1176,6 +1212,16 @@ def generate_launch_description():
         'auto_goal_timeout',
         default_value=EnvironmentVariable('HUNAV_AUTO_GOAL_TIMEOUT', default_value='60.0'),
         description='Replace an unreached goal after this many seconds.'
+    )
+    declare_auto_goal_no_progress_timeout = DeclareLaunchArgument(
+        'auto_goal_no_progress_timeout',
+        default_value=EnvironmentVariable('HUNAV_AUTO_GOAL_NO_PROGRESS_TIMEOUT', default_value='15.0'),
+        description='Replace a goal when the robot has made no meaningful progress for this many seconds.'
+    )
+    declare_auto_goal_progress_radius = DeclareLaunchArgument(
+        'auto_goal_progress_radius',
+        default_value=EnvironmentVariable('HUNAV_AUTO_GOAL_PROGRESS_RADIUS', default_value='0.15'),
+        description='Movement in meters that resets the automatic-goal stuck timer.'
     )
     declare_auto_goal_max_goals = DeclareLaunchArgument(
         'auto_goal_max_goals',
@@ -1262,6 +1308,7 @@ def generate_launch_description():
     ld.add_action(declare_use_rviz)
     ld.add_action(declare_use_hunav_evaluator)
     ld.add_action(declare_agent_motion_model)
+    ld.add_action(declare_pedestrians_avoid_robot)
     ld.add_action(declare_social_bert_predictor)
     ld.add_action(declare_spubert_model_path)
     ld.add_action(declare_spubert_repo_path)
@@ -1328,6 +1375,7 @@ def generate_launch_description():
     ld.add_action(declare_robot_spubert_d_sample)
     ld.add_action(declare_robot_spubert_replan_period)
     ld.add_action(declare_robot_spubert_fallback_to_nav2)
+    ld.add_action(declare_robot_spubert_diagnostics_path)
     ld.add_action(declare_robot_save_training_pkl)
     ld.add_action(declare_robot_training_pkl_path)
     ld.add_action(declare_robot_training_record_dt)
@@ -1343,6 +1391,8 @@ def generate_launch_description():
     ld.add_action(declare_auto_goal_clearance)
     ld.add_action(declare_auto_goal_min_episode_duration)
     ld.add_action(declare_auto_goal_timeout)
+    ld.add_action(declare_auto_goal_no_progress_timeout)
+    ld.add_action(declare_auto_goal_progress_radius)
     ld.add_action(declare_auto_goal_max_goals)
     ld.add_action(declare_robot_name)
     ld.add_action(declare_frame_to_publish)

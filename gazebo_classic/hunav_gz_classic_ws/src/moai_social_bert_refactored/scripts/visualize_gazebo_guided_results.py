@@ -391,8 +391,8 @@ def draw_guidance(ax: plt.Axes, record: dict[str, Any]) -> None:
     ax.scatter(
         guidance[0],
         guidance[1],
-        s=220,
-        marker="*",
+        s=125,
+        marker="s",
         color=GUIDANCE_COLOR,
         edgecolor="#78350f",
         linewidth=0.8,
@@ -446,6 +446,21 @@ def draw_candidates(ax: plt.Axes, record: dict[str, Any]) -> None:
     )
 
 
+def draw_raw_candidates(ax: plt.Axes, record: dict[str, Any]) -> None:
+    """Show all MGP outputs before the occupancy-map rejection step."""
+    candidates = record["candidate_goals"]
+    ax.scatter(
+        candidates[:, 0],
+        candidates[:, 1],
+        s=58,
+        marker="o",
+        color=SAFE_COLOR,
+        edgecolor="white",
+        linewidth=0.8,
+        zorder=6,
+    )
+
+
 def set_plot_limits(
     ax: plt.Axes,
     record: dict[str, Any],
@@ -474,8 +489,8 @@ def common_legend_handles() -> list[Any]:
         Line2D([], [], color=GT_COLOR, linestyle="--", marker="o", label="GT future"),
         Line2D([], [], color=PRED_COLOR, marker="o", label="TGP prediction"),
         Line2D(
-            [], [], color=GUIDANCE_COLOR, marker="*", linestyle="None",
-            markersize=12, label="guidance point"
+            [], [], color=GUIDANCE_COLOR, marker="s", linestyle="None",
+            markersize=8, label="guidance point"
         ),
         Line2D(
             [], [], color=SAFE_COLOR, marker="o", linestyle="None",
@@ -521,7 +536,7 @@ def create_single_pipeline_figure(
     record: dict[str, Any],
     output_path: Path,
 ) -> None:
-    fig, axes = plt.subplots(1, 3, figsize=(16, 8.7))
+    fig, axes = plt.subplots(1, 4, figsize=(20, 7.8))
     fig.suptitle(
         "Gazebo → Guidance-conditioned MGP → TGP 실제 추론 결과",
         fontsize=24,
@@ -548,21 +563,28 @@ def create_single_pipeline_figure(
     draw_map(axes[1], record)
     draw_common_trajectory(axes[1], record, show_gt=False)
     draw_guidance(axes[1], record)
-    draw_candidates(axes[1], record)
+    draw_raw_candidates(axes[1], record)
     set_plot_limits(axes[1], record, include_guidance=True)
-    axes[1].set_title(
-        "② MGP 후보 goal 20개\n"
+    axes[1].set_title("② MGP 원본 후보 goal 20개\nmap 필터 적용 전")
+
+    draw_map(axes[2], record)
+    draw_common_trajectory(axes[2], record, show_gt=False)
+    draw_guidance(axes[2], record)
+    draw_candidates(axes[2], record)
+    set_plot_limits(axes[2], record, include_guidance=True)
+    axes[2].set_title(
+        "③ map 필터 → goal 선택\n"
         f"free {int(record['candidate_safe'].sum())} / "
         f"rejected {int((~record['candidate_safe']).sum())}"
     )
 
-    draw_map(axes[2], record)
-    draw_common_trajectory(axes[2], record, show_gt=True, show_pred=True)
-    draw_guidance(axes[2], record)
-    draw_candidates(axes[2], record)
-    set_plot_limits(axes[2], record, include_guidance=False)
-    axes[2].set_title(
-        "③ 선택 goal → TGP trajectory\n"
+    draw_map(axes[3], record)
+    draw_common_trajectory(axes[3], record, show_gt=True, show_pred=True)
+    draw_guidance(axes[3], record)
+    draw_candidates(axes[3], record)
+    set_plot_limits(axes[3], record, include_guidance=False)
+    axes[3].set_title(
+        "④ 선택 goal → TGP trajectory\n"
         f"goal error {record['gde']:.2f} m · map-safe trajectory"
     )
 
@@ -582,7 +604,7 @@ def create_single_pipeline_figure(
         fontsize=9,
         color="#64748b",
     )
-    fig.subplots_adjust(left=0.055, right=0.985, top=0.86, bottom=0.16, wspace=0.28)
+    fig.subplots_adjust(left=0.045, right=0.985, top=0.84, bottom=0.18, wspace=0.26)
     fig.savefig(output_path, dpi=240, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 

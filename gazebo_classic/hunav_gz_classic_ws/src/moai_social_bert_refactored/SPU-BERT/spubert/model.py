@@ -109,13 +109,7 @@ def select_guided_goal_candidates(
     *,
     reject_unknown=True,
 ):
-    """Select one map-valid candidate nearest to each guidance point.
 
-    Map values follow the Gazebo adapter contract:
-    0=unknown/padding, 1=free, 2=occupied. Candidates outside the local map
-    are always invalid. If every candidate is invalid, a stop goal at the
-    robot origin is returned and marked invalid.
-    """
     if pred_goals.ndim != 3 or pred_goals.size(-1) < 2:
         raise ValueError(f"pred_goals must have shape (B,K,2+), got {tuple(pred_goals.shape)}")
     if guidance_points.ndim != 2 or guidance_points.size(-1) < 2:

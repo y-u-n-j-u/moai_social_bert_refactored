@@ -24,6 +24,7 @@ void AgentManager::init()
   robot_initialized_ = false;
   agents_received_ = false;
   robot_received_ = false;
+  pedestrians_avoid_robot_ = true;
   max_dist_view_ = 10.0;
   time_step_secs_ = 0.0;
   step_count = 1;
@@ -1380,15 +1381,21 @@ void AgentManager::computeForces(int id)
     switch (agents_[id].behavior.type)
     {
       case hunav_msgs::msg::AgentBehavior::BEH_REGULAR:
-        // We add the robot as another human agent.
-        otherAgents.push_back(robot_.sfmAgent);
+        // In reciprocal mode the pedestrian also avoids the robot.  Dataset
+        // collection can use one-way coupling instead: humans keep following
+        // their routes while Nav2 alone yields to the human obstacle cloud.
+        if (pedestrians_avoid_robot_)
+          otherAgents.push_back(robot_.sfmAgent);
         sfm::SFM.computeForces(agents_[id].sfmAgent, otherAgents);
         break;
       case hunav_msgs::msg::AgentBehavior::BEH_IMPASSIVE:
         // the human treats the robot like an obstacle.
         // We add the robot to the obstacles of this agent.
-        ob.set(robot_.sfmAgent.position.getX(), robot_.sfmAgent.position.getY());
-        agents_[id].sfmAgent.obstacles1.push_back(ob);
+        if (pedestrians_avoid_robot_)
+        {
+          ob.set(robot_.sfmAgent.position.getX(), robot_.sfmAgent.position.getY());
+          agents_[id].sfmAgent.obstacles1.push_back(ob);
+        }
         sfm::SFM.computeForces(agents_[id].sfmAgent, otherAgents);
         break;
       default:
@@ -1399,7 +1406,8 @@ void AgentManager::computeForces(int id)
   }
   else
   {
-    otherAgents.push_back(robot_.sfmAgent);
+    if (pedestrians_avoid_robot_)
+      otherAgents.push_back(robot_.sfmAgent);
     sfm::SFM.computeForces(agents_[id].sfmAgent, otherAgents);
   }
 

@@ -1,0 +1,56 @@
+{
+  "status": "PASS",
+  "note": "Best-validation checkpoint test result",
+  "config": "configs/spubert/moai_social_nav_ext_scene_guided_aug_fs_seed22.yaml",
+  "checkpoint": "/checkpoints/model_best.pth",
+  "dataset": {
+    "splits": {
+      "train": 3173,
+      "val": 680,
+      "test": 680
+    },
+    "total_samples": 4533,
+    "finite_and_shape_valid": 4533,
+    "guidance_differs_from_endpoint": 4533,
+    "guidance_outside_map": 0,
+    "endpoint_outside_map": 0
+  },
+  "test_inference": {
+    "test_samples": 680,
+    "all_sample_ade": 0.8836034811649691,
+    "all_sample_fde": 1.6324632688672007,
+    "all_sample_gde": 1.438875229100642,
+    "safe_candidate_rate": 0.9570588235294117,
+    "selected_goal_valid_rate": 1.0,
+    "trajectory_map_safe_rate": 0.8911764705882353,
+    "execution_valid_rate": 0.8911764705882353,
+    "all_candidates_invalid": 0,
+    "valid_only_ade": 0.713092190357964,
+    "valid_only_fde": 1.3101661449433504,
+    "valid_only_gde": 1.3722703062249932
+  },
+  "single_sample": {
+    "index": 496,
+    "selected_index": 8,
+    "selected_goal_valid": true,
+    "trajectory_map_safe": true,
+    "execution_valid": true,
+    "guidance_outside_map": false,
+    "ade": 0.8149488568305969,
+    "fde": 1.3001909255981445,
+    "gde": 1.2711554765701294
+  },
+  "multi_sample_indices": [
+    496,
+    491,
+    456,
+    5,
+    0,
+    1
+  ],
+  "outputs": [
+    "/results/01_guided_mgp_single_sample_pipeline.png",
+    "/results/02_guided_mgp_multi_sample_results.png",
+    "/results/03_guided_mgp_validation_summary.png"
+  ]
+}

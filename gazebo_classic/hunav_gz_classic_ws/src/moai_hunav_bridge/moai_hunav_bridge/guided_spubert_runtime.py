@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import math
 import os
 import sys
@@ -104,13 +105,15 @@ class GuidedSpubertRuntime:
             raise RuntimeError("guided SPU-BERT requires a static occupancy map")
 
         spubert_root = os.path.join(self.repo_path, "SPU-BERT")
-        for path_entry in (spubert_root, self.repo_path):
+        # Keep the refactored repository ahead of ROS/workspace compatibility
+        # packages that may expose the same generic names (spubert/configs/src).
+        for path_entry in (self.repo_path, spubert_root):
             if path_entry not in sys.path:
                 sys.path.insert(0, path_entry)
 
-        self._guard_python_module("spubert", spubert_root)
-        self._guard_python_module("configs", self.repo_path)
-        self._guard_python_module("src", self.repo_path)
+        self._discard_incompatible_module("spubert", spubert_root)
+        self._discard_incompatible_module("configs", self.repo_path)
+        self._discard_incompatible_module("src", self.repo_path)
 
         try:
             import torch
@@ -169,7 +172,25 @@ class GuidedSpubertRuntime:
         mgp_cfg = _build_spubert_mgp_config(args)
         model_cfg = SBertPlusFTConfig(tgp_cfg, mgp_cfg, share=args.share)
         self.model = SBertPlusFTModel(tgp_cfg, mgp_cfg, model_cfg)
-        state = self._load_state_dict(torch.load(self.checkpoint_path, map_location="cpu"))
+        state = dict(
+            self._load_state_dict(
+                torch.load(self.checkpoint_path, map_location="cpu")
+            )
+        )
+        # Hugging Face versions differ in whether the deterministic
+        # embeddings.position_ids buffer is persisted in checkpoints.  It is
+        # not a learned weight, so recover only that buffer from the freshly
+        # constructed model while keeping strict loading for everything else.
+        generated_position_ids = []
+        for key, value in self.model.state_dict().items():
+            if key.endswith(".embeddings.position_ids") and key not in state:
+                state[key] = value
+                generated_position_ids.append(key)
+        if generated_position_ids:
+            logger.info(
+                "Generated non-learned position_ids buffers missing from checkpoint: "
+                + ", ".join(generated_position_ids)
+            )
         self.model.load_state_dict(state, strict=True)
 
         self.device = torch.device(
@@ -183,14 +204,17 @@ class GuidedSpubertRuntime:
         )
 
     @staticmethod
-    def _guard_python_module(name: str, expected_root: str) -> None:
+    def _discard_incompatible_module(name: str, expected_root: str) -> None:
         loaded = sys.modules.get(name)
         loaded_file = os.path.abspath(getattr(loaded, "__file__", "") or "")
         if loaded_file and not loaded_file.startswith(os.path.abspath(expected_root)):
-            raise RuntimeError(
-                f"Python module '{name}' was already loaded from an incompatible "
-                f"repository: {loaded_file}"
-            )
+            # This bridge is its own ROS process.  Removing a stale package and
+            # its children here is safe and lets the imports below resolve from
+            # model_repo_path instead of a workspace-level compatibility shim.
+            for module_name in tuple(sys.modules):
+                if module_name == name or module_name.startswith(f"{name}."):
+                    del sys.modules[module_name]
+            importlib.invalidate_caches()
 
     @staticmethod
     def _load_state_dict(payload: Any) -> Mapping[str, Any]:
