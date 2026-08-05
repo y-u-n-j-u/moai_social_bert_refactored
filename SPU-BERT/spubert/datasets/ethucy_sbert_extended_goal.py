@@ -28,7 +28,7 @@ class ETHUCYSBertDataset(moai_social_bertDataset):
             self.scales = yaml.load(f, Loader=yaml.FullLoader)
 
         # 확장 goal 설정: pred 끝보다 goal_extra_frames 만큼 더 앞의 위치를 goal로 사용
-        self.goal_extra_frames = getattr(args, 'goal_extra_frames', 10)
+        self.goal_extra_frames = getattr(args, 'goal_extra_frames', 100)
         self.all_extended_goals = []
 
         # (sceneId, trackId, frame) → (x_px, y_px) 빠른 조회용 딕셔너리

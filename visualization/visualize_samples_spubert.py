@@ -84,10 +84,18 @@ def parse_args():
                         help="trackId=0(로봇)만 target으로 사용 (보행자는 neighbor로만 사용)")
     parser.add_argument("--use_gt_goal", action="store_true",
                         help="GT goal을 직접 주입해서 TGP만 단독 실행 (MGP skip)")
+    parser.add_argument("--goal_sampling", action="store_true",
+                        help="primary goal 주변 Gaussian sampling + collision filter로 최적 trajectory 선택")
+    parser.add_argument("--goal_k", type=int, default=10,
+                        help="goal sampling 후보 수 (default: 10)")
+    parser.add_argument("--goal_sigma", type=float, default=1.0,
+                        help="Gaussian sampling 표준편차 m (default: 1.0)")
     parser.add_argument("--plot_range", type=float, default=None,
                         help="그래프 표시 반경(m). 지정 시 target 중심으로 ±plot_range로 축 고정 (view_range와 무관)")
     parser.add_argument("--goal_extra_frames", type=int, default=0,
                         help="ext 데이터셋 사용 시 goal을 몇 step 더 멀리 줄지 (0=step12, 10=step22)")
+    parser.add_argument("--goal_radius", type=float, default=10.0,
+                        help="distance-based goal 선택 시 obs_end로부터의 반지름 (m)")
     return parser.parse_args()
 
 
@@ -125,6 +133,7 @@ def _build_dataset_args(args):
         subsample_stride=args.subsample_stride,
         traj_scale=args.traj_scale,
         goal_extra_frames=args.goal_extra_frames,
+        goal_radius=args.goal_radius,
     )
 
 
@@ -454,7 +463,43 @@ def _collect_samples(args):
 
             gt_local = item["traj_lbl"].detach().cpu().numpy() * scale
 
-            if args.use_gt_goal:
+            envs_params = item["envs_params"].unsqueeze(0).to(device) if "envs_params" in item else None
+
+            if getattr(args, "goal_sampling", False):
+                # Gaussian sampling 경로 — primary_goal 주변에서 k개 샘플, 최적 trajectory 선택
+                primary_goal_tensor = item["goal_lbl"].unsqueeze(0).to(device)
+                gs_kwargs = dict(
+                    mgp_spatial_ids=batched["mgp_spatial_ids"],
+                    tgp_temporal_ids=batched["tgp_temporal_ids"],
+                    tgp_segment_ids=batched["tgp_segment_ids"],
+                    tgp_attn_mask=batched["tgp_attn_mask"],
+                    primary_goal=primary_goal_tensor,
+                    k=args.goal_k,
+                    sigma=args.goal_sigma,
+                )
+                if args.scene:
+                    gs_kwargs.update(dict(
+                        env_spatial_ids=env_spatial_ids,
+                        env_temporal_ids=env_temporal_ids,
+                        env_segment_ids=env_segment_ids,
+                        env_attn_mask=env_attn_mask,
+                        envs=envs,
+                        envs_params=envs_params,
+                    ))
+                outputs = model.inference_with_goal_sampling(**gs_kwargs)
+                pred_local_single = outputs["pred_trajs"][0].detach().cpu().numpy() * scale
+                selected_goal_local = outputs["pred_goals"][0].detach().cpu().numpy() * scale
+                # sampled_goals: (1, k, goal_dim) → (k, 2)
+                sampled_goals_local = outputs["sampled_goals"][0].detach().cpu().numpy() * scale
+                pred_world = _local_to_world(raw_sample, pred_local_single, args.obs_len)
+                selected_goal_world = _local_points_to_world(
+                    raw_sample, selected_goal_local[np.newaxis, :], args.obs_len
+                )[0]
+                sampled_goals_world = _local_points_to_world(raw_sample, sampled_goals_local, args.obs_len)
+                pred_all_plot = None
+                mgp_goal_plot = selected_goal_world
+                mgp_goals_plot = sampled_goals_world   # k개 후보 goal 시각화
+            elif args.use_gt_goal:
                 # GT goal 직접 주입 — TGP 단독 호출, trajectory 1개
                 gt_goals_tensor = item["goal_lbl"].unsqueeze(0).to(device)
                 outputs = model.inference_with_gt_goal(
@@ -536,10 +581,17 @@ def _collect_samples(args):
                 ]
                 obs_plot = obs_local
                 gt_plot = gt_local_plot
-                pred_plot = pred_local_all[best_idx]
-                pred_all_plot = [pred_local_all[k] for k in range(pred_local_all.shape[0])] if args.plot_k else None
-                mgp_goal_plot = pred_goal_local_all[best_idx]
-                mgp_goals_plot = pred_goal_local_all if args.plot_k else None
+                if getattr(args, "goal_sampling", False) or args.use_gt_goal:
+                    # goal_sampling / use_gt_goal 경로: pred_local_single이 이미 단일 trajectory
+                    pred_plot = pred_local_single
+                    pred_all_plot = None
+                    mgp_goal_plot = selected_goal_local if getattr(args, "goal_sampling", False) else gt_goal_local
+                    mgp_goals_plot = sampled_goals_local if getattr(args, "goal_sampling", False) else None
+                else:
+                    pred_plot = pred_local_all[best_idx]
+                    pred_all_plot = [pred_local_all[k] for k in range(pred_local_all.shape[0])] if args.plot_k else None
+                    mgp_goal_plot = pred_goal_local_all[best_idx]
+                    mgp_goals_plot = pred_goal_local_all if args.plot_k else None
                 neighbors_plot = neighbors_local_plot
                 context_center = np.zeros(2, dtype=np.float32)
                 context_heading = 0.0
@@ -568,6 +620,7 @@ def _collect_samples(args):
                     "grid_extent": grid_extent,
                     "title": title,
                     "use_gt_goal": args.use_gt_goal,
+                    "goal_sampling": getattr(args, "goal_sampling", False),
                 }
             )
     return samples
@@ -632,7 +685,14 @@ def plot_samples(samples, out_path: Path, plot_range: float = None):
                 ax.plot(traj[:, 0], traj[:, 1], color="gray", alpha=0.18, linewidth=1.0, label=label)
 
         if mgp_goals is not None:
-            ax.scatter(mgp_goals[:, 0], mgp_goals[:, 1], color="dimgray", alpha=0.65, marker="x", s=36, linewidths=1.3, label="MGP goals")
+            if sample.get("goal_sampling"):
+                # goal sampling 후보들: 작은 주황 원
+                ax.scatter(
+                    mgp_goals[:, 0], mgp_goals[:, 1],
+                    color="darkorange", alpha=0.5, marker="o", s=22, zorder=5, label="Sampled goals",
+                )
+            else:
+                ax.scatter(mgp_goals[:, 0], mgp_goals[:, 1], color="dimgray", alpha=0.65, marker="x", s=36, linewidths=1.3, label="MGP goals")
 
         ax.plot(pred[:, 0], pred[:, 1], color="black", linewidth=2.0, marker="o", markersize=3, label="Prediction")
         ax.scatter([obs[0, 0]], [obs[0, 1]], color="royalblue", s=35)
@@ -640,8 +700,12 @@ def plot_samples(samples, out_path: Path, plot_range: float = None):
         ax.scatter([gt[-1, 0]], [gt[-1, 1]], color="crimson", s=35)
         ax.scatter([pred[-1, 0]], [pred[-1, 1]], color="black", s=35)
         if mgp_goal is not None:
-            label = "GT Goal" if sample.get("use_gt_goal") else "Chosen MGP goal"
-            color = "green" if sample.get("use_gt_goal") else "black"
+            if sample.get("goal_sampling"):
+                label, color = "Selected goal", "green"
+            elif sample.get("use_gt_goal"):
+                label, color = "GT Goal", "green"
+            else:
+                label, color = "Chosen MGP goal", "black"
             ax.scatter([mgp_goal[0]], [mgp_goal[1]], color=color, marker="x", s=90, linewidths=2.0, zorder=7, label=label)
 
         ax.set_title(sample["title"], fontsize=9)
@@ -667,6 +731,18 @@ def plot_samples(samples, out_path: Path, plot_range: float = None):
         fig.legend(uniq.values(), uniq.keys(), loc="upper right")
     fig.suptitle("Sampled Trajectories (SPU-BERT)", y=0.995)
     plt.tight_layout()
+
+    # tight_layout()이 set_xlim/set_ylim을 덮어쓰는 경우가 있어서 이후에 다시 강제 적용
+    for i, sample in enumerate(samples):
+        ax = axes[i]
+        grid_extent = sample.get("grid_extent")
+        if plot_range is not None:
+            cx, cy = sample["context_center"]
+            ax.set_xlim(cx - plot_range, cx + plot_range)
+            ax.set_ylim(cy - plot_range, cy + plot_range)
+        elif grid_extent is not None:
+            ax.set_xlim(grid_extent[0], grid_extent[1])
+            ax.set_ylim(grid_extent[2], grid_extent[3])
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=180, bbox_inches="tight")

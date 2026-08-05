@@ -276,7 +276,17 @@ class SBertPlusFTTrainer(SimpleTrainerBase):
             reverse=True,
         )
 
-    def test(self, epoch, data_loader, d_sample, k_sample, use_gt_goal: bool = False):
+    def test(
+        self,
+        epoch,
+        data_loader,
+        d_sample,
+        k_sample,
+        use_gt_goal: bool = False,
+        use_goal_sampling: bool = False,
+        goal_k: int = 10,
+        goal_sigma: float = 1.0,
+    ):
         self.model.eval()
         with torch.no_grad():
             total_aderror = 0
@@ -286,7 +296,28 @@ class SBertPlusFTTrainer(SimpleTrainerBase):
             for _, it_data in _make_eval_pbar(data_loader, epoch, "test"):
                 data = _to_device(it_data, self.device)
 
-                if use_gt_goal:
+                if use_goal_sampling:
+                    # goal sampling 경로 — primary_goal 주변에서 k개 샘플링 후 최적 trajectory 선택
+                    gs_kwargs = {
+                        "mgp_spatial_ids": data["mgp_spatial_ids"],
+                        "tgp_temporal_ids": data["tgp_temporal_ids"],
+                        "tgp_segment_ids": data["tgp_segment_ids"],
+                        "tgp_attn_mask": data["tgp_attn_mask"],
+                        "primary_goal": data["goal_lbl"],
+                        "k": goal_k,
+                        "sigma": goal_sigma,
+                    }
+                    if self.args.scene:
+                        gs_kwargs.update({
+                            "env_spatial_ids": data["env_spatial_ids"],
+                            "env_temporal_ids": data["env_temporal_ids"],
+                            "env_segment_ids": data["env_segment_ids"],
+                            "env_attn_mask": data["env_attn_mask"],
+                            "envs": data["envs"],
+                            "envs_params": data["envs_params"],
+                        })
+                    outputs = self.model.inference_with_goal_sampling(**gs_kwargs)
+                elif use_gt_goal:
                     # GT goal 확정 시 — TGP 단독 호출, trajectory 1개 반환
                     # inference_with_gt_goal()에 필요한 인자만 추려서 전달
                     gt_goal_kwargs = {
@@ -306,6 +337,7 @@ class SBertPlusFTTrainer(SimpleTrainerBase):
                         })
                     outputs = self.model.inference_with_gt_goal(**gt_goal_kwargs)
 
+                if use_goal_sampling or use_gt_goal:
                     # shape: (batch, pred_len, 2) — k 차원 없음
                     outputs["pred_trajs"] = torch.einsum("bts,b->bts", outputs["pred_trajs"], data["scales"])
                     outputs["pred_goals"] = torch.einsum("bs,b->bs", outputs["pred_goals"], data["scales"])

@@ -260,8 +260,16 @@ def run_test(argv: list[str] | None = None) -> int:
     model.load_state_dict(state)
 
     if args.framework == "spubert":
-        ade, fde, gde = trainer.test(epoch=0, data_loader=test_loader, d_sample=args.d_sample, k_sample=args.k_sample,
-                                     use_gt_goal=getattr(args, "use_gt_goal", False))
+        ade, fde, gde = trainer.test(
+            epoch=0,
+            data_loader=test_loader,
+            d_sample=args.d_sample,
+            k_sample=args.k_sample,
+            use_gt_goal=getattr(args, "use_gt_goal", False),
+            use_goal_sampling=getattr(args, "use_goal_sampling", False),
+            goal_k=getattr(args, "goal_k", 10),
+            goal_sigma=getattr(args, "goal_sigma", 1.0),
+        )
         print(f"[TEST] ADE={float(ade):.6f} FDE={float(fde):.6f} GDE={float(gde):.6f}")
     else:
         ade, fde = trainer.test(epoch=0, data_loader=test_loader)

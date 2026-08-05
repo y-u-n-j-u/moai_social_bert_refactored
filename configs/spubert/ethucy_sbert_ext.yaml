@@ -11,7 +11,8 @@ data:
   obs_len: 8
   pred_len: 12
   num_nbr: 4
-  goal_extra_frames: 10
+  goal_extra_frames: 100
+  goal_radius: 7.0
 
 scene:
   enabled: true
@@ -32,6 +33,9 @@ model:
       d_sample: 400
       goal_hidden: 64
       goal_latent: 32
+
+loss:
+  col_weight: 1.0
 
 train:
   train_mode: pt

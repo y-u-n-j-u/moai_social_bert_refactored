@@ -24,6 +24,7 @@ from src.loss import (
     FDELoss,
     MGPCVAELoss,
     MaskedADELoss,
+    cal_idx_from_pos,
     goal_collision_loss,
     pos_collision_loss,
 )
@@ -881,6 +882,116 @@ class SBertPlusFTModel(SBertModelBase):
             "pred_trajs": tgp_out["pred_trajs"],   # (batch, pred_len, 2)
             "pred_goals": gt_goals,                # (batch, 2)
             "traj_attentions": tgp_out["attentions"],
+        }
+
+    def inference_with_goal_sampling(
+        self,
+        mgp_spatial_ids,
+        tgp_temporal_ids,
+        tgp_segment_ids,
+        tgp_attn_mask,
+        primary_goal,           # (batch, goal_dim) — external module이 준 기준 goal
+        k: int = 10,
+        sigma: float = 1.0,
+        env_spatial_ids=None,
+        env_temporal_ids=None,
+        env_segment_ids=None,
+        env_attn_mask=None,
+        envs=None,              # (batch, H, W) 점유 격자
+        envs_params=None,       # (batch, 6): [min_x, min_y, W, H, res, thresh]
+        output_attentions=False,
+    ):
+        batch_size = primary_goal.shape[0]
+        device = primary_goal.device
+
+        # 1. Gaussian sampling: primary_goal 주변에서 k개 후보 goal 샘플링
+        noise = torch.randn(batch_size, k, primary_goal.shape[-1], device=device) * sigma
+        sampled_goals = primary_goal.unsqueeze(1).expand(-1, k, -1) + noise  # (batch, k, goal_dim)
+
+        best_trajs = []
+        best_goals_out = []
+
+        for b in range(batch_size):
+            # 2. 장애물 점유 필터: sampled_goals 중 free space에 있는 것만 유지
+            if envs is not None and envs_params is not None:
+                valid_indices = []
+                ep = envs_params[b]  # (6,)
+                grid = envs[b]       # (H, W)
+                thresh = ep[5]
+                for i in range(k):
+                    g = sampled_goals[b, i]  # (goal_dim,)
+                    x_id, x_v = cal_idx_from_pos(g[0:1], ep[0], ep[2], ep[4])
+                    y_id, y_v = cal_idx_from_pos(g[1:2], ep[1], ep[3], ep[4])
+                    if x_v.item() and y_v.item():
+                        if grid[y_id.item(), x_id.item()] <= thresh:
+                            valid_indices.append(i)
+                    else:
+                        valid_indices.append(i)  # 맵 범위 밖 → 일단 유지
+                if not valid_indices:
+                    valid_indices = []  # 모두 장애물이면 primary_goal만 사용
+            else:
+                valid_indices = list(range(k))
+
+            # primary_goal도 후보에 포함 (항상 첫 번째)
+            goal_candidates = (
+                [primary_goal[b:b+1]]
+                + [sampled_goals[b, i:i+1] for i in valid_indices]
+            )
+
+            # 단일 배치 슬라이스
+            obs_b  = mgp_spatial_ids[b:b+1]
+            temp_b = tgp_temporal_ids[b:b+1]
+            seg_b  = tgp_segment_ids[b:b+1]
+            mask_b = tgp_attn_mask[b:b+1]
+
+            env_kw = {}
+            if envs is not None:
+                env_kw = dict(
+                    env_spatial_ids=env_spatial_ids[b:b+1],
+                    env_temporal_ids=env_temporal_ids[b:b+1],
+                    env_segment_ids=env_segment_ids[b:b+1],
+                    env_attn_mask=env_attn_mask[b:b+1],
+                    envs=envs[b:b+1],
+                )
+
+            # 3. 각 후보 goal에 대해 TGP 실행 + collision rate 계산
+            pg = primary_goal[b]  # (goal_dim,) — 선택 기준 기준점
+            candidates = []
+            for goal_c in goal_candidates:
+                out = self.inference_with_gt_goal(
+                    obs_b, temp_b, seg_b, mask_b,
+                    goal_c, **env_kw,
+                    output_attentions=output_attentions,
+                )
+                traj = out["pred_trajs"]  # (1, pred_len, 2)
+
+                col = 0.0
+                if envs is not None and envs_params is not None:
+                    col_val = pos_collision_loss(traj, envs[b:b+1], envs_params[b:b+1])
+                    if not torch.isnan(col_val):
+                        col = col_val.item()
+
+                # primary_goal까지의 goal 거리 (선택 tie-break용)
+                dist = torch.norm(goal_c[0] - pg).item()
+                candidates.append((col, dist, traj, goal_c))
+
+            # 4. 선택 전략
+            #    - 충돌 없는(col=0) 후보 존재 → 그 중 primary_goal과 가장 가까운 goal 선택
+            #    - 모두 충돌 → collision rate 최소인 것 선택
+            collision_free = [(col, dist, traj, gc) for col, dist, traj, gc in candidates if col == 0.0]
+            if collision_free:
+                collision_free.sort(key=lambda x: x[1])   # dist 기준 정렬
+                _, _, best_traj, best_goal = collision_free[0]
+            else:
+                candidates.sort(key=lambda x: x[0])       # col 기준 정렬
+                _, _, best_traj, best_goal = candidates[0]
+            best_trajs.append(best_traj)
+            best_goals_out.append(best_goal)
+
+        return {
+            "pred_trajs": torch.cat(best_trajs, dim=0),      # (batch, pred_len, 2)
+            "pred_goals": torch.cat(best_goals_out, dim=0),  # (batch, goal_dim)
+            "sampled_goals": sampled_goals,                   # (batch, k, goal_dim) — 시각화용
         }
 
     def forward(

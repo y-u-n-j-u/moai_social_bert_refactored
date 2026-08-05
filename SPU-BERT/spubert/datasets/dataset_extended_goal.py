@@ -284,20 +284,22 @@ class moai_social_bertDataset(Dataset):
             tgt_obs_traj = trajs[0, :self.args.obs_len].copy()
             traj_lbl = tgt_pred_traj
 
-            # Extended goal: 학습 시 0~goal_extra_frames 중 랜덤 샘플링, 테스트 시 goal_extra_frames 고정
+            # Extended goal: obs_end에서 goal_radius 이상 떨어진 궤적 위의 첫 번째 지점
+            # fallback: 가장 마지막 available step
             ext_goal_world = None
             if hasattr(self, 'all_extended_goals') and item < len(self.all_extended_goals):
                 goals_dict = self.all_extended_goals[item]
                 if isinstance(goals_dict, dict):
-                    max_extra = getattr(self.args, 'goal_extra_frames', 0)
-                    if self.split == 'train':
-                        available = [k for k, v in goals_dict.items() if v is not None]
-                        if available:
-                            chosen = random.randint(0, max_extra)
-                            chosen = min(available, key=lambda x: abs(x - chosen))
-                            ext_goal_world = goals_dict[chosen]
-                    else:
-                        ext_goal_world = goals_dict.get(max_extra)
+                    goal_radius = getattr(self.args, 'goal_radius', 10.0)
+                    obs_end_world = -trans  # trans = -obs_end_world (from transform_to_target)
+                    available = sorted([(k, v) for k, v in goals_dict.items() if v is not None])
+                    if available:
+                        # 반지름 이상 떨어진 첫 번째 step 선택
+                        ext_goal_world = available[-1][1]  # fallback: 마지막 step
+                        for _, goal_pos in available:
+                            if np.linalg.norm(goal_pos - obs_end_world) >= goal_radius:
+                                ext_goal_world = goal_pos
+                                break
                 else:
                     ext_goal_world = goals_dict
 
