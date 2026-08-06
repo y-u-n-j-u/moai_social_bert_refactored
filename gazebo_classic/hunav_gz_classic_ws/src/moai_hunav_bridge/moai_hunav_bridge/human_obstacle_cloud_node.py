@@ -31,8 +31,16 @@ class HumanObstacleCloudNode(Node):
         self.human_z = float(self.declare_parameter("human_z", 0.35).value)
         self.predicted_z = float(self.declare_parameter("predicted_z", 0.25).value)
         self.current_ring_points = int(self.declare_parameter("current_ring_points", 8).value)
+        self.human_safety_margin = float(self.declare_parameter("human_safety_margin", 0.15).value)
         self.predicted_stride = int(self.declare_parameter("predicted_stride", 2).value)
         self.predicted_horizon_points = int(self.declare_parameter("predicted_horizon_points", 8).value)
+        self.predicted_ring_points = int(self.declare_parameter("predicted_ring_points", 6).value)
+        self.fallback_prediction_horizon = float(
+            self.declare_parameter("fallback_prediction_horizon", 1.2).value
+        )
+        self.fallback_prediction_step = float(
+            self.declare_parameter("fallback_prediction_step", 0.4).value
+        )
         self.clearing_ring_points = int(self.declare_parameter("clearing_ring_points", 72).value)
         self.clearing_ring_radius = float(self.declare_parameter("clearing_ring_radius", 7.5).value)
         self.state_timeout = float(self.declare_parameter("state_timeout", 0.5).value)
@@ -98,7 +106,7 @@ class HumanObstacleCloudNode(Node):
             for agent in self._last_humans.agents:
                 ax = float(agent.position.position.x)
                 ay = float(agent.position.position.y)
-                radius = max(float(agent.radius), 0.35)
+                radius = max(float(agent.radius), 0.35) + max(self.human_safety_margin, 0.0)
                 local_x, local_y = self._world_to_robot(ax, ay)
                 points.append((local_x, local_y, self.human_z))
                 ring_count = max(self.current_ring_points, 0)
@@ -111,11 +119,33 @@ class HumanObstacleCloudNode(Node):
                     points.append((ring_x, ring_y, self.human_z))
 
                 path = self._predicted_paths.get(int(agent.id), []) if predictions_are_fresh else []
+                # HuNav scenarios do not publish learned pedestrian paths. In
+                # that case, mark a short constant-velocity tube so Nav2 sees
+                # a crossing pedestrian before the current body ring reaches
+                # the robot's path. This avoids late braking and overlap while
+                # leaving the pedestrian controller one-way and deadlock-free.
+                if not path:
+                    step = max(self.fallback_prediction_step, 0.05)
+                    horizon = max(self.fallback_prediction_horizon, 0.0)
+                    vx = float(agent.velocity.linear.x)
+                    vy = float(agent.velocity.linear.y)
+                    path = [
+                        (ax + vx * time_offset, ay + vy * time_offset)
+                        for time_offset in self._time_offsets(step, horizon)
+                    ]
                 stride = max(self.predicted_stride, 1)
                 horizon = max(self.predicted_horizon_points, 0)
                 for px, py in path[::stride][:horizon]:
                     local_x, local_y = self._world_to_robot(px, py)
                     points.append((local_x, local_y, self.predicted_z))
+                    ring_count = max(self.predicted_ring_points, 0)
+                    for idx in range(ring_count):
+                        angle = 2.0 * pi * idx / max(ring_count, 1)
+                        ring_x, ring_y = self._world_to_robot(
+                            px + radius * cos(angle),
+                            py + radius * sin(angle),
+                        )
+                        points.append((ring_x, ring_y, self.predicted_z))
         elif (self._last_humans is not None or self._last_robot is not None) and not self._stale_state_warned:
             self.get_logger().warning(
                 "Human/robot state became stale; publishing clearing rays only "
@@ -148,6 +178,15 @@ class HumanObstacleCloudNode(Node):
 
     def _now(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9
+
+    @staticmethod
+    def _time_offsets(step: float, horizon: float) -> List[float]:
+        offsets: List[float] = []
+        value = step
+        while value <= horizon + 1e-9:
+            offsets.append(value)
+            value += step
+        return offsets
 
     @staticmethod
     def _is_fresh(stamp: float | None, timeout: float, now: float) -> bool:

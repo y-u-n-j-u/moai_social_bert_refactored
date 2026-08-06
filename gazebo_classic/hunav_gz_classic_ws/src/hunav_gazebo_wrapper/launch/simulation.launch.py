@@ -490,6 +490,13 @@ def generate_launch_description():
             {'cloud_topic': '/moai/human_obstacle_cloud'},
             {'publish_rate': 5.0},
             {'current_ring_points': 6},
+            # Inflate the body ring slightly and project HuNav's current
+            # velocity for 1.2 s. HuNav does not publish learned future paths,
+            # so without this fallback Nav2 reacts too late at crossings.
+            {'human_safety_margin': 0.15},
+            {'predicted_ring_points': 6},
+            {'fallback_prediction_horizon': 1.2},
+            {'fallback_prediction_step': 0.4},
             # Never keep re-marking an old human position when Gazebo or DDS
             # misses a few updates under load. The node keeps publishing
             # clearing rays while state is stale.

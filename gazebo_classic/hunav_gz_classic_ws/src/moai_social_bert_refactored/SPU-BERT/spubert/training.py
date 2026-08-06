@@ -266,7 +266,12 @@ class SBertPlusFTTrainer(SimpleTrainerBase):
         self.sbert_cfgs = SBertPlusFTConfig(self.sbert_tgp_cfgs, self.sbert_mgp_cfgs, share=args.share)
         self.model = SBertPlusFTModel(self.sbert_tgp_cfgs, self.sbert_mgp_cfgs, self.sbert_cfgs)
 
-        if args.train_mode == "pt":
+        finetune_checkpoint = str(getattr(args, "finetune_checkpoint", "") or "")
+        if finetune_checkpoint:
+            state_dict = torch.load(finetune_checkpoint, map_location="cpu")
+            self.model.load_state_dict(state_dict)
+            print(f"Loaded full fine-tuning checkpoint: {finetune_checkpoint}")
+        elif args.train_mode == "pt":
             state_dict = torch.load(_resolve_pretrain_checkpoint(args), map_location="cpu")
             self.model.tgp_model.sbert.load_state_dict(state_dict)
             self.model.mgp_model.sbert.load_state_dict(state_dict)

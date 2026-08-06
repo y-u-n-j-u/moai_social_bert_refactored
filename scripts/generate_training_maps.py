@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the three Gazebo/Nav2 maps used for social-navigation collection.
+"""Generate the Gazebo/Nav2 maps used for social-navigation collection.
 
 The occupancy grids and Gazebo collision geometry are generated from the same
 rectangle definitions.  This keeps the map, world, and pedestrian scenario
@@ -59,6 +59,15 @@ class MapSpec:
     start_occupied: bool
     tracks: Sequence[tuple[tuple[float, float], tuple[float, float]]]
     densities: Sequence[tuple[str, int]]
+    robot_waypoints: Sequence[tuple[float, float]]
+    agent_radius: float = 0.33
+    agent_goal_radius: float = 0.45
+    agent_speed_base: float = 1.10
+    agent_speed_step: float = 0.05
+    goal_force_factor: float = 2.0
+    obstacle_force_factor: float = 5.0
+    social_force_factor: float = 2.2
+    other_force_factor: float = 6.0
 
 
 def outer_walls(width: float, height: float, thickness: float = 0.25) -> list[Rect]:
@@ -88,13 +97,14 @@ SPECS = [
         tracks=[
             ((-8.0, -1.35), (8.0, -1.35)),
             ((8.0, 1.35), (-8.0, 1.35)),
-            ((-7.5, -0.45), (7.5, -0.45)),
-            ((7.5, 0.45), (-7.5, 0.45)),
+            ((-5.5, -0.45), (5.5, -0.45)),
+            ((5.5, 0.45), (-5.5, 0.45)),
         ],
         # Four agents are enough to create head-on and following interactions.
         # Six simultaneously spawned cyclic agents repeatedly deadlocked in the
         # same narrow section and produced long near-zero-speed trajectories.
         densities=[("low", 2), ("medium", 3), ("high", 4)],
+        robot_waypoints=[(-6.0, 0.0), (6.0, 0.0)],
     ),
     MapSpec(
         name="training_intersection",
@@ -123,7 +133,8 @@ SPECS = [
         ],
         # Increase density progressively instead of starting the low scenario
         # with all four crossing directions active.
-        densities=[("low", 2), ("medium", 4), ("high", 6)],
+        densities=[("low", 2), ("medium", 3), ("high", 4)],
+        robot_waypoints=[(-6.0, 0.0), (6.0, 0.0)],
     ),
     MapSpec(
         name="training_doorway",
@@ -153,6 +164,104 @@ SPECS = [
             ((3.0, 0.55), (-5.0, 0.55)),
         ],
         densities=[("low", 2), ("medium", 3), ("high", 4)],
+        robot_waypoints=[(-4.0, 0.0), (4.0, 0.0)],
+    ),
+    MapSpec(
+        name="training_slalom",
+        width_m=24.0,
+        height_m=18.0,
+        free_regions=[],
+        occupied=[
+            *outer_walls(24.0, 18.0),
+            # Alternating walls require map-aware turns, while every bypass is
+            # at least about 3 m wide.  The origin remains free for PMB2.
+            Rect("slalom_upper_left", -6.0, 3.2, 1.0, 5.5),
+            Rect("slalom_lower_middle", 1.8, -3.2, 1.0, 5.5),
+            Rect("slalom_upper_right", 7.0, 3.2, 1.0, 5.5),
+        ],
+        start_occupied=False,
+        # Pedestrians cross the robot's slalom route at four different x
+        # positions.  This creates head-on/crossing interactions without
+        # sending every agent to one shared choke point.
+        tracks=[
+            ((-8.2, -6.5), (-8.2, 6.5)),
+            ((-2.5, 6.5), (-2.5, -6.5)),
+            ((4.5, -6.5), (4.5, 6.5)),
+            ((9.0, 6.5), (9.0, -6.5)),
+        ],
+        densities=[("low", 2), ("medium", 3), ("high", 4)],
+        robot_waypoints=[(-10.0, 0.0), (10.0, 0.0)],
+        agent_radius=0.33,
+        agent_goal_radius=0.45,
+        agent_speed_base=1.10,
+        agent_speed_step=0.05,
+        goal_force_factor=2.0,
+        obstacle_force_factor=5.0,
+        social_force_factor=2.2,
+        other_force_factor=6.0,
+    ),
+    MapSpec(
+        name="training_open_plaza",
+        width_m=24.0,
+        height_m=24.0,
+        free_regions=[],
+        occupied=[
+            *outer_walls(24.0, 24.0),
+            # Sparse islands preserve broad free space and create several
+            # meaningful local-map contexts without narrow choke points.
+            Rect("plaza_island_nw", -5.0, 5.0, 1.4, 1.4, 0.8),
+            Rect("plaza_island_ne", 5.0, 5.0, 1.4, 1.4, 0.8),
+            Rect("plaza_island_sw", -5.0, -5.0, 1.4, 1.4, 0.8),
+            Rect("plaza_island_se", 5.0, -5.0, 1.4, 1.4, 0.8),
+        ],
+        start_occupied=False,
+        # Four offset lanes create interactions at four different locations;
+        # no single central point receives every pedestrian.
+        tracks=[
+            ((-9.0, -2.0), (9.0, -2.0)),
+            ((9.0, 2.0), (-9.0, 2.0)),
+            ((-2.0, -9.0), (-2.0, 9.0)),
+            ((2.0, 9.0), (2.0, -9.0)),
+        ],
+        densities=[("low", 2), ("medium", 3), ("high", 4)],
+        robot_waypoints=[(-9.0, 0.0), (0.0, 9.0), (9.0, 0.0), (0.0, -9.0)],
+        agent_radius=0.33,
+        agent_goal_radius=0.45,
+        agent_speed_base=1.10,
+        agent_speed_step=0.05,
+        goal_force_factor=2.0,
+        obstacle_force_factor=5.0,
+        social_force_factor=2.2,
+        other_force_factor=6.0,
+    ),
+    MapSpec(
+        name="training_dual_route",
+        width_m=24.0,
+        height_m=18.0,
+        free_regions=[],
+        occupied=[
+            *outer_walls(24.0, 18.0),
+            # Offset the block so PMB2 can spawn safely at (0, 0).  Both the
+            # upper and lower routes retain more than 6 m of geometric width.
+            Rect("dual_route_block", 4.5, 0.0, 5.0, 5.0),
+        ],
+        start_occupied=False,
+        tracks=[
+            ((-9.0, -4.5), (9.0, -4.5)),
+            ((9.0, 4.5), (-9.0, 4.5)),
+            ((-5.0, -6.5), (-5.0, 6.5)),
+            ((9.0, 6.5), (9.0, -6.5)),
+        ],
+        densities=[("low", 2), ("medium", 3), ("high", 4)],
+        robot_waypoints=[(-9.0, 0.0), (9.0, 0.0)],
+        agent_radius=0.33,
+        agent_goal_radius=0.45,
+        agent_speed_base=1.10,
+        agent_speed_step=0.05,
+        goal_force_factor=2.0,
+        obstacle_force_factor=5.0,
+        social_force_factor=2.2,
+        other_force_factor=6.0,
     ),
 ]
 
@@ -180,6 +289,71 @@ def build_grid(spec: MapSpec) -> np.ndarray:
     for obstacle in spec.occupied:
         grid[rect_mask(x_grid, y_grid, obstacle.bounds)] = 0
     return grid
+
+
+def grid_cell(spec: MapSpec, point: tuple[float, float]) -> tuple[int, int]:
+    """Convert a world point to the generated top-down occupancy-grid cell."""
+    x, y = point
+    col = int((x + spec.width_m / 2.0) / RESOLUTION)
+    row = int((spec.height_m / 2.0 - y) / RESOLUTION)
+    return row, col
+
+
+def point_has_clearance(
+    spec: MapSpec,
+    grid: np.ndarray,
+    point: tuple[float, float],
+    clearance: float,
+) -> bool:
+    row, col = grid_cell(spec, point)
+    radius = int(np.ceil(clearance / RESOLUTION))
+    row0, row1 = row - radius, row + radius + 1
+    col0, col1 = col - radius, col + radius + 1
+    if row0 < 0 or col0 < 0 or row1 > grid.shape[0] or col1 > grid.shape[1]:
+        return False
+    return bool(np.all(grid[row0:row1, col0:col1] == 255))
+
+
+def validate_spec(spec: MapSpec) -> None:
+    """Reject maps that would start actors in, or route them through, walls."""
+    grid = build_grid(spec)
+    if not point_has_clearance(spec, grid, (0.0, 0.0), 0.60):
+        raise ValueError(f"{spec.name}: PMB2 spawn (0, 0) lacks 0.60 m clearance")
+
+    for waypoint in spec.robot_waypoints:
+        if not point_has_clearance(spec, grid, waypoint, 0.65):
+            raise ValueError(
+                f"{spec.name}: robot waypoint {waypoint} lacks 0.65 m clearance"
+            )
+
+    required_clearance = spec.agent_radius + 0.25
+    starts: list[tuple[float, float]] = []
+    for track_index, (start, end) in enumerate(spec.tracks, start=1):
+        starts.append(start)
+        length = float(np.hypot(end[0] - start[0], end[1] - start[1]))
+        sample_count = max(int(np.ceil(length / 0.10)), 1)
+        for alpha in np.linspace(0.0, 1.0, sample_count + 1):
+            point = (
+                start[0] + alpha * (end[0] - start[0]),
+                start[1] + alpha * (end[1] - start[1]),
+            )
+            if not point_has_clearance(spec, grid, point, required_clearance):
+                raise ValueError(
+                    f"{spec.name}: pedestrian track {track_index} approaches an "
+                    f"obstacle near ({point[0]:.2f}, {point[1]:.2f})"
+                )
+
+    for first in range(len(starts)):
+        for second in range(first + 1, len(starts)):
+            separation = float(np.hypot(
+                starts[first][0] - starts[second][0],
+                starts[first][1] - starts[second][1],
+            ))
+            if separation < 2.0 * spec.agent_radius + 0.50:
+                raise ValueError(
+                    f"{spec.name}: pedestrian starts {first + 1} and {second + 1} "
+                    f"are too close ({separation:.2f} m)"
+                )
 
 
 def write_pgm(path: Path, grid: np.ndarray) -> None:
@@ -289,9 +463,9 @@ def scenario_text(spec: MapSpec, density: str, count: int) -> str:
       id: {index}
       group_id: -1
       skin: {(index - 1) % 5}
-      max_vel: {1.25 + 0.05 * ((index - 1) % 5):.2f}
-      radius: 0.35
-      goal_radius: 0.30
+      max_vel: {spec.agent_speed_base + spec.agent_speed_step * ((index - 1) % 5):.2f}
+      radius: {spec.agent_radius:.2f}
+      goal_radius: {spec.agent_goal_radius:.2f}
       cyclic_goals: true
       init_pose:
         x: {start[0]:.3f}
@@ -300,11 +474,15 @@ def scenario_text(spec: MapSpec, density: str, count: int) -> str:
         h: {heading:.5f}
       behavior:
         type: Regular
-        configuration: {(index - 1) % 2}
-        goal_force_factor: 2.5
-        obstacle_force_factor: 7.0
-        social_force_factor: 3.5
-        other_force_factor: 10.0
+        # configuration=1 makes HuNav use the explicit force factors below.
+        # configuration=0 silently replaces them with the much stronger
+        # built-in defaults (social=5, obstacle=10), which caused abrupt
+        # deceleration and in-place rotations when agents approached.
+        configuration: 1
+        goal_force_factor: {spec.goal_force_factor:.1f}
+        obstacle_force_factor: {spec.obstacle_force_factor:.1f}
+        social_force_factor: {spec.social_force_factor:.1f}
+        other_force_factor: {spec.other_force_factor:.1f}
       goals:
         - {end_goal}
         - {start_goal}"""
@@ -351,6 +529,7 @@ def main() -> None:
     remove_stale_files(keep)
 
     for spec in SPECS:
+        validate_spec(spec)
         write_pgm(MAP_DIR / f"{spec.name}.pgm", build_grid(spec))
         write_map_yaml(MAP_DIR / f"{spec.name}.yaml", spec)
         write_world(WORLD_DIR / f"{spec.name}.world", spec)

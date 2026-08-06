@@ -1,32 +1,39 @@
 hunav_loader:
   ros__parameters:
-    yaml_base_name: agents_training_doorway_medium
+    yaml_base_name: agents_training_open_plaza_high
     simulator: Gazebo Classic
-    map: training_doorway
+    map: training_open_plaza
     publish_people: true
     global_goals:
       1:
-        x: -5.500
-        y: -0.550
+        x: -9.000
+        y: -2.000
       2:
-        x: 5.500
-        y: -0.550
+        x: 9.000
+        y: -2.000
       3:
-        x: 5.500
-        y: 0.550
+        x: 9.000
+        y: 2.000
       4:
-        x: -5.500
-        y: 0.550
+        x: -9.000
+        y: 2.000
       5:
-        x: -3.000
-        y: -0.550
+        x: -2.000
+        y: -9.000
       6:
-        x: 5.000
-        y: -0.550
+        x: -2.000
+        y: 9.000
+      7:
+        x: 2.000
+        y: 9.000
+      8:
+        x: 2.000
+        y: -9.000
     agents:
       - agent1
       - agent2
       - agent3
+      - agent4
     agent1:
       id: 1
       group_id: -1
@@ -36,8 +43,8 @@ hunav_loader:
       goal_radius: 0.45
       cyclic_goals: true
       init_pose:
-        x: -5.500
-        y: -0.550
+        x: -9.000
+        y: -2.000
         z: 1.250
         h: 0.00000
       behavior:
@@ -63,8 +70,8 @@ hunav_loader:
       goal_radius: 0.45
       cyclic_goals: true
       init_pose:
-        x: 5.500
-        y: 0.550
+        x: 9.000
+        y: 2.000
         z: 1.250
         h: 3.14159
       behavior:
@@ -90,10 +97,10 @@ hunav_loader:
       goal_radius: 0.45
       cyclic_goals: true
       init_pose:
-        x: -3.000
-        y: -0.550
+        x: -2.000
+        y: -9.000
         z: 1.250
-        h: 0.00000
+        h: 1.57080
       behavior:
         type: Regular
         # configuration=1 makes HuNav use the explicit force factors below.
@@ -108,3 +115,30 @@ hunav_loader:
       goals:
         - 6
         - 5
+    agent4:
+      id: 4
+      group_id: -1
+      skin: 3
+      max_vel: 1.25
+      radius: 0.33
+      goal_radius: 0.45
+      cyclic_goals: true
+      init_pose:
+        x: 2.000
+        y: 9.000
+        z: 1.250
+        h: -1.57080
+      behavior:
+        type: Regular
+        # configuration=1 makes HuNav use the explicit force factors below.
+        # configuration=0 silently replaces them with the much stronger
+        # built-in defaults (social=5, obstacle=10), which caused abrupt
+        # deceleration and in-place rotations when agents approached.
+        configuration: 1
+        goal_force_factor: 2.0
+        obstacle_force_factor: 5.0
+        social_force_factor: 2.2
+        other_force_factor: 6.0
+      goals:
+        - 8
+        - 7

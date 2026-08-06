@@ -10,6 +10,7 @@ import rclpy
 from geometry_msgs.msg import PoseStamped
 from hunav_msgs.msg import Agent
 from nav2_msgs.action import ComputePathToPose
+from nav2_msgs.srv import ManageLifecycleNodes
 from nav_msgs.msg import OccupancyGrid
 from rclpy.action import ActionClient
 from rclpy.executors import ExternalShutdownException
@@ -28,6 +29,14 @@ DEFAULT_WAYPOINT_ROUTES = {
     "training_corridor": ((-6.0, 0.0), (6.0, 0.0)),
     "training_doorway": ((-4.0, 0.0), (4.0, 0.0)),
     "training_intersection": ((-6.0, 0.0), (6.0, 0.0)),
+    "training_slalom": ((-10.0, 0.0), (10.0, 0.0)),
+    "training_open_plaza": (
+        (-9.0, 0.0),
+        (0.0, 9.0),
+        (9.0, 0.0),
+        (0.0, -9.0),
+    ),
+    "training_dual_route": ((-9.0, 0.0), (9.0, 0.0)),
 }
 
 
@@ -53,6 +62,18 @@ class RandomGoalPublisherNode(Node):
                 "nav_ready_service",
                 "/lifecycle_manager_navigation/is_active",
             ).value
+        )
+        self.nav_manage_service = str(
+            self.declare_parameter(
+                "nav_manage_service",
+                "/lifecycle_manager_navigation/manage_nodes",
+            ).value
+        )
+        self.nav_recovery_delay = float(
+            self.declare_parameter("nav_recovery_delay", 3.0).value
+        )
+        self.nav_recovery_retry_period = float(
+            self.declare_parameter("nav_recovery_retry_period", 10.0).value
         )
         self.seed = int(self.declare_parameter("seed", -1).value)
         self.min_goal_distance = float(self.declare_parameter("min_goal_distance", 6.0).value)
@@ -95,6 +116,9 @@ class RandomGoalPublisherNode(Node):
         self._waiting_logged = False
         self._nav_ready = False
         self._nav_ready_request_pending = False
+        self._nav_inactive_since: Optional[float] = None
+        self._nav_startup_request_pending = False
+        self._last_nav_startup_request_at = -math.inf
 
         map_qos = QoSProfile(depth=1)
         map_qos.reliability = ReliabilityPolicy.RELIABLE
@@ -107,6 +131,9 @@ class RandomGoalPublisherNode(Node):
         )
         self._goal_pub = self.create_publisher(PoseStamped, self.goal_topic, 10)
         self._nav_ready_client = self.create_client(Trigger, self.nav_ready_service)
+        self._nav_manage_client = self.create_client(
+            ManageLifecycleNodes, self.nav_manage_service
+        )
         self._path_client = ActionClient(self, ComputePathToPose, "/compute_path_to_pose")
         self._timer = self.create_timer(0.5, self._on_timer)
 
@@ -273,13 +300,52 @@ class RandomGoalPublisherNode(Node):
             self.get_logger().warning(f"Nav2 readiness check failed: {exc}")
             return
         if response is None or not bool(response.success):
+            now = self._now()
+            if self._nav_inactive_since is None:
+                self._nav_inactive_since = now
+            if now - self._nav_inactive_since >= max(self.nav_recovery_delay, 0.0):
+                self._request_nav_startup(now)
             return
         self._set_nav_ready("lifecycle manager is active")
+
+    def _request_nav_startup(self, now: float) -> None:
+        """Recover when Nav2's first automatic lifecycle startup races DDS."""
+        if self._nav_startup_request_pending:
+            return
+        if now - self._last_nav_startup_request_at < max(
+            self.nav_recovery_retry_period, 0.5
+        ):
+            return
+        if not self._nav_manage_client.service_is_ready():
+            return
+        self._last_nav_startup_request_at = now
+        self._nav_startup_request_pending = True
+        request = ManageLifecycleNodes.Request()
+        request.command = 0  # STARTUP
+        future = self._nav_manage_client.call_async(request)
+        future.add_done_callback(self._on_nav_startup_response)
+
+    def _on_nav_startup_response(self, future) -> None:
+        self._nav_startup_request_pending = False
+        try:
+            response = future.result()
+        except Exception as exc:
+            self.get_logger().warning(f"Nav2 lifecycle recovery request failed: {exc}")
+            return
+        if response is not None and bool(response.success):
+            self.get_logger().warning(
+                "Nav2 remained inactive after initial bringup; requested lifecycle startup recovery"
+            )
+        else:
+            self.get_logger().warning(
+                "Nav2 lifecycle startup recovery was rejected; will retry"
+            )
 
     def _set_nav_ready(self, source: str) -> None:
         if self._nav_ready:
             return
         self._nav_ready = True
+        self._nav_inactive_since = None
         self._waiting_logged = False
         self._next_goal_at = self._now() + max(self.startup_delay, 0.0)
         self.get_logger().info(

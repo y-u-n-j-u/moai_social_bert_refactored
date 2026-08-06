@@ -23,24 +23,17 @@ hunav_loader:
       6:
         x: -0.850
         y: 7.800
-      7:
-        x: 0.850
-        y: 7.800
-      8:
-        x: 0.850
-        y: -7.800
     agents:
       - agent1
       - agent2
       - agent3
-      - agent4
     agent1:
       id: 1
       group_id: -1
       skin: 0
-      max_vel: 1.25
-      radius: 0.35
-      goal_radius: 0.30
+      max_vel: 1.10
+      radius: 0.33
+      goal_radius: 0.45
       cyclic_goals: true
       init_pose:
         x: -7.800
@@ -49,11 +42,15 @@ hunav_loader:
         h: 0.00000
       behavior:
         type: Regular
-        configuration: 0
-        goal_force_factor: 2.5
-        obstacle_force_factor: 7.0
-        social_force_factor: 3.5
-        other_force_factor: 10.0
+        # configuration=1 makes HuNav use the explicit force factors below.
+        # configuration=0 silently replaces them with the much stronger
+        # built-in defaults (social=5, obstacle=10), which caused abrupt
+        # deceleration and in-place rotations when agents approached.
+        configuration: 1
+        goal_force_factor: 2.0
+        obstacle_force_factor: 5.0
+        social_force_factor: 2.2
+        other_force_factor: 6.0
       goals:
         - 2
         - 1
@@ -61,9 +58,9 @@ hunav_loader:
       id: 2
       group_id: -1
       skin: 1
-      max_vel: 1.30
-      radius: 0.35
-      goal_radius: 0.30
+      max_vel: 1.15
+      radius: 0.33
+      goal_radius: 0.45
       cyclic_goals: true
       init_pose:
         x: 7.800
@@ -72,11 +69,15 @@ hunav_loader:
         h: 3.14159
       behavior:
         type: Regular
+        # configuration=1 makes HuNav use the explicit force factors below.
+        # configuration=0 silently replaces them with the much stronger
+        # built-in defaults (social=5, obstacle=10), which caused abrupt
+        # deceleration and in-place rotations when agents approached.
         configuration: 1
-        goal_force_factor: 2.5
-        obstacle_force_factor: 7.0
-        social_force_factor: 3.5
-        other_force_factor: 10.0
+        goal_force_factor: 2.0
+        obstacle_force_factor: 5.0
+        social_force_factor: 2.2
+        other_force_factor: 6.0
       goals:
         - 4
         - 3
@@ -84,9 +85,9 @@ hunav_loader:
       id: 3
       group_id: -1
       skin: 2
-      max_vel: 1.35
-      radius: 0.35
-      goal_radius: 0.30
+      max_vel: 1.20
+      radius: 0.33
+      goal_radius: 0.45
       cyclic_goals: true
       init_pose:
         x: -0.850
@@ -95,34 +96,15 @@ hunav_loader:
         h: 1.57080
       behavior:
         type: Regular
-        configuration: 0
-        goal_force_factor: 2.5
-        obstacle_force_factor: 7.0
-        social_force_factor: 3.5
-        other_force_factor: 10.0
+        # configuration=1 makes HuNav use the explicit force factors below.
+        # configuration=0 silently replaces them with the much stronger
+        # built-in defaults (social=5, obstacle=10), which caused abrupt
+        # deceleration and in-place rotations when agents approached.
+        configuration: 1
+        goal_force_factor: 2.0
+        obstacle_force_factor: 5.0
+        social_force_factor: 2.2
+        other_force_factor: 6.0
       goals:
         - 6
         - 5
-    agent4:
-      id: 4
-      group_id: -1
-      skin: 3
-      max_vel: 1.40
-      radius: 0.35
-      goal_radius: 0.30
-      cyclic_goals: true
-      init_pose:
-        x: 0.850
-        y: 7.800
-        z: 1.250
-        h: -1.57080
-      behavior:
-        type: Regular
-        configuration: 1
-        goal_force_factor: 2.5
-        obstacle_force_factor: 7.0
-        social_force_factor: 3.5
-        other_force_factor: 10.0
-      goals:
-        - 8
-        - 7

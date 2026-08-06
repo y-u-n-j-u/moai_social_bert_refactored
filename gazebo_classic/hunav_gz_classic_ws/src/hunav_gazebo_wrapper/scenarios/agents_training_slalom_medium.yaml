@@ -1,28 +1,28 @@
 hunav_loader:
   ros__parameters:
-    yaml_base_name: agents_training_doorway_medium
+    yaml_base_name: agents_training_slalom_medium
     simulator: Gazebo Classic
-    map: training_doorway
+    map: training_slalom
     publish_people: true
     global_goals:
       1:
-        x: -5.500
-        y: -0.550
+        x: -8.200
+        y: -6.500
       2:
-        x: 5.500
-        y: -0.550
+        x: -8.200
+        y: 6.500
       3:
-        x: 5.500
-        y: 0.550
+        x: -2.500
+        y: 6.500
       4:
-        x: -5.500
-        y: 0.550
+        x: -2.500
+        y: -6.500
       5:
-        x: -3.000
-        y: -0.550
+        x: 4.500
+        y: -6.500
       6:
-        x: 5.000
-        y: -0.550
+        x: 4.500
+        y: 6.500
     agents:
       - agent1
       - agent2
@@ -36,10 +36,10 @@ hunav_loader:
       goal_radius: 0.45
       cyclic_goals: true
       init_pose:
-        x: -5.500
-        y: -0.550
+        x: -8.200
+        y: -6.500
         z: 1.250
-        h: 0.00000
+        h: 1.57080
       behavior:
         type: Regular
         # configuration=1 makes HuNav use the explicit force factors below.
@@ -63,10 +63,10 @@ hunav_loader:
       goal_radius: 0.45
       cyclic_goals: true
       init_pose:
-        x: 5.500
-        y: 0.550
+        x: -2.500
+        y: 6.500
         z: 1.250
-        h: 3.14159
+        h: -1.57080
       behavior:
         type: Regular
         # configuration=1 makes HuNav use the explicit force factors below.
@@ -90,10 +90,10 @@ hunav_loader:
       goal_radius: 0.45
       cyclic_goals: true
       init_pose:
-        x: -3.000
-        y: -0.550
+        x: 4.500
+        y: -6.500
         z: 1.250
-        h: 0.00000
+        h: 1.57080
       behavior:
         type: Regular
         # configuration=1 makes HuNav use the explicit force factors below.

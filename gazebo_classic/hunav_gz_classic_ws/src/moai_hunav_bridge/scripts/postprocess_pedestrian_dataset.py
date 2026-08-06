@@ -365,6 +365,11 @@ def pass_basic_filter(q: dict[str, float], args: argparse.Namespace) -> bool:
         and q["future_disp"] >= args.min_future_disp
         and q["path_length"] >= args.min_path_length
         and q["path_efficiency"] >= args.min_path_efficiency
+        # The model learns both the 8 observed and 12 future positions.  A
+        # window that is safe only during observation can still teach a
+        # ground-truth future trajectory that overlaps a pedestrian.  Require
+        # the same center-distance margin across all 20 synchronized steps.
+        and q["same_time_min_distance_all"] >= args.min_social_distance
         and q["min_social_distance_obs"] >= args.min_social_distance
         and q["max_speed"] <= args.max_speed
     )
