@@ -5,7 +5,7 @@ import math
 import os
 import sys
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -35,6 +35,80 @@ def guidance_point(current: XY, final_goal: XY, radius: float) -> XY:
         float(current[0]) + dx * step / distance,
         float(current[1]) + dy * step / distance,
     )
+
+
+def guidance_point_along_path(
+    path: Sequence[XY],
+    current: XY,
+    final_goal: XY,
+    radius: float,
+) -> XY:
+    """Select a point up to ``radius`` metres ahead on a global path."""
+    points = [(float(x), float(y)) for x, y in path]
+    if not points:
+        raise ValueError("global path is empty")
+    if len(points) == 1:
+        return float(final_goal[0]), float(final_goal[1])
+
+    current_x = float(current[0])
+    current_y = float(current[1])
+    best_distance_sq = math.inf
+    best_segment = 0
+    best_point = points[0]
+
+    # Segment projection keeps lookahead stable on sparse Nav2 plans.
+    for index, (start, end) in enumerate(zip(points, points[1:])):
+        dx = end[0] - start[0]
+        dy = end[1] - start[1]
+        length_sq = dx * dx + dy * dy
+        if length_sq <= 1e-12:
+            fraction = 0.0
+        else:
+            fraction = max(
+                0.0,
+                min(
+                    1.0,
+                    ((current_x - start[0]) * dx + (current_y - start[1]) * dy)
+                    / length_sq,
+                ),
+            )
+        projected = (start[0] + fraction * dx, start[1] + fraction * dy)
+        distance_sq = (
+            (current_x - projected[0]) ** 2 + (current_y - projected[1]) ** 2
+        )
+        if distance_sq < best_distance_sq:
+            best_distance_sq = distance_sq
+            best_segment = index
+            best_point = projected
+
+    remaining = max(float(radius), 0.0)
+    segment_start = best_point
+    segment_end = points[best_segment + 1]
+    first_length = math.hypot(
+        segment_end[0] - segment_start[0],
+        segment_end[1] - segment_start[1],
+    )
+    if remaining <= first_length and first_length > 1e-12:
+        ratio = remaining / first_length
+        return (
+            segment_start[0] + ratio * (segment_end[0] - segment_start[0]),
+            segment_start[1] + ratio * (segment_end[1] - segment_start[1]),
+        )
+    remaining -= first_length
+
+    for index in range(best_segment + 1, len(points) - 1):
+        start = points[index]
+        end = points[index + 1]
+        length = math.hypot(end[0] - start[0], end[1] - start[1])
+        if remaining <= length and length > 1e-12:
+            ratio = remaining / length
+            return (
+                start[0] + ratio * (end[0] - start[0]),
+                start[1] + ratio * (end[1] - start[1]),
+            )
+        remaining -= length
+
+    return float(final_goal[0]), float(final_goal[1])
 
 
 def pad_history(points: Sequence[XY], length: int) -> List[XY]:
@@ -238,6 +312,7 @@ class GuidedSpubertRuntime:
         robot_yaw: float,
         human_histories: Mapping[int, Sequence[XY]],
         final_goal: XY,
+        guidance_point_world: Optional[XY] = None,
     ) -> GuidedInferenceResult:
         robot_world = pad_history(robot_history, self.obs_len)
         origin = robot_world[-1]
@@ -265,7 +340,11 @@ class GuidedSpubertRuntime:
         for row, (_, history) in enumerate(neighbors[: self.num_nbr], start=1):
             trajectories[row, : self.obs_len] = np.asarray(history, dtype=np.float32)
 
-        gp_world = guidance_point(origin, final_goal, self.guidance_radius)
+        gp_world = (
+            (float(guidance_point_world[0]), float(guidance_point_world[1]))
+            if guidance_point_world is not None
+            else guidance_point(origin, final_goal, self.guidance_radius)
+        )
         gp_local = np.asarray(world_to_local(gp_world, origin, theta), dtype=np.float32)
         streams = self._build_streams(
             trajs=trajectories,

@@ -6,6 +6,7 @@ import unittest
 from moai_hunav_bridge.guided_spubert_runtime import (
     GuidedSpubertRuntime,
     guidance_point,
+    guidance_point_along_path,
     heading_from_history,
     local_to_world,
     pad_history,
@@ -22,6 +23,39 @@ class GuidedSpubertGeometryTest(unittest.TestCase):
     def test_guidance_point_uses_nearby_final_goal(self):
         point = guidance_point((1.0, 2.0), (3.0, 2.0), 8.0)
         self.assertEqual(point, (3.0, 2.0))
+
+    def test_route_guidance_follows_turn_in_global_path(self):
+        point = guidance_point_along_path(
+            [(0.0, 0.0), (0.0, 5.0), (10.0, 5.0)],
+            current=(0.0, 0.0),
+            final_goal=(10.0, 5.0),
+            radius=8.0,
+        )
+        self.assertAlmostEqual(point[0], 3.0)
+        self.assertAlmostEqual(point[1], 5.0)
+
+    def test_route_guidance_starts_at_projection_nearest_robot(self):
+        point = guidance_point_along_path(
+            [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)],
+            current=(4.0, 1.0),
+            final_goal=(10.0, 10.0),
+            radius=8.0,
+        )
+        self.assertAlmostEqual(point[0], 10.0)
+        self.assertAlmostEqual(point[1], 2.0)
+
+    def test_route_guidance_uses_final_goal_when_path_is_short(self):
+        point = guidance_point_along_path(
+            [(0.0, 0.0), (2.0, 0.0)],
+            current=(0.0, 0.0),
+            final_goal=(2.0, 0.0),
+            radius=8.0,
+        )
+        self.assertEqual(point, (2.0, 0.0))
+
+    def test_route_guidance_rejects_empty_path(self):
+        with self.assertRaises(ValueError):
+            guidance_point_along_path([], (0.0, 0.0), (1.0, 0.0), 8.0)
 
     def test_target_frame_round_trip(self):
         world = (4.5, -1.25)

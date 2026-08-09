@@ -11,7 +11,7 @@ import rclpy
 from builtin_interfaces.msg import Duration
 from geometry_msgs.msg import Point, PoseStamped, Quaternion
 from hunav_msgs.msg import Agent, Agents
-from nav2_msgs.action import FollowPath, NavigateToPose
+from nav2_msgs.action import ComputePathToPose, FollowPath, NavigateToPose
 from nav_msgs.msg import Path
 from rclpy.action import ActionClient
 from rclpy.executors import ExternalShutdownException
@@ -22,7 +22,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 from .guided_spubert_runtime import (
     GuidedInferenceResult,
     GuidedSpubertRuntime,
-    guidance_point,
+    guidance_point_along_path,
 )
 from .social_bert_compute_agents_node import OccupancyMapProvider
 
@@ -85,6 +85,12 @@ class SpubertNav2BridgeNode(Node):
             self.declare_parameter(
                 "navigate_to_pose_action",
                 "/navigate_to_pose",
+            ).value
+        )
+        self.compute_path_to_pose_action = str(
+            self.declare_parameter(
+                "compute_path_to_pose_action",
+                "/compute_path_to_pose",
             ).value
         )
         self.controller_id = str(
@@ -164,6 +170,12 @@ class SpubertNav2BridgeNode(Node):
         self._follow_goal_pending = False
         self._navigate_goal_pending = False
         self._navigate_dispatched_generation = -1
+        self._route_path: List[XY] = []
+        self._route_path_generation = -1
+        self._route_path_failed_generation = -1
+        self._route_path_pending_generation = -1
+        self._route_path_length_m = 0.0
+        self._compute_path_goal_handle = None
         self._last_status = ""
         self._runtime: Optional[GuidedSpubertRuntime] = None
         self._map_provider: Optional[OccupancyMapProvider] = None
@@ -214,6 +226,11 @@ class SpubertNav2BridgeNode(Node):
             self,
             NavigateToPose,
             self.navigate_to_pose_action,
+        )
+        self._compute_path_client = ActionClient(
+            self,
+            ComputePathToPose,
+            self.compute_path_to_pose_action,
         )
         self._timer = self.create_timer(
             max(self.prediction_dt, 0.05),
@@ -287,6 +304,13 @@ class SpubertNav2BridgeNode(Node):
         self._follow_goal_pending = False
         self._navigate_goal_pending = False
         self._navigate_dispatched_generation = -1
+        self._cancel_action(self._compute_path_goal_handle)
+        self._compute_path_goal_handle = None
+        self._route_path = []
+        self._route_path_generation = -1
+        self._route_path_failed_generation = -1
+        self._route_path_pending_generation = -1
+        self._route_path_length_m = 0.0
         self.get_logger().info(
             f"Received RViz final goal: ({msg.pose.position.x:.3f}, "
             f"{msg.pose.position.y:.3f})"
@@ -343,6 +367,40 @@ class SpubertNav2BridgeNode(Node):
             self._handle_invalid_path("model_unavailable")
             return
 
+        if self._route_path_generation != self._goal_generation:
+            if self._route_path_failed_generation == self._goal_generation:
+                return
+            if self._route_path_pending_generation != self._goal_generation:
+                if not self._request_route_path():
+                    self._fail_route_path(
+                        self._goal_generation,
+                        "compute_path_server_unavailable",
+                    )
+            return
+
+        current = (
+            float(robot.position.position.x),
+            float(robot.position.position.y),
+        )
+        final_goal = (
+            float(goal.pose.position.x),
+            float(goal.pose.position.y),
+        )
+        try:
+            route_guidance = guidance_point_along_path(
+                self._route_path,
+                current=current,
+                final_goal=final_goal,
+                radius=self.guidance_radius,
+            )
+        except ValueError as exc:
+            self.get_logger().warning(f"Route guidance point failed: {exc}")
+            self._fail_route_path(
+                self._goal_generation,
+                "route_guidance_failed",
+            )
+            return
+
         try:
             result = self._runtime.predict(
                 robot_history=list(self._robot_history),
@@ -351,10 +409,8 @@ class SpubertNav2BridgeNode(Node):
                     agent_id: list(history)
                     for agent_id, history in self._human_histories.items()
                 },
-                final_goal=(
-                    float(goal.pose.position.x),
-                    float(goal.pose.position.y),
-                ),
+                final_goal=final_goal,
+                guidance_point_world=route_guidance,
             )
         except Exception as exc:
             self.get_logger().error(f"Guided robot inference failed: {exc}")
@@ -384,6 +440,108 @@ class SpubertNav2BridgeNode(Node):
                 self._last_follow_send = now
             else:
                 self._handle_invalid_path("follow_path_server_unavailable")
+
+    def _request_route_path(self) -> bool:
+        goal = self._goal
+        if goal is None:
+            return False
+        if not self._compute_path_client.wait_for_server(timeout_sec=0.05):
+            return False
+
+        generation = self._goal_generation
+        action_goal = ComputePathToPose.Goal()
+        action_goal.goal = goal
+        action_goal.use_start = False
+        action_goal.planner_id = ""
+        self._route_path_pending_generation = generation
+        try:
+            future = self._compute_path_client.send_goal_async(action_goal)
+        except Exception as exc:
+            self.get_logger().warning(f"ComputePathToPose send failed: {exc}")
+            self._route_path_pending_generation = -1
+            return False
+        future.add_done_callback(
+            lambda done, generation=generation:
+                self._on_route_path_goal_response(done, generation)
+        )
+        self._publish_status("requesting_nav2_global_path")
+        return True
+
+    def _on_route_path_goal_response(self, future, generation: int) -> None:
+        if generation != self._goal_generation:
+            return
+        try:
+            handle = future.result()
+        except Exception as exc:
+            self.get_logger().warning(
+                f"ComputePathToPose request failed: {exc}"
+            )
+            self._fail_route_path(generation, "compute_path_request_failed")
+            return
+        if handle is None or not handle.accepted:
+            self._fail_route_path(generation, "compute_path_rejected")
+            return
+        self._compute_path_goal_handle = handle
+        handle.get_result_async().add_done_callback(
+            lambda done, generation=generation: self._on_route_path_result(
+                done,
+                generation,
+            )
+        )
+
+    def _on_route_path_result(self, future, generation: int) -> None:
+        if generation != self._goal_generation:
+            return
+        self._compute_path_goal_handle = None
+        self._route_path_pending_generation = -1
+        try:
+            wrapped = future.result()
+            path_message = wrapped.result.path
+            route_path = [
+                (float(pose.pose.position.x), float(pose.pose.position.y))
+                for pose in path_message.poses
+            ]
+        except Exception as exc:
+            self.get_logger().warning(
+                f"ComputePathToPose result failed: {exc}"
+            )
+            self._fail_route_path(generation, "compute_path_result_failed")
+            return
+        if len(route_path) < 2:
+            self._fail_route_path(generation, "compute_path_empty")
+            return
+
+        self._route_path = route_path
+        self._route_path_generation = generation
+        self._route_path_failed_generation = -1
+        self._route_path_length_m = sum(
+            math.hypot(end[0] - start[0], end[1] - start[1])
+            for start, end in zip(route_path, route_path[1:])
+        )
+        self._record_event("global_path", {
+            "goal_generation": int(generation),
+            "compute_path_success": True,
+            "pose_count": len(route_path),
+            "path_length_m": float(self._route_path_length_m),
+            "path": [list(point) for point in route_path],
+        })
+        self._publish_status(
+            f"nav2_global_path_ready poses={len(route_path)} "
+            f"length={self._route_path_length_m:.3f}"
+        )
+
+    def _fail_route_path(self, generation: int, reason: str) -> None:
+        if generation != self._goal_generation:
+            return
+        self._compute_path_goal_handle = None
+        self._route_path_pending_generation = -1
+        self._route_path_failed_generation = generation
+        self._record_event("global_path", {
+            "goal_generation": int(generation),
+            "compute_path_success": False,
+            "reason": str(reason),
+        })
+        self._handle_invalid_path(reason)
 
     def _sample_histories(self) -> None:
         if self._robot is not None:
@@ -588,6 +746,12 @@ class SpubertNav2BridgeNode(Node):
                 float(goal.pose.position.y),
             ],
             "guidance_point": list(result.guidance_point_world),
+            "guidance_policy": "nav2_global_path_lookahead",
+            "compute_path_success": (
+                self._route_path_generation == self._goal_generation
+            ),
+            "global_path_pose_count": len(self._route_path),
+            "global_path_length_m": float(self._route_path_length_m),
             "candidate_goals": [list(point) for point in result.candidate_goals_world],
             "selected_goal": list(result.selected_goal_world),
             "path": [list(point) for point in result.path_world],
@@ -669,6 +833,11 @@ class SpubertNav2BridgeNode(Node):
         self._cancel_action(self._follow_goal_handle)
         self._follow_goal_handle = None
         if self.fallback_to_nav2:
+            if not self._fallback_active:
+                self._record_event("fallback", {
+                    "goal_generation": int(self._goal_generation),
+                    "reason": str(reason),
+                })
             self._fallback_active = True
             self._activate_nav2(f"fallback reason={reason}")
 
@@ -946,8 +1115,33 @@ class SpubertNav2BridgeNode(Node):
         status.text = "SPU-BERT valid" if valid else f"rejected: {reason}"
         status.lifetime = Duration(sec=2)
 
+        global_path = Marker()
+        global_path.header.frame_id = "map"
+        global_path.header.stamp = stamp
+        global_path.ns = "robot_nav2_global_path"
+        global_path.id = 8
+        global_path.type = Marker.LINE_STRIP
+        global_path.action = Marker.ADD
+        global_path.pose.orientation.w = 1.0
+        global_path.scale.x = 0.05
+        global_path.color = ColorRGBA(r=0.0, g=0.65, b=0.95, a=0.8)
+        global_path.lifetime = Duration(sec=2)
+        global_path.points = [
+            Point(x=float(x), y=float(y), z=z - 0.05)
+            for x, y in self._route_path
+        ]
+
         markers.markers.extend(
-            [circle, goal_line, gp, final_goal, candidates, selected, status]
+            [
+                circle,
+                goal_line,
+                gp,
+                final_goal,
+                candidates,
+                selected,
+                status,
+                global_path,
+            ]
         )
         self._marker_pub.publish(markers)
 
@@ -1012,10 +1206,13 @@ class SpubertNav2BridgeNode(Node):
     def _cancel_active_navigation(self) -> None:
         self._cancel_action(self._follow_goal_handle)
         self._cancel_action(self._navigate_goal_handle)
+        self._cancel_action(self._compute_path_goal_handle)
         self._follow_goal_handle = None
         self._navigate_goal_handle = None
+        self._compute_path_goal_handle = None
         self._follow_goal_pending = False
         self._navigate_goal_pending = False
+        self._route_path_pending_generation = -1
 
     @staticmethod
     def _delete_all_marker(stamp) -> Marker:

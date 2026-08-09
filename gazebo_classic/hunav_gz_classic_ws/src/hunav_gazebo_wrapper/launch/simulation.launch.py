@@ -550,6 +550,7 @@ def generate_launch_description():
             {'path_topic': '/moai/spubert_robot_path'},
             {'marker_topic': '/moai/spubert_robot_path_markers'},
             {'status_topic': '/moai/spubert_robot_planner_status'},
+            {'compute_path_to_pose_action': '/compute_path_to_pose'},
             {'diagnostics_path': robot_spubert_diagnostics_path},
             {'model_repo_path': robot_spubert_repo_path},
             {'model_config_path': robot_spubert_config_path},
