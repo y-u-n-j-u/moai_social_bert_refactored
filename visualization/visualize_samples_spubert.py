@@ -96,6 +96,8 @@ def parse_args():
                         help="ext 데이터셋 사용 시 goal을 몇 step 더 멀리 줄지 (0=step12, 10=step22)")
     parser.add_argument("--goal_radius", type=float, default=10.0,
                         help="distance-based goal 선택 시 obs_end로부터의 반지름 (m)")
+    parser.add_argument("--goal_look_ahead", type=int, default=13,
+                        help="speed-adaptive goal: goal_dist = avg_speed * goal_look_ahead")
     return parser.parse_args()
 
 
@@ -134,6 +136,7 @@ def _build_dataset_args(args):
         traj_scale=args.traj_scale,
         goal_extra_frames=args.goal_extra_frames,
         goal_radius=args.goal_radius,
+        goal_look_ahead=args.goal_look_ahead,
     )
 
 

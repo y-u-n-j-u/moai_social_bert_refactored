@@ -32,6 +32,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         'subsample_stride': 3,
         'traj_scale': 1.0,
         'goal_extra_frames': 8,
+        'goal_look_ahead': 13,
     },
     'scene': {
         'enabled': False,
@@ -240,6 +241,7 @@ def _to_namespace(cfg: dict[str, Any], config_path: str, cli_dry_run: bool) -> a
         subsample_stride=data['subsample_stride'],
         traj_scale=data['traj_scale'],
         goal_extra_frames=data['goal_extra_frames'],
+        goal_look_ahead=data['goal_look_ahead'],
         scene=scene['enabled'],
         env_range=scene['env_range'],
         env_resol=scene['env_resol'],

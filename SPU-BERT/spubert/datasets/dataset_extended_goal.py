@@ -284,20 +284,52 @@ class moai_social_bertDataset(Dataset):
             tgt_obs_traj = trajs[0, :self.args.obs_len].copy()
             traj_lbl = tgt_pred_traj
 
-            # Extended goal: obs_end에서 goal_radius 이상 떨어진 궤적 위의 첫 번째 지점
-            # fallback: 가장 마지막 available step
+            # Extended goal: 속도 비례 거리 기반으로 실제 경로 위의 첫 번째 지점을 goal로 선택
+            # goal_dist = avg_obs_speed * goal_look_ahead  (각 보행자 속도에 비례)
+            # view_angle 제약: local 좌표계(+x = 전진방향) 기준 ±view_angle/2 이내만 허용
+            # FIRST point on path at >= goal_dist from obs_end AND in view cone → 올바른 방향
+            # fallback 1: view cone 내 최대 거리 지점
+            # fallback 2: view cone 무관 최대 거리 지점 (cone 안에 아무것도 없을 때)
             ext_goal_world = None
             if hasattr(self, 'all_extended_goals') and item < len(self.all_extended_goals):
                 goals_dict = self.all_extended_goals[item]
                 if isinstance(goals_dict, dict):
-                    goal_radius = getattr(self.args, 'goal_radius', 10.0)
                     obs_end_world = -trans  # trans = -obs_end_world (from transform_to_target)
                     available = sorted([(k, v) for k, v in goals_dict.items() if v is not None])
+
+                    # obs 궤적에서 평균 이동거리(m/step) 계산
+                    obs_traj = tgt_obs_traj  # (obs_len, 2), transformed 좌표 (거리 보존)
+                    obs_step_dists = np.linalg.norm(np.diff(obs_traj, axis=0), axis=1)  # (obs_len-1,)
+                    valid_dists = obs_step_dists[~np.isnan(obs_step_dists)]
+                    avg_speed = float(np.mean(valid_dists)) if len(valid_dists) > 0 else 0.5
+                    goal_look_ahead = float(getattr(self.args, 'goal_look_ahead', 13))
+                    goal_dist = avg_speed * goal_look_ahead  # 속도 비례 목표 거리
+
+                    # view_angle 제약: local 좌표계에서 전진방향(+x축) 기준 각도 체크
+                    # transform_to_target 후 forward = +x, 그 역변환으로 goal world → local 변환
+                    view_angle = float(getattr(self.args, 'view_angle', 2 * np.pi))
+                    ct = np.cos(rot)
+                    st = np.sin(rot)
+                    r_mat = np.array([[ct, st], [-st, ct]])
+
+                    def in_view_cone(world_pos):
+                        local_pos = (world_pos + trans).dot(r_mat.T)
+                        return np.abs(np.arctan2(local_pos[1], local_pos[0])) <= view_angle / 2
+
                     if available:
-                        # 반지름 이상 떨어진 첫 번째 step 선택
-                        ext_goal_world = available[-1][1]  # fallback: 마지막 step
-                        for _, goal_pos in available:
-                            if np.linalg.norm(goal_pos - obs_end_world) >= goal_radius:
+                        # view cone 안에 있는 후보만 추림
+                        in_cone = [(k, v) for k, v in available if in_view_cone(v)]
+                        # cone 안에 아무것도 없으면 전체 사용 (fallback 2)
+                        candidates = in_cone if in_cone else available
+
+                        # fallback 1: candidates 중 obs_end에서 가장 멀리 간 지점
+                        ext_goal_world = max(
+                            candidates,
+                            key=lambda kv: np.linalg.norm(kv[1] - obs_end_world)
+                        )[1]
+                        # goal_dist 이상 떨어진 첫 번째 step 선택 (루핑 경로 방지)
+                        for _, goal_pos in candidates:
+                            if np.linalg.norm(goal_pos - obs_end_world) >= goal_dist:
                                 ext_goal_world = goal_pos
                                 break
                 else:
