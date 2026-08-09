@@ -968,7 +968,9 @@ void HuNavPluginPrivate::UpdateGazeboPedestrians(const gazebo::common::UpdateInf
 {
   if (goalReceived == false)
   {
-    RCLCPP_INFO(rosnode->get_logger(), "HuNavPlugin. Waiting to receive the robot navigation goal...");
+    RCLCPP_INFO_THROTTLE(
+      rosnode->get_logger(), *rosnode->get_clock(), 5000,
+      "HuNavPlugin. Waiting to receive the robot navigation goal...");
     return;
   }
 

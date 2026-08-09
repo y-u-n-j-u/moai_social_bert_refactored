@@ -631,6 +631,7 @@ def generate_launch_description():
             {'robot_path_planner': robot_path_planner},
             {'agent_motion_model': agent_motion_model},
             {'pedestrians_avoid_robot': pedestrians_avoid_robot},
+            {'agents_wait_for_goal': ParameterValue(use_navgoal, value_type=bool)},
             {'collection_seed': ParameterValue(auto_goal_seed, value_type=int)},
             {'output_path': robot_training_pkl_path},
             {'obs_len': 8},
@@ -1273,7 +1274,11 @@ def generate_launch_description():
         description='Name of the global frame in which the position of the agents are provided'
     )
     declare_use_navgoal = DeclareLaunchArgument(
-        'use_navgoal_to_start', default_value='False',
+        'use_navgoal_to_start',
+        default_value=EnvironmentVariable(
+            'HUNAV_USE_NAVGOAL_TO_START',
+            default_value='False',
+        ),
         description='Whether to start the agents movements when a navigation goal is received or not'
     )
     declare_navgoal_topic = DeclareLaunchArgument(

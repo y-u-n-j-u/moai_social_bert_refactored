@@ -51,6 +51,9 @@ class JackalTeleopDatasetLoggerNode(Node):
         self.pedestrians_avoid_robot = self._as_bool(
             self.declare_parameter("pedestrians_avoid_robot", True).value
         )
+        self.agents_wait_for_goal = self._as_bool(
+            self.declare_parameter("agents_wait_for_goal", False).value
+        )
         self.collection_seed = int(
             self.declare_parameter("collection_seed", -1).value
         )
@@ -389,6 +392,7 @@ class JackalTeleopDatasetLoggerNode(Node):
             "robot_path_planner": self.robot_path_planner,
             "agent_motion_model": self.agent_motion_model,
             "pedestrians_avoid_robot": self.pedestrians_avoid_robot,
+            "agents_wait_for_goal": self.agents_wait_for_goal,
             "collection_seed": self.collection_seed,
             "final_goal": [float(final_goal[0]), float(final_goal[1])],
             "final_goal_source": final_goal_source,
@@ -476,6 +480,7 @@ class JackalTeleopDatasetLoggerNode(Node):
                 "robot_path_planner": self.robot_path_planner,
                 "agent_motion_model": self.agent_motion_model,
                 "pedestrians_avoid_robot": self.pedestrians_avoid_robot,
+                "agents_wait_for_goal": self.agents_wait_for_goal,
                 "collection_seed": self.collection_seed,
                 "require_goal": self.require_goal,
                 "goal_reached_tolerance": float(max(0.0, self.goal_reached_tolerance)),

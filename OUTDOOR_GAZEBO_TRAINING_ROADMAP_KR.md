@@ -45,7 +45,16 @@ Nav2는 전역적으로 갈 수 있는 방향과 저수준 제어를 담당하�
 
 첫 번째 데이터 수집 전체 흐름 smoke는 Dual Route Low에서 Nav2 expert로 1 goal을 완료했다. 원본 4개 window 중 새 품질 게이트를 통과한 것은 2개였고 route 계산 실패와 swept-footprint 충돌은 0이었다. 다만 최소 보행자 거리가 약 4.1 m여서 `clean_social` 샘플은 0개였다. 즉, 파일 생성과 route-GP 후처리 연결은 확인했지만 사회적 상호작용 데이터 품질은 아직 확인하지 못했다.
 
-아직 완료되지 않은 항목은 Intersection 계열의 근접 상호작용 smoke, 150-episode pilot 수집, 5,952개 원본 데이터 재가공, collision-loss ablation 학습, 보지 않은 맵의 반복 폐루프 평가, 실제 로봇 안전 계층 구현이다. 따라서 현재 상태는 **학습/수집 파이프라인 기반 구현 완료, 새 모델 학습과 야외 주행 검증 전**이다.
+Intersection Low에서는 수집 시작 동기화의 중요성이 확인됐다.
+
+| Intersection Low 1-goal | 원본 window | `clean_social` | 전체 최소 중심거리 | 판단 |
+| --- | ---: | ---: | ---: | --- |
+| 보행자 선행 시작 | 6 | 0 | 0.539 m | Nav2 준비 전에 보행자가 움직여 전부 부적합 |
+| 첫 goal과 보행자 시작 동기화 | 8 | 1 | 0.206 m | 1개는 1.223 m로 안전했지만 7개는 부적합 |
+
+동기화된 유효 sample은 route GP, swept-footprint, 속도, 가속도, yaw-rate, timing 검사를 모두 통과했다. 그러나 같은 episode에서 보행자가 정지한 로봇을 통과하며 물리 반경 합보다 가까워지는 구간이 생겼다. 따라서 `HUNAV_USE_NAVGOAL_TO_START=True`는 수집 기본 조건으로 사용하되, 현재 Intersection Low를 그대로 positive 데이터 대량 수집에 사용하면 안 된다. 충돌 구간은 hard-negative/evaluation으로 보존하고, positive 수집에는 안전거리를 지키는 teacher와 시나리오 배치가 필요하다.
+
+아직 완료되지 않은 항목은 collision-safe expert 재조정, 10-seed 근접 상호작용 재검증, 150-episode pilot 수집, 5,952개 원본 데이터 재가공, collision-loss ablation 학습, 보지 않은 맵의 반복 폐루프 평가, 실제 로봇 안전 계층 구현이다. 따라서 현재 상태는 **학습/수집 파이프라인 기반 구현 완료, 새 모델 학습과 야외 주행 검증 전**이다.
 
 ## 3. 현재 가장 큰 문제
 
@@ -56,6 +65,7 @@ Nav2는 전역적으로 갈 수 있는 방향과 저수준 제어를 담당하�
 5. ADE/FDE/GDE만 낮은 모델은 장애물 충돌률과 폐루프 주행 성공률이 나쁠 수 있다.
 6. Gazebo ground truth만 학습하면 localization 오차, 센서 dropout, 지연, 노면 차이를 배우지 못한다.
 7. 이전 SPU-BERT 평가는 one-way coupling, 최근 Nav2 expert pilot은 reciprocal coupling이었다. 두 데이터를 구분하지 않고 합치면 의미가 달라지므로 coupling policy를 manifest에 기록하고 두 조건을 모두 포함해야 한다.
+8. Nav2가 목표에 도달해도 보행자가 로봇 반경 안으로 들어온 window가 존재한다. 목표 성공만으로 expert label을 승인하지 말고 동기화된 거리 검사를 반드시 통과시켜야 한다.
 
 ## 4. 데이터 수집 원칙
 
@@ -66,6 +76,8 @@ Nav2는 전역적으로 갈 수 있는 방향과 저수준 제어를 담당하�
 - 현재 SPU-BERT가 만든 실패 경로를 다시 positive label로 학습시키지 않는다.
 - timeout, 충돌, stuck episode는 별도 hard-negative/evaluation 파일로 보관한다.
 - 목표에 도달한 episode의 window만 학습 파일에 commit한다.
+- 보행자는 Nav2 준비 후 첫 goal과 동시에 시작하고 이 정책을 manifest에 기록한다.
+- episode가 성공해도 안전거리 위반 window는 positive에서 제외해 hard-negative/evaluation으로 분리한다.
 
 ### 4.2 시나리오 축
 
@@ -169,10 +181,12 @@ ADE가 조금 낮다는 이유만으로 모델을 선택하지 않는다. 안전
 
 1. 연구실 또는 백업에서 기존 5,952개를 만든 raw/processed PKL과 수집 manifest를 가져온다.
 2. 새 route GP 후처리를 실행하고 `basic_failure_reasons`를 확인한다.
-3. 150-episode pilot을 새 stride와 metadata로 수집한다.
-4. old 5,952 route 재가공 데이터와 새 pilot을 recording 단위로 합친다.
-5. episode-safe + held-out-map split을 만든다.
-6. collision ablation 3개를 학습한다.
-7. Dual Route Low/Medium/High와 보지 않은 맵에서 3-seed closed-loop 평가를 실행한다.
+3. 보행자 시작 동기화를 켜고 collision-safe Nav2 teacher와 시나리오 간격을 조정한다.
+4. Intersection/교차/정면 통과를 각 10 seed로 시험해 중심거리 1.2 m 미만 positive가 0인지 확인한다.
+5. 기준을 통과한 설정만 사용해 150-episode pilot을 새 stride와 metadata로 수집한다.
+6. old 5,952 route 재가공 데이터와 새 pilot을 recording 단위로 합친다.
+7. episode-safe + held-out-map split을 만든다.
+8. collision ablation 3개를 학습한다.
+9. Dual Route Low/Medium/High와 보지 않은 맵에서 3-seed closed-loop 평가를 실행한다.
 
 원본 PKL을 확보하기 전에는 새 모델 학습을 시작하지 않는다. 지금 저장소에 있는 checkpoint는 보존하고, 데이터와 config와 output 이름을 새 버전으로 분리한다.
