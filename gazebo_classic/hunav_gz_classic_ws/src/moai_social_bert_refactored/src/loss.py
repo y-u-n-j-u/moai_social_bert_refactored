@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 
 class ADELoss(nn.Module):
@@ -58,36 +59,65 @@ def cal_idx_from_pos(pos, min_pos, max_idx, res):
     return pos, valid
 
 
+def _differentiable_collision_loss(pred_positions, envs, envs_params):
+    """Sample map risk continuously so collision loss reaches predictions."""
+    if pred_positions.ndim < 3 or pred_positions.shape[-1] < 2:
+        raise ValueError(
+            f"pred_positions must have shape [B, ..., 2], got {pred_positions.shape}"
+        )
+    batch_size = pred_positions.shape[0]
+    points = pred_positions[..., :2].reshape(batch_size, -1, 2)
+    maps = envs.to(device=points.device, dtype=points.dtype)
+    params = envs_params.to(device=points.device, dtype=points.dtype)
+    if maps.ndim != 3 or maps.shape[0] != batch_size:
+        raise ValueError(f"envs must have shape [B, H, W], got {maps.shape}")
+
+    min_x = params[:, 0:1]
+    min_y = params[:, 1:2]
+    width_m = params[:, 2:3] * params[:, 4:5]
+    height_m = params[:, 3:4] * params[:, 4:5]
+    x_normalized = 2.0 * (points[..., 0] - min_x) / width_m.clamp_min(1e-6) - 1.0
+    y_normalized = 2.0 * (points[..., 1] - min_y) / height_m.clamp_min(1e-6) - 1.0
+    sample_grid = torch.stack((x_normalized, y_normalized), dim=-1).unsqueeze(2)
+
+    # Dataset maps use 0=unknown, 1=free, and >=threshold=occupied. Convert
+    # both unknown and occupied space to risk 1 while preserving continuous
+    # interpolation across cell boundaries.
+    occupied_threshold = params[:, 5].reshape(batch_size, 1, 1)
+    unknown_risk = torch.relu(1.0 - maps)
+    occupied_risk = torch.relu(maps - 1.0) / (occupied_threshold - 1.0).clamp_min(1e-6)
+    risk_maps = torch.maximum(unknown_risk, occupied_risk).clamp(0.0, 1.0)
+    sampled_risk = F.grid_sample(
+        risk_maps.unsqueeze(1),
+        sample_grid,
+        mode="bilinear",
+        padding_mode="border",
+        align_corners=False,
+    ).squeeze(1).squeeze(-1)
+    outside = (
+        (x_normalized < -1.0)
+        | (x_normalized >= 1.0)
+        | (y_normalized < -1.0)
+        | (y_normalized >= 1.0)
+    ).to(sampled_risk.dtype)
+    outside_distance = (
+        F.relu(-1.0 - x_normalized)
+        + F.relu(x_normalized - 1.0)
+        + F.relu(-1.0 - y_normalized)
+        + F.relu(y_normalized - 1.0)
+    )
+    # Keep the legacy unit penalty for any out-of-map point, then increase it
+    # with normalized distance so gradient descent has a direction back in-map.
+    outside_risk = outside + outside_distance
+    return torch.maximum(sampled_risk, outside_risk).mean()
+
+
 def goal_collision_loss(pred_goals, envs, envs_params):
-    num_goal = 0
-    num_col_goal = torch.zeros((), dtype=torch.double, device=pred_goals.device)
-    for bidx, bgoal in enumerate(pred_goals):
-        num_goal += bgoal.size(dim=0)
-        bgoal = bgoal.reshape(-1, 2)
-        x_ids, x_valid = cal_idx_from_pos(bgoal[:, 0], envs_params[bidx][0], envs_params[bidx][2], envs_params[bidx][4])
-        y_ids, y_valid = cal_idx_from_pos(bgoal[:, 1], envs_params[bidx][1], envs_params[bidx][3], envs_params[bidx][4])
-        valid = (x_valid & y_valid).to(pred_goals.device)
-        num_col_goal += torch.sum(~valid).double()
-        vals = envs[bidx][y_ids[valid], x_ids[valid]]
-        unsafe = (vals <= 0) | (vals >= envs_params[bidx][5])
-        num_col_goal += torch.sum(unsafe).double()
-    return torch.div(num_col_goal, max(num_goal, 1))
+    return _differentiable_collision_loss(pred_goals, envs, envs_params)
 
 
 def pos_collision_loss(pred_trajs, envs, envs_params):
-    num_pos = 0
-    num_col_pos = torch.zeros((), dtype=torch.double, device=pred_trajs.device)
-    for bidx, btraj in enumerate(pred_trajs):
-        btraj = btraj.reshape(-1, 2)
-        num_pos += btraj.size(dim=0)
-        x_ids, x_valid = cal_idx_from_pos(btraj[:, 0], envs_params[bidx][0], envs_params[bidx][2], envs_params[bidx][4])
-        y_ids, y_valid = cal_idx_from_pos(btraj[:, 1], envs_params[bidx][1], envs_params[bidx][3], envs_params[bidx][4])
-        valid = (x_valid & y_valid).to(pred_trajs.device)
-        num_col_pos += torch.sum(~valid).double()
-        vals = envs[bidx][y_ids[valid], x_ids[valid]]
-        unsafe = (vals <= 0) | (vals >= envs_params[bidx][5])
-        num_col_pos += torch.sum(unsafe).double()
-    return torch.div(num_col_pos, max(num_pos, 1))
+    return _differentiable_collision_loss(pred_trajs, envs, envs_params)
 
 
 def bom_loss_3(pred_goals, pred_trajs, gt_goals, gt_trajs, k_sample, output_dim=2):

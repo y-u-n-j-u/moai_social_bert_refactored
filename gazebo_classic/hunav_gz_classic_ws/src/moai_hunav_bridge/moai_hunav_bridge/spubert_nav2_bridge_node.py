@@ -34,6 +34,16 @@ class SpubertNav2BridgeNode(Node):
     """Connect an RViz goal and guided SPU-BERT path to the Nav2 controller."""
 
     VALID_MODES = {"nav2", "monitor", "spubert"}
+    RETRYABLE_PATH_REJECTIONS = {
+        "no_map_safe_goal",
+        "model_map_check_failed",
+        "invalid_path_length",
+        "nonfinite_path",
+        "robot_footprint_collision",
+        "kinematic_jump",
+        "insufficient_goal_progress",
+        "predicted_human_clearance",
+    }
 
     def __init__(self) -> None:
         super().__init__("spubert_nav2_bridge")
@@ -117,6 +127,10 @@ class SpubertNav2BridgeNode(Node):
         )
         self.use_cuda = self._as_bool(self.declare_parameter("use_cuda", True).value)
         self.d_sample = int(self.declare_parameter("d_sample", 40).value)
+        self.tgp_top_k = max(
+            int(self.declare_parameter("tgp_top_k", 5).value),
+            1,
+        )
         self.guidance_radius = float(
             self.declare_parameter("guidance_radius", 8.0).value
         )
@@ -155,6 +169,10 @@ class SpubertNav2BridgeNode(Node):
         self.fallback_to_nav2 = self._as_bool(
             self.declare_parameter("fallback_to_nav2", True).value
         )
+        self.rejection_streak_limit = max(
+            int(self.declare_parameter("rejection_streak_limit", 3).value),
+            1,
+        )
 
         self._robot: Optional[Agent] = None
         self._humans: Dict[int, Agent] = {}
@@ -164,6 +182,8 @@ class SpubertNav2BridgeNode(Node):
         self._goal: Optional[PoseStamped] = None
         self._goal_generation = 0
         self._fallback_active = False
+        self._guided_hold_active = False
+        self._consecutive_rejections = 0
         self._last_follow_send = -math.inf
         self._follow_goal_handle = None
         self._navigate_goal_handle = None
@@ -238,6 +258,24 @@ class SpubertNav2BridgeNode(Node):
         )
 
         self._initialize_runtime()
+        self._record_event("runtime_config", {
+            "model_loaded": self._runtime is not None,
+            "model_repo_path": self.model_repo_path,
+            "model_config_path": self.model_config_path,
+            "model_checkpoint_path": self.model_checkpoint_path,
+            "map_yaml_path": self.map_yaml_path,
+            "use_cuda": bool(self.use_cuda),
+            "d_sample": int(self.d_sample),
+            "tgp_top_k": int(self.tgp_top_k),
+            "guidance_radius_m": float(self.guidance_radius),
+            "replan_period_s": float(self.replan_period),
+            "rejection_streak_limit": int(self.rejection_streak_limit),
+            "robot_radius_m": float(self.robot_radius),
+            "static_safety_margin_m": float(self.static_safety_margin),
+            "min_human_center_distance_m": float(
+                self.min_human_center_distance
+            ),
+        })
         self._publish_status(
             f"ready mode={self.execution_mode} model_loaded={self._runtime is not None}"
         )
@@ -270,6 +308,7 @@ class SpubertNav2BridgeNode(Node):
                 use_cuda=self.use_cuda,
                 d_sample=self.d_sample,
                 guidance_radius=self.guidance_radius,
+                tgp_top_k=self.tgp_top_k,
                 logger=self.get_logger(),
             )
             if self._runtime.obs_len != self.obs_len:
@@ -296,6 +335,8 @@ class SpubertNav2BridgeNode(Node):
         self._goal_generation += 1
         self._goal = msg
         self._fallback_active = False
+        self._guided_hold_active = False
+        self._consecutive_rejections = 0
         self._last_follow_send = -math.inf
         self._cancel_action(self._follow_goal_handle)
         self._cancel_action(self._navigate_goal_handle)
@@ -402,7 +443,7 @@ class SpubertNav2BridgeNode(Node):
             return
 
         try:
-            result = self._runtime.predict(
+            candidate_results = self._runtime.predict_candidates(
                 robot_history=list(self._robot_history),
                 robot_yaw=float(robot.yaw),
                 human_histories={
@@ -412,24 +453,68 @@ class SpubertNav2BridgeNode(Node):
                 final_goal=final_goal,
                 guidance_point_world=route_guidance,
             )
+            if not candidate_results:
+                raise RuntimeError("guided inference returned no candidate trajectories")
         except Exception as exc:
             self.get_logger().error(f"Guided robot inference failed: {exc}")
             self._record_event("inference_error", {"error": str(exc)})
             self._handle_invalid_path("inference_error")
             return
 
-        diagnostics = self._path_diagnostics(result)
-        valid, reason = self._validate_result(result, diagnostics)
-        self._record_diagnostic(result, valid, reason, diagnostics)
+        candidate_attempts = []
+        selected = None
+        for candidate_result in candidate_results:
+            candidate_diagnostics = self._path_diagnostics(candidate_result)
+            candidate_valid, candidate_reason = self._validate_result(
+                candidate_result,
+                candidate_diagnostics,
+            )
+            candidate_attempts.append({
+                "rank": int(candidate_result.candidate_rank),
+                "candidate_index": int(candidate_result.candidate_index),
+                "guidance_distance_m": float(
+                    candidate_result.guidance_distance_m
+                ),
+                "selected_goal": list(candidate_result.selected_goal_world),
+                "valid": bool(candidate_valid),
+                "reason": str(candidate_reason),
+                "metrics": candidate_diagnostics,
+            })
+            if candidate_valid and selected is None:
+                selected = (
+                    candidate_result,
+                    candidate_diagnostics,
+                    candidate_reason,
+                )
+
+        if selected is None:
+            result = candidate_results[0]
+            diagnostics = candidate_attempts[0]["metrics"]
+            valid = False
+            reason = str(candidate_attempts[0]["reason"])
+        else:
+            result, diagnostics, reason = selected
+            valid = True
+
+        self._record_diagnostic(
+            result,
+            valid,
+            reason,
+            diagnostics,
+            candidate_attempts,
+        )
         self._publish_debug(result, valid=valid, reason=reason)
         if not valid:
             self._handle_invalid_path(reason)
             return
 
+        self._guided_hold_active = False
+        self._consecutive_rejections = 0
         path_msg = self._path_message(result.path_world)
         self._path_pub.publish(path_msg)
         self._publish_status(
-            f"guided_path_valid min_human={self._minimum_human_distance(result.path_world):.3f}"
+            f"guided_path_valid rank={result.candidate_rank}/{len(candidate_results)} "
+            f"min_human={self._minimum_human_distance(result.path_world):.3f}"
         )
         if self.execution_mode == "monitor":
             return
@@ -701,6 +786,7 @@ class SpubertNav2BridgeNode(Node):
         valid: bool,
         reason: str,
         diagnostics: Dict[str, Any],
+        candidate_attempts: Sequence[Dict[str, Any]],
     ) -> None:
         robot = self._robot
         goal = self._goal
@@ -753,6 +839,13 @@ class SpubertNav2BridgeNode(Node):
             "global_path_pose_count": len(self._route_path),
             "global_path_length_m": float(self._route_path_length_m),
             "candidate_goals": [list(point) for point in result.candidate_goals_world],
+            "tgp_top_k": int(self.tgp_top_k),
+            "rejection_streak_before": int(self._consecutive_rejections),
+            "rejection_streak_limit": int(self.rejection_streak_limit),
+            "attempted_candidate_count": len(candidate_attempts),
+            "selected_candidate_rank": int(result.candidate_rank),
+            "selected_candidate_index": int(result.candidate_index),
+            "candidate_attempts": list(candidate_attempts),
             "selected_goal": list(result.selected_goal_world),
             "path": [list(point) for point in result.path_world],
             "humans": humans,
@@ -832,11 +925,34 @@ class SpubertNav2BridgeNode(Node):
             return
         self._cancel_action(self._follow_goal_handle)
         self._follow_goal_handle = None
+        self._last_follow_send = -math.inf
+
+        if reason in self.RETRYABLE_PATH_REJECTIONS:
+            self._consecutive_rejections += 1
+            if self._consecutive_rejections < self.rejection_streak_limit:
+                self._guided_hold_active = True
+                self._record_event("guided_hold", {
+                    "goal_generation": int(self._goal_generation),
+                    "reason": str(reason),
+                    "rejection_streak": int(self._consecutive_rejections),
+                    "rejection_streak_limit": int(self.rejection_streak_limit),
+                })
+                self._publish_status(
+                    "guided_path_hold "
+                    f"reason={reason} retry={self._consecutive_rejections}/"
+                    f"{self.rejection_streak_limit}"
+                )
+                return
+        else:
+            self._consecutive_rejections = 0
+
+        self._guided_hold_active = False
         if self.fallback_to_nav2:
             if not self._fallback_active:
                 self._record_event("fallback", {
                     "goal_generation": int(self._goal_generation),
                     "reason": str(reason),
+                    "rejection_streak": int(self._consecutive_rejections),
                 })
             self._fallback_active = True
             self._activate_nav2(f"fallback reason={reason}")
@@ -943,6 +1059,9 @@ class SpubertNav2BridgeNode(Node):
         if not handle.accepted:
             self.get_logger().error("FollowPath goal was rejected")
             self._handle_invalid_path("follow_path_rejected")
+            return
+        if self._guided_hold_active or self._fallback_active:
+            self._cancel_action(handle)
             return
         self._follow_goal_handle = handle
 

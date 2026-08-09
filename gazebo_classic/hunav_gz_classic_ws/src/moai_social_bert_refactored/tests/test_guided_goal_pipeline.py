@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.loss import goal_collision_loss
+from src.loss import goal_collision_loss, pos_collision_loss
 from src.model import GoalPooler
 from src.utils import bootstrap_paths
 
@@ -52,6 +52,22 @@ class _MovingTGP(torch.nn.Module):
                 device=spatial_ids.device,
                 dtype=spatial_ids.dtype,
             ),
+            "attentions": None,
+        }
+
+
+class _GoalAwareTGP(torch.nn.Module):
+    def inference(self, spatial_ids, **kwargs):
+        goals = spatial_ids[:, 21, :2]
+        paths = goals.unsqueeze(1).repeat(1, 12, 1)
+        unsafe = goals[:, 0] > 0
+        paths[unsafe, 0] = torch.tensor(
+            [0.5, 0.5],
+            device=spatial_ids.device,
+            dtype=spatial_ids.dtype,
+        )
+        return {
+            "pred_trajs": paths,
             "attentions": None,
         }
 
@@ -240,6 +256,59 @@ class GuidedMapContractTest(unittest.TestCase):
         )
         self.assertFalse(bool(classification["point_safe_mask"].all(dim=1)[0]))
 
+    def test_guided_top_k_keeps_second_trajectory_when_first_is_unsafe(self):
+        model = SBertPlusFTModel.__new__(SBertPlusFTModel)
+        torch.nn.Module.__init__(model)
+        model.cfgs = SimpleNamespace(
+            guidance_conditioned=True,
+            obs_len=8,
+            pred_len=12,
+            goal_dim=2,
+            view_range=20.0,
+        )
+        model.mgp_model = _FixedMGP(
+            torch.tensor([[[1.5, 0.5], [-1.5, 0.5], [-2.5, -2.5]]])
+        )
+        model.tgp_model = _GoalAwareTGP()
+
+        trajectory_tokens = torch.zeros(1, 58, 2)
+        token_ids = torch.zeros(1, 58, dtype=torch.long)
+        map_tokens = torch.zeros(1, 4, 256)
+        map_ids = torch.zeros(1, 4, dtype=torch.long)
+        env = torch.ones(1, 6, 6)
+        env[0, 3, 3] = 2.0
+        result = model.inference_guided_candidates(
+            mgp_spatial_ids=trajectory_tokens,
+            mgp_temporal_ids=token_ids,
+            mgp_segment_ids=token_ids,
+            mgp_attn_mask=token_ids,
+            tgp_temporal_ids=token_ids,
+            tgp_segment_ids=token_ids,
+            tgp_attn_mask=token_ids,
+            guidance_points=torch.tensor([[1.4, 0.5]]),
+            env_spatial_ids=map_tokens,
+            env_temporal_ids=map_ids,
+            env_segment_ids=map_ids,
+            env_attn_mask=map_ids,
+            envs=env,
+            envs_params=torch.tensor([[-3.0, -3.0, 6.0, 6.0, 1.0, 2.0]]),
+            top_k=2,
+        )
+
+        self.assertEqual(
+            result["guided_candidate_indices"][0].tolist(),
+            [0, 1],
+        )
+        self.assertEqual(tuple(result["guided_pred_trajs"].shape), (1, 2, 12, 2))
+        self.assertEqual(
+            result["guided_trajectory_map_safe"][0].tolist(),
+            [False, True],
+        )
+        self.assertEqual(
+            result["guided_execution_valid"][0].tolist(),
+            [False, True],
+        )
+
     def test_guided_inference_stops_when_tgp_path_is_unsafe(self):
         model = SBertPlusFTModel.__new__(SBertPlusFTModel)
         torch.nn.Module.__init__(model)
@@ -280,7 +349,7 @@ class GuidedMapContractTest(unittest.TestCase):
         self.assertFalse(bool(result["execution_valid"][0]))
         torch.testing.assert_close(result["pred_trajs"], torch.zeros(1, 12, 2))
 
-    def test_collision_metric_counts_unknown_occupied_and_out_of_bounds(self):
+    def test_collision_loss_penalizes_unknown_occupied_and_out_of_bounds(self):
         env = torch.ones(1, 4, 4)
         env[0, 2, 2] = 2.0
         env[0, 2, 1] = 0.0
@@ -289,7 +358,45 @@ class GuidedMapContractTest(unittest.TestCase):
             [[[1.5, 0.5], [0.5, 0.5], [-0.5, 0.5], [2.5, 0.5]]]
         )
         collision_rate = goal_collision_loss(candidates, env, params)
-        self.assertAlmostEqual(float(collision_rate), 0.75)
+        self.assertAlmostEqual(float(collision_rate), 0.8125)
+
+    def test_collision_loss_pushes_out_of_bounds_goal_toward_map(self):
+        env = torch.ones(1, 4, 4)
+        params = torch.tensor([[-2.0, -2.0, 4.0, 4.0, 1.0, 2.0]])
+        candidate = torch.tensor([[[2.5, 0.5]]], requires_grad=True)
+
+        loss = goal_collision_loss(candidate, env, params)
+        loss.backward()
+
+        self.assertIsNotNone(candidate.grad)
+        self.assertGreater(float(candidate.grad[0, 0, 0]), 0.0)
+
+    def test_collision_loss_backpropagates_away_from_occupied_cell(self):
+        env = torch.ones(1, 4, 4)
+        env[0, 2, 2] = 2.0
+        params = torch.tensor([[-2.0, -2.0, 4.0, 4.0, 1.0, 2.0]])
+        candidate = torch.tensor([[[1.0, 0.5]]], requires_grad=True)
+
+        loss = goal_collision_loss(candidate, env, params)
+        loss.backward()
+
+        self.assertGreater(float(loss), 0.0)
+        self.assertIsNotNone(candidate.grad)
+        self.assertLess(float(candidate.grad[0, 0, 0]), 0.0)
+
+    def test_trajectory_collision_loss_has_prediction_gradient(self):
+        env = torch.ones(1, 4, 4)
+        env[0, 2, 2] = 2.0
+        params = torch.tensor([[-2.0, -2.0, 4.0, 4.0, 1.0, 2.0]])
+        trajectory = torch.tensor(
+            [[[[1.0, 0.5], [1.5, 0.5]]]],
+            requires_grad=True,
+        )
+
+        loss = pos_collision_loss(trajectory, env, params)
+        loss.backward()
+
+        self.assertGreater(float(trajectory.grad.abs().sum()), 0.0)
 
 
 if __name__ == "__main__":

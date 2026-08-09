@@ -106,6 +106,10 @@ def generate_launch_description():
     robot_spubert_checkpoint_path = LaunchConfiguration('robot_spubert_checkpoint_path')
     robot_spubert_cuda = LaunchConfiguration('robot_spubert_cuda')
     robot_spubert_d_sample = LaunchConfiguration('robot_spubert_d_sample')
+    robot_spubert_tgp_top_k = LaunchConfiguration('robot_spubert_tgp_top_k')
+    robot_spubert_rejection_streak_limit = LaunchConfiguration(
+        'robot_spubert_rejection_streak_limit'
+    )
     robot_spubert_replan_period = LaunchConfiguration('robot_spubert_replan_period')
     robot_spubert_fallback_to_nav2 = LaunchConfiguration('robot_spubert_fallback_to_nav2')
     robot_spubert_diagnostics_path = LaunchConfiguration('robot_spubert_diagnostics_path')
@@ -346,6 +350,11 @@ def generate_launch_description():
             'use_rviz': use_rviz,
             'advanced_navigation': 'False',
             'slam': 'False',
+            'nav2_goal_topic': PythonExpression([
+                "'/moai/nav2_fallback_goal' if '",
+                robot_path_planner,
+                "' == 'spubert' else '/goal_pose'",
+            ]),
         }.items(),
         condition=IfCondition(PythonExpression(["'", robot_type, "' == 'pmb2'"]))
     )
@@ -558,6 +567,8 @@ def generate_launch_description():
             {'map_yaml_path': spubert_map_yaml_path},
             {'use_cuda': robot_spubert_cuda},
             {'d_sample': robot_spubert_d_sample},
+            {'tgp_top_k': robot_spubert_tgp_top_k},
+            {'rejection_streak_limit': robot_spubert_rejection_streak_limit},
             {'guidance_radius': spubert_guidance_point_radius},
             {'obs_len': 8},
             {'pred_len': 12},
@@ -614,18 +625,26 @@ def generate_launch_description():
             {'robot_topic': '/robot_states'},
             {'human_states_topic': '/human_states'},
             {'goal_topic': '/goal_pose'},
+            {'global_path_topic': '/plan'},
+            {'scenario_name': LaunchConfiguration('configuration_file')},
+            {'map_yaml_path': spubert_map_yaml_path},
+            {'robot_path_planner': robot_path_planner},
+            {'agent_motion_model': agent_motion_model},
+            {'pedestrians_avoid_robot': pedestrians_avoid_robot},
+            {'collection_seed': ParameterValue(auto_goal_seed, value_type=int)},
             {'output_path': robot_training_pkl_path},
             {'obs_len': 8},
             {'pred_len': 12},
             {'record_dt': robot_training_record_dt},
             {'guidance_point_radius': spubert_guidance_point_radius},
+            {'global_path_goal_tolerance': 1.0},
             {'goal_reached_tolerance': 0.6},
             {'episode_timeout': ParameterValue(auto_goal_timeout, value_type=float)},
             {'require_goal': True},
             {'sample_stride': robot_training_sample_stride},
             {'flush_every': robot_training_flush_every},
             {'max_samples': robot_training_max_samples},
-            {'stale_timeout': 2.0},
+            {'stale_timeout': 0.5},
         ],
         condition=IfCondition(PythonExpression([
             "'", robot_save_training_pkl, "' == 'True' and '", robot_type,
@@ -1126,6 +1145,19 @@ def generate_launch_description():
         default_value=EnvironmentVariable('HUNAV_ROBOT_SPUBERT_D_SAMPLE', default_value='40'),
         description='MGP latent samples used for each online PMB2 replan.'
     )
+    declare_robot_spubert_tgp_top_k = DeclareLaunchArgument(
+        'robot_spubert_tgp_top_k',
+        default_value=EnvironmentVariable('HUNAV_ROBOT_SPUBERT_TGP_TOP_K', default_value='5'),
+        description='Closest map-safe MGP goals that receive TGP safety evaluation.'
+    )
+    declare_robot_spubert_rejection_streak_limit = DeclareLaunchArgument(
+        'robot_spubert_rejection_streak_limit',
+        default_value=EnvironmentVariable(
+            'HUNAV_ROBOT_SPUBERT_REJECTION_STREAK_LIMIT',
+            default_value='3',
+        ),
+        description='Consecutive unsafe replans required before permanent Nav2 fallback.'
+    )
     declare_robot_spubert_replan_period = DeclareLaunchArgument(
         'robot_spubert_replan_period',
         default_value=EnvironmentVariable('HUNAV_ROBOT_SPUBERT_REPLAN_PERIOD', default_value='0.8'),
@@ -1163,8 +1195,8 @@ def generate_launch_description():
     )
     declare_robot_training_sample_stride = DeclareLaunchArgument(
         'robot_training_sample_stride',
-        default_value=EnvironmentVariable('HUNAV_ROBOT_TRAINING_SAMPLE_STRIDE', default_value='1'),
-        description='Sliding-window stride in recorded frames.'
+        default_value=EnvironmentVariable('HUNAV_ROBOT_TRAINING_SAMPLE_STRIDE', default_value='4'),
+        description='Sliding-window stride in recorded frames; 4 limits near-duplicate windows.'
     )
     declare_robot_training_flush_every = DeclareLaunchArgument(
         'robot_training_flush_every',
@@ -1381,6 +1413,8 @@ def generate_launch_description():
     ld.add_action(declare_robot_spubert_checkpoint_path)
     ld.add_action(declare_robot_spubert_cuda)
     ld.add_action(declare_robot_spubert_d_sample)
+    ld.add_action(declare_robot_spubert_tgp_top_k)
+    ld.add_action(declare_robot_spubert_rejection_streak_limit)
     ld.add_action(declare_robot_spubert_replan_period)
     ld.add_action(declare_robot_spubert_fallback_to_nav2)
     ld.add_action(declare_robot_spubert_diagnostics_path)

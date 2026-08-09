@@ -27,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_predictions(path: Path) -> List[Dict[str, Any]]:
+def load_records(path: Path) -> List[Dict[str, Any]]:
     records = []
     with path.open("r", encoding="utf-8") as stream:
         for line_number, line in enumerate(stream, 1):
@@ -37,11 +37,10 @@ def load_predictions(path: Path) -> List[Dict[str, Any]]:
                 record = json.loads(line)
             except json.JSONDecodeError as exc:
                 raise RuntimeError(f"Invalid JSON at {path}:{line_number}: {exc}") from exc
-            if record.get("event") == "prediction":
-                record["_line_number"] = line_number
-                records.append(record)
+            record["_line_number"] = line_number
+            records.append(record)
     if not records:
-        raise RuntimeError(f"No prediction records found in {path}")
+        raise RuntimeError(f"No diagnostic records found in {path}")
     return records
 
 
@@ -62,11 +61,32 @@ def stats(values: Iterable[Optional[float]]) -> Dict[str, Optional[float]]:
     }
 
 
-def build_summary(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+def build_summary(
+    records: List[Dict[str, Any]],
+    events: List[Dict[str, Any]],
+) -> Dict[str, Any]:
     reasons = Counter(str(record.get("reason", "unknown")) for record in records)
     valid = int(reasons.get("valid", 0))
     total = len(records)
-    return {
+    global_paths = [
+        event
+        for event in events
+        if event.get("event") == "global_path"
+        and bool(event.get("compute_path_success"))
+    ]
+    fallbacks = [event for event in events if event.get("event") == "fallback"]
+    holds = [event for event in events if event.get("event") == "guided_hold"]
+    goal_generations = {
+        int(event["goal_generation"])
+        for event in global_paths
+        if event.get("goal_generation") is not None
+    }
+    fallback_generations = {
+        int(event["goal_generation"])
+        for event in fallbacks
+        if event.get("goal_generation") is not None
+    }
+    summary = {
         "total_predictions": total,
         "valid_predictions": valid,
         "rejected_predictions": total - valid,
@@ -82,7 +102,80 @@ def build_summary(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         "footprint_collision_count": stats(
             record.get("metrics", {}).get("footprint_collision_count") for record in records
         ),
+        "goal_count": len(goal_generations),
+        "fallback_goal_count": len(fallback_generations),
+        "model_only_goal_count": len(goal_generations - fallback_generations),
+        "fallback_goal_rate": (
+            len(fallback_generations) / len(goal_generations)
+            if goal_generations
+            else None
+        ),
+        "fallback_reason_counts": dict(sorted(Counter(
+            str(event.get("reason", "unknown")) for event in fallbacks
+        ).items())),
+        "hold_event_count": len(holds),
+        "hold_reason_counts": dict(sorted(Counter(
+            str(event.get("reason", "unknown")) for event in holds
+        ).items())),
+        "max_hold_rejection_streak": max(
+            (int(event.get("rejection_streak", 0)) for event in holds),
+            default=0,
+        ),
+        "recovered_after_hold_predictions": sum(
+            bool(record.get("valid"))
+            and int(record.get("rejection_streak_before", 0)) > 0
+            for record in records
+        ),
     }
+
+    top_k_records = [
+        record
+        for record in records
+        if isinstance(record.get("candidate_attempts"), list)
+        and record["candidate_attempts"]
+    ]
+    if top_k_records:
+        rank_one_valid = sum(
+            bool(record["candidate_attempts"][0].get("valid"))
+            for record in top_k_records
+        )
+        rescued = [
+            record
+            for record in top_k_records
+            if bool(record.get("valid"))
+            and not bool(record["candidate_attempts"][0].get("valid"))
+        ]
+        selected_ranks = Counter(
+            int(record.get("selected_candidate_rank", 1))
+            for record in top_k_records
+            if bool(record.get("valid"))
+        )
+        attempt_reasons = Counter(
+            str(attempt.get("reason", "unknown"))
+            for record in top_k_records
+            for attempt in record["candidate_attempts"]
+        )
+        summary["top_k_selection"] = {
+            "records": len(top_k_records),
+            "configured_top_k": int(top_k_records[0].get("tgp_top_k", 1)),
+            "rank_one_valid_predictions": rank_one_valid,
+            "rank_one_valid_rate": rank_one_valid / len(top_k_records),
+            "top_k_valid_predictions": sum(
+                bool(record.get("valid")) for record in top_k_records
+            ),
+            "top_k_valid_rate": sum(
+                bool(record.get("valid")) for record in top_k_records
+            ) / len(top_k_records),
+            "rescued_predictions": len(rescued),
+            "selected_rank_counts": {
+                str(rank): count for rank, count in sorted(selected_ranks.items())
+            },
+            "attempt_count": stats(
+                record.get("attempted_candidate_count") for record in top_k_records
+            ),
+            "attempt_reason_counts": dict(sorted(attempt_reasons.items())),
+        }
+    return summary
 
 
 def resolve_map_yaml(
@@ -285,8 +378,11 @@ def main() -> None:
         else diagnostics.with_suffix("").with_name(diagnostics.stem + "_analysis")
     )
     output_dir.mkdir(parents=True, exist_ok=True)
-    records = load_predictions(diagnostics)
-    summary = build_summary(records)
+    events = load_records(diagnostics)
+    records = [event for event in events if event.get("event") == "prediction"]
+    if not records:
+        raise RuntimeError(f"No prediction records found in {diagnostics}")
+    summary = build_summary(records, events)
     write_summary(summary, output_dir)
     map_yaml = resolve_map_yaml(args.map_yaml, records[0], diagnostics)
     map_data = load_map(map_yaml)

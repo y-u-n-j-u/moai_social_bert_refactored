@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import heapq
 import json
 import math
 import pickle
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -137,6 +139,321 @@ def local_map_patch(
             block = crop[edges[r] : edges[r + 1], edges[c] : edges[c + 1]]
             patch[r, c] = float(block.max()) if block.size else 1.0
     return patch
+
+
+def pixel_to_world(row: int, col: int, map_data: dict[str, Any]) -> np.ndarray:
+    occ = map_data["occupied"]
+    resolution = float(map_data["resolution"])
+    origin_x, origin_y, _ = map_data["origin"]
+    return np.asarray(
+        [
+            float(origin_x) + float(col) * resolution,
+            float(origin_y) + float(occ.shape[0] - 1 - row) * resolution,
+        ],
+        dtype=np.float32,
+    )
+
+
+def inflate_occupancy_grid(
+    occupied: np.ndarray,
+    resolution: float,
+    clearance_m: float,
+) -> np.ndarray:
+    """Return cells forbidden to the robot center, including unknown space."""
+    blocked = np.asarray(occupied, dtype=np.float32) >= 0.5
+    radius_cells = max(0, int(math.ceil(float(clearance_m) / float(resolution))))
+    if radius_cells == 0:
+        return blocked.copy()
+
+    height, width = blocked.shape
+    inflated = blocked.copy()
+    radius_sq = radius_cells * radius_cells
+    for row_delta in range(-radius_cells, radius_cells + 1):
+        for col_delta in range(-radius_cells, radius_cells + 1):
+            if row_delta * row_delta + col_delta * col_delta > radius_sq:
+                continue
+            src_r0 = max(0, -row_delta)
+            src_r1 = min(height, height - row_delta)
+            src_c0 = max(0, -col_delta)
+            src_c1 = min(width, width - col_delta)
+            dst_r0 = src_r0 + row_delta
+            dst_r1 = src_r1 + row_delta
+            dst_c0 = src_c0 + col_delta
+            dst_c1 = src_c1 + col_delta
+            inflated[dst_r0:dst_r1, dst_c0:dst_c1] |= blocked[
+                src_r0:src_r1,
+                src_c0:src_c1,
+            ]
+
+    # A footprint extending outside the known map is unsafe as well.
+    inflated[:radius_cells, :] = True
+    inflated[-radius_cells:, :] = True
+    inflated[:, :radius_cells] = True
+    inflated[:, -radius_cells:] = True
+    return inflated
+
+
+def coarsen_map_for_planning(
+    map_data: dict[str, Any],
+    planning_resolution_m: float,
+) -> dict[str, Any]:
+    source_resolution = float(map_data["resolution"])
+    factor = max(1, int(round(float(planning_resolution_m) / source_resolution)))
+    if factor == 1:
+        return dict(map_data)
+
+    occupied = np.asarray(map_data["occupied"], dtype=np.float32)
+    height, width = occupied.shape
+    padded_height = int(math.ceil(height / factor) * factor)
+    padded_width = int(math.ceil(width / factor) * factor)
+    padded = np.full((padded_height, padded_width), 0.5, dtype=np.float32)
+    padded[:height, :width] = occupied
+    coarse = padded.reshape(
+        padded_height // factor,
+        factor,
+        padded_width // factor,
+        factor,
+    ).max(axis=(1, 3))
+    return {
+        **map_data,
+        "occupied": coarse,
+        "resolution": source_resolution * factor,
+        "planning_downsample_factor": factor,
+    }
+
+
+class OccupancyGridRoutePlanner:
+    """Nav2-compatible 8-connected shortest paths on an inflated static map."""
+
+    MOVES = (
+        (-1, 0, 1.0),
+        (1, 0, 1.0),
+        (0, -1, 1.0),
+        (0, 1, 1.0),
+        (-1, -1, math.sqrt(2.0)),
+        (-1, 1, math.sqrt(2.0)),
+        (1, -1, math.sqrt(2.0)),
+        (1, 1, math.sqrt(2.0)),
+    )
+
+    def __init__(
+        self,
+        map_data: dict[str, Any],
+        clearance_m: float,
+        cache_size: int = 32,
+        planning_resolution_m: float = 0.10,
+    ) -> None:
+        self.source_map_data = map_data
+        self.map_data = coarsen_map_for_planning(
+            map_data,
+            planning_resolution_m,
+        )
+        self.resolution = float(self.map_data["resolution"])
+        self.blocked = inflate_occupancy_grid(
+            self.map_data["occupied"],
+            self.resolution,
+            clearance_m,
+        )
+        self.clearance_m = float(clearance_m)
+        self.cache_size = max(1, int(cache_size))
+        self._goal_fields: OrderedDict[tuple[int, int], np.ndarray] = OrderedDict()
+
+    def is_safe_world(self, xy: np.ndarray) -> bool:
+        row, col = world_to_pixel(float(xy[0]), float(xy[1]), self.map_data)
+        return (
+            0 <= row < self.blocked.shape[0]
+            and 0 <= col < self.blocked.shape[1]
+            and not bool(self.blocked[row, col])
+        )
+
+    def _nearest_free_cell(
+        self,
+        xy: np.ndarray,
+        max_snap_distance_m: float,
+        label: str,
+    ) -> tuple[tuple[int, int], float]:
+        row, col = world_to_pixel(float(xy[0]), float(xy[1]), self.map_data)
+        height, width = self.blocked.shape
+        if not (0 <= row < height and 0 <= col < width):
+            raise ValueError(f"{label} is outside the occupancy map")
+        if not self.blocked[row, col]:
+            cell_xy = pixel_to_world(row, col, self.map_data)
+            return (row, col), float(np.linalg.norm(cell_xy - xy[:2]))
+
+        max_snap_distance_m = max(0.0, float(max_snap_distance_m))
+        radius_cells = int(math.ceil(max_snap_distance_m / self.resolution))
+        best_cell: tuple[int, int] | None = None
+        best_distance = math.inf
+        for candidate_row in range(max(0, row - radius_cells), min(height, row + radius_cells + 1)):
+            for candidate_col in range(max(0, col - radius_cells), min(width, col + radius_cells + 1)):
+                if self.blocked[candidate_row, candidate_col]:
+                    continue
+                candidate_xy = pixel_to_world(candidate_row, candidate_col, self.map_data)
+                distance = float(np.linalg.norm(candidate_xy - xy[:2]))
+                if distance <= max_snap_distance_m + 1e-6 and distance < best_distance:
+                    best_cell = (candidate_row, candidate_col)
+                    best_distance = distance
+        if best_cell is None:
+            raise ValueError(
+                f"{label} has no footprint-safe cell within "
+                f"{max_snap_distance_m:.3f} m"
+            )
+        return best_cell, best_distance
+
+    def _goal_field(self, goal: tuple[int, int]) -> np.ndarray:
+        cached = self._goal_fields.pop(goal, None)
+        if cached is not None:
+            self._goal_fields[goal] = cached
+            return cached
+
+        height, width = self.blocked.shape
+        # Keep exact-enough costs for heap stale-entry checks. float32 rounding
+        # can repeatedly reinsert long diagonal paths and make this search
+        # orders of magnitude slower on a 5-10 cm grid.
+        distances = np.full((height, width), np.inf, dtype=np.float64)
+        next_cell = np.full((height, width), -1, dtype=np.int32)
+        goal_row, goal_col = goal
+        goal_index = goal_row * width + goal_col
+        distances[goal_row, goal_col] = 0.0
+        next_cell[goal_row, goal_col] = goal_index
+        frontier: list[tuple[float, int, int]] = [(0.0, goal_row, goal_col)]
+
+        while frontier:
+            distance, row, col = heapq.heappop(frontier)
+            if distance > float(distances[row, col]) + 1e-12:
+                continue
+            current_index = row * width + col
+            for row_delta, col_delta, step_cost in self.MOVES:
+                next_row = row + row_delta
+                next_col = col + col_delta
+                if not (0 <= next_row < height and 0 <= next_col < width):
+                    continue
+                if self.blocked[next_row, next_col]:
+                    continue
+                if row_delta != 0 and col_delta != 0:
+                    if self.blocked[next_row, col] or self.blocked[row, next_col]:
+                        continue
+                candidate_distance = distance + step_cost
+                if candidate_distance + 1e-12 >= float(distances[next_row, next_col]):
+                    continue
+                distances[next_row, next_col] = candidate_distance
+                next_cell[next_row, next_col] = current_index
+                heapq.heappush(
+                    frontier,
+                    (candidate_distance, next_row, next_col),
+                )
+
+        self._goal_fields[goal] = next_cell
+        while len(self._goal_fields) > self.cache_size:
+            self._goal_fields.popitem(last=False)
+        return next_cell
+
+    def route(
+        self,
+        start_xy: np.ndarray,
+        goal_xy: np.ndarray,
+        start_snap_distance_m: float,
+        goal_snap_distance_m: float,
+    ) -> tuple[list[np.ndarray], dict[str, float]]:
+        start_xy = np.asarray(start_xy, dtype=np.float32)[:2]
+        goal_xy = np.asarray(goal_xy, dtype=np.float32)[:2]
+        start, start_snap = self._nearest_free_cell(
+            start_xy,
+            start_snap_distance_m,
+            "route start",
+        )
+        goal, goal_snap = self._nearest_free_cell(
+            goal_xy,
+            goal_snap_distance_m,
+            "final goal",
+        )
+        field = self._goal_field(goal)
+        height, width = self.blocked.shape
+        route_cells = [start]
+        current = start
+        for _ in range(height * width):
+            if current == goal:
+                break
+            next_index = int(field[current])
+            if next_index < 0:
+                raise ValueError("no collision-free occupancy-grid route to final goal")
+            next_row, next_col = divmod(next_index, width)
+            next_value = (int(next_row), int(next_col))
+            if next_value == current:
+                raise ValueError("occupancy-grid route contains a loop")
+            route_cells.append(next_value)
+            current = next_value
+        else:
+            raise ValueError("occupancy-grid route exceeded map cell count")
+
+        route_points = [start_xy]
+        for row, col in route_cells:
+            point = pixel_to_world(row, col, self.map_data)
+            if float(np.linalg.norm(point - route_points[-1])) > 1e-6:
+                route_points.append(point)
+        if float(np.linalg.norm(goal_xy - route_points[-1])) > 1e-6:
+            route_points.append(goal_xy)
+        metrics = {
+            "route_start_snap_m": float(start_snap),
+            "route_goal_snap_m": float(goal_snap),
+            "route_path_length_m": path_length(np.asarray(route_points)),
+            "route_path_pose_count": float(len(route_points)),
+            "route_planning_resolution_m": float(self.resolution),
+        }
+        return route_points, metrics
+
+
+def guidance_point_along_route(
+    route_points: list[np.ndarray],
+    radius: float,
+) -> np.ndarray:
+    if not route_points:
+        raise ValueError("route has no points")
+    remaining = max(0.0, float(radius))
+    current = np.asarray(route_points[0], dtype=np.float32)[:2]
+    if remaining <= 0.0:
+        return current
+    for raw_next in route_points[1:]:
+        next_point = np.asarray(raw_next, dtype=np.float32)[:2]
+        segment = next_point - current
+        segment_length = float(np.linalg.norm(segment))
+        if segment_length <= 1e-9:
+            current = next_point
+            continue
+        if segment_length >= remaining:
+            return (current + segment * (remaining / segment_length)).astype(np.float32)
+        remaining -= segment_length
+        current = next_point
+    return np.asarray(route_points[-1], dtype=np.float32)[:2]
+
+
+def trajectory_footprint_metrics(
+    points: np.ndarray,
+    planner: OccupancyGridRoutePlanner,
+) -> dict[str, float]:
+    """Check both recorded poses and the swept path between poses."""
+    points = np.asarray(points, dtype=np.float32)
+    pose_safe = [planner.is_safe_world(point) for point in points]
+    sample_spacing = max(float(planner.resolution) * 0.5, 0.025)
+    swept_safe: list[bool] = []
+    if len(points):
+        swept_safe.append(planner.is_safe_world(points[0]))
+    for start, end in zip(points[:-1], points[1:]):
+        segment = end - start
+        segment_length = float(np.linalg.norm(segment))
+        sample_count = max(1, int(math.ceil(segment_length / sample_spacing)))
+        for sample_index in range(1, sample_count + 1):
+            point = start + segment * (sample_index / sample_count)
+            swept_safe.append(planner.is_safe_world(point))
+
+    pose_collision_count = sum(not safe for safe in pose_safe)
+    swept_collision_count = sum(not safe for safe in swept_safe)
+    return {
+        "target_pose_collision_count": float(pose_collision_count),
+        "target_swept_collision_count": float(swept_collision_count),
+        "target_swept_sample_count": float(len(swept_safe)),
+        "target_map_safe": 1.0 if swept_collision_count == 0 else 0.0,
+    }
 
 
 def path_length(points: np.ndarray) -> float:
@@ -273,7 +590,25 @@ def sample_quality(trajs: np.ndarray, obs_len: int, pred_len: int, dt: float) ->
     obs_disp = float(np.linalg.norm(obs[-1] - obs[0]))
     fut_disp = float(np.linalg.norm(fut[-1] - fut[0]))
     step = np.linalg.norm(np.diff(full, axis=0), axis=1)
-    speeds = step / max(dt, 1e-6)
+    safe_dt = max(dt, 1e-6)
+    velocity = np.diff(full, axis=0) / safe_dt
+    speeds = np.linalg.norm(velocity, axis=1)
+    accelerations = (
+        np.linalg.norm(np.diff(velocity, axis=0), axis=1) / safe_dt
+        if len(velocity) >= 2
+        else np.asarray([], dtype=np.float32)
+    )
+    headings = np.arctan2(velocity[:, 1], velocity[:, 0]) if len(velocity) else np.asarray([])
+    valid_heading = step >= 0.02
+    yaw_rates: list[float] = []
+    for index in range(1, len(headings)):
+        if not (valid_heading[index - 1] and valid_heading[index]):
+            continue
+        angle_delta = math.atan2(
+            math.sin(float(headings[index] - headings[index - 1])),
+            math.cos(float(headings[index] - headings[index - 1])),
+        )
+        yaw_rates.append(abs(angle_delta) / safe_dt)
     return {
         "obs_disp": obs_disp,
         "future_disp": fut_disp,
@@ -282,8 +617,44 @@ def sample_quality(trajs: np.ndarray, obs_len: int, pred_len: int, dt: float) ->
         "path_efficiency": total_disp / total_path if total_path > 1e-6 else 0.0,
         "mean_speed": float(speeds.mean()) if speeds.size else 0.0,
         "max_speed": float(speeds.max()) if speeds.size else 0.0,
+        "max_acceleration": (
+            float(accelerations.max()) if accelerations.size else 0.0
+        ),
+        "max_yaw_rate": max(yaw_rates, default=0.0),
         "min_social_distance_obs": min_target_neighbor_distance(trajs, obs_len),
         "neighbor_count": float(max(0, trajs.shape[0] - 1)),
+    }
+
+
+def sample_timing_metrics(
+    meta: dict[str, Any],
+    seq_len: int,
+    expected_dt: float,
+) -> dict[str, float]:
+    expected_dt = max(float(expected_dt), 1e-6)
+    intervals = np.asarray(meta.get("frame_intervals_s", []), dtype=np.float64).reshape(-1)
+    intervals = intervals[np.isfinite(intervals)]
+    if intervals.size == 0:
+        try:
+            start_stamp = float(meta["start_stamp"])
+            end_stamp = float(meta["end_stamp"])
+            if seq_len > 1 and math.isfinite(start_stamp) and math.isfinite(end_stamp):
+                intervals = np.asarray(
+                    [(end_stamp - start_stamp) / (seq_len - 1)],
+                    dtype=np.float64,
+                )
+        except (KeyError, TypeError, ValueError):
+            pass
+    if intervals.size == 0:
+        return {
+            "timing_available": 0.0,
+            "mean_frame_interval_s": math.nan,
+            "max_frame_interval_error_s": math.nan,
+        }
+    return {
+        "timing_available": 1.0,
+        "mean_frame_interval_s": float(intervals.mean()),
+        "max_frame_interval_error_s": float(np.max(np.abs(intervals - expected_dt))),
     }
 
 
@@ -358,21 +729,39 @@ def between_humans_metrics(
     }
 
 
-def pass_basic_filter(q: dict[str, float], args: argparse.Namespace) -> bool:
-    return (
-        q["neighbor_count"] >= args.min_neighbors
-        and q["obs_disp"] >= args.min_obs_disp
-        and q["future_disp"] >= args.min_future_disp
-        and q["path_length"] >= args.min_path_length
-        and q["path_efficiency"] >= args.min_path_efficiency
-        # The model learns both the 8 observed and 12 future positions.  A
-        # window that is safe only during observation can still teach a
-        # ground-truth future trajectory that overlaps a pedestrian.  Require
-        # the same center-distance margin across all 20 synchronized steps.
-        and q["same_time_min_distance_all"] >= args.min_social_distance
-        and q["min_social_distance_obs"] >= args.min_social_distance
-        and q["max_speed"] <= args.max_speed
+def basic_filter_reasons(q: dict[str, float], args: argparse.Namespace) -> list[str]:
+    checks = (
+        (q["neighbor_count"] >= args.min_neighbors, "too_few_neighbors"),
+        (q["obs_disp"] >= args.min_obs_disp, "insufficient_observed_motion"),
+        (q["future_disp"] >= args.min_future_disp, "insufficient_future_motion"),
+        (q["path_length"] >= args.min_path_length, "short_path"),
+        (q["path_efficiency"] >= args.min_path_efficiency, "low_path_efficiency"),
+        # The model learns all 20 synchronized positions. Ground truth must be
+        # socially and geometrically safe across observation and prediction.
+        (
+            q["same_time_min_distance_all"] >= args.min_social_distance,
+            "human_clearance_violation",
+        ),
+        (
+            q["min_social_distance_obs"] >= args.min_social_distance,
+            "observed_human_clearance_violation",
+        ),
+        (q["max_speed"] <= args.max_speed, "speed_limit"),
+        (q["max_acceleration"] <= args.max_acceleration, "acceleration_limit"),
+        (q["max_yaw_rate"] <= args.max_yaw_rate, "yaw_rate_limit"),
+        (q.get("target_map_safe", 0.0) >= 1.0, "target_map_collision"),
+        (
+            q.get("timing_available", 0.0) < 1.0
+            or q.get("max_frame_interval_error_s", math.inf)
+            <= args.max_frame_interval_error,
+            "irregular_frame_interval",
+        ),
     )
+    return [reason for passed, reason in checks if not passed]
+
+
+def pass_basic_filter(q: dict[str, float], args: argparse.Namespace) -> bool:
+    return not basic_filter_reasons(q, args)
 
 
 def pass_social_filter(q: dict[str, float], args: argparse.Namespace) -> bool:
@@ -412,6 +801,8 @@ def make_model_sample(
     map_data: dict[str, Any],
     args: argparse.Namespace,
     source_index: int,
+    guidance_point_override: np.ndarray | None = None,
+    guidance_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     target_past = trajs[0, :obs_len].astype(np.float32)
     target_future = trajs[0, obs_len : obs_len + pred_len].astype(np.float32)
@@ -422,10 +813,24 @@ def make_model_sample(
     final_goal = xy_from_meta(meta, "final_goal")
     if final_goal is None:
         final_goal = target_future[-1].astype(np.float32)
-    guidance_point = xy_from_meta(meta, "guidance_point")
+    guidance_point = guidance_point_override
     if guidance_point is None:
-        guidance_point = guidance_point_from_goal(target_past[-1], final_goal, args.guidance_radius)
+        guidance_point = xy_from_meta(meta, "guidance_point")
+    if guidance_point is None:
+        guidance_point = guidance_point_from_goal(
+            target_past[-1],
+            final_goal,
+            args.guidance_radius,
+        )
+    guidance_point = np.asarray(guidance_point, dtype=np.float32)[:2]
     guidance_traj = np.linspace(target_past[-1], guidance_point, pred_len).astype(np.float32)
+    sample_meta = dict(meta, source_index=source_index)
+    if guidance_metadata:
+        sample_meta.update(guidance_metadata)
+    sample_meta["guidance_point"] = [
+        float(guidance_point[0]),
+        float(guidance_point[1]),
+    ]
     return {
         "target_past": target_past,
         "neighbor_past": neighbor_past,
@@ -437,7 +842,7 @@ def make_model_sample(
         "final_goal": final_goal,
         "local_map": local_map.astype(np.float32),
         "target_future": target_future,
-        "meta": dict(meta, source_index=source_index),
+        "meta": sample_meta,
         "quality": quality,
     }
 
@@ -478,8 +883,8 @@ def summarize(qualities: list[dict[str, float]]) -> dict[str, Any]:
 def write_quality_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
-    fieldnames = list(rows[0].keys())
-    with path.open("w", newline="") as f:
+    fieldnames = sorted({key for row in rows for key in row})
+    with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
@@ -947,13 +1352,28 @@ def main() -> None:
     parser.add_argument("--min-future-disp", type=float, default=0.5)
     parser.add_argument("--min-path-length", type=float, default=1.0)
     parser.add_argument("--min-path-efficiency", type=float, default=0.15)
-    parser.add_argument("--min-social-distance", type=float, default=0.7)
+    parser.add_argument("--min-social-distance", type=float, default=1.2)
     parser.add_argument("--max-social-distance", type=float, default=3.0)
-    parser.add_argument("--max-speed", type=float, default=3.5)
+    parser.add_argument("--max-speed", type=float, default=1.5)
+    parser.add_argument("--max-acceleration", type=float, default=2.5)
+    parser.add_argument("--max-yaw-rate", type=float, default=1.5)
+    parser.add_argument("--max-frame-interval-error", type=float, default=0.15)
     parser.add_argument("--collision-distance", type=float, default=0.65)
     parser.add_argument("--map-size-m", type=float, default=8.0)
     parser.add_argument("--map-grid-size", type=int, default=32)
     parser.add_argument("--guidance-radius", type=float, default=8.0)
+    parser.add_argument(
+        "--guidance-policy",
+        choices=["route", "metadata"],
+        default="route",
+        help="Use a collision-free map route or preserve legacy metadata/straight GP.",
+    )
+    parser.add_argument("--route-robot-radius", type=float, default=0.275)
+    parser.add_argument("--route-safety-margin", type=float, default=0.10)
+    parser.add_argument("--route-start-snap-distance", type=float, default=0.75)
+    parser.add_argument("--route-goal-snap-distance", type=float, default=0.0)
+    parser.add_argument("--route-cache-size", type=int, default=32)
+    parser.add_argument("--route-planning-resolution", type=float, default=0.10)
     parser.add_argument("--between-humans-only", action="store_true")
     parser.add_argument("--between-min-path-length", type=float, default=1.0)
     parser.add_argument("--between-min-side-distance", type=float, default=0.35)
@@ -975,6 +1395,17 @@ def main() -> None:
     with args.input.open("rb") as f:
         raw = pickle.load(f)
     map_data = load_map(args.map_yaml)
+    route_clearance_m = max(
+        0.0,
+        float(args.route_robot_radius) + float(args.route_safety_margin),
+    )
+    footprint_planner = OccupancyGridRoutePlanner(
+        map_data,
+        clearance_m=route_clearance_m,
+        cache_size=args.route_cache_size,
+        planning_resolution_m=args.route_planning_resolution,
+    )
+    route_planner = footprint_planner if args.guidance_policy == "route" else None
 
     metadata = dict(raw.get("metadata", {}))
     obs_len = int(metadata.get("obs_len", 8))
@@ -997,9 +1428,12 @@ def main() -> None:
     rejection_counts: dict[str, int] = {
         "nan_target": 0,
         "basic_filter": 0,
+        "route_guidance_failed": 0,
         "not_social_window": 0,
         "not_between_humans": 0,
     }
+    basic_failure_reasons: dict[str, int] = {}
+    route_failure_reasons: dict[str, int] = {}
 
     for idx, trajs_in in enumerate(all_trajs):
         trajs = np.asarray(trajs_in, dtype=np.float32)
@@ -1009,22 +1443,88 @@ def main() -> None:
             rejection_counts["nan_target"] += 1
             continue
         q = sample_quality(trajs, obs_len, pred_len, dt)
+        q.update(sample_timing_metrics(meta, obs_len + pred_len, dt))
         q.update(same_time_robot_human_metrics(trajs, obs_len, pred_len, args))
         q.update(between_humans_metrics(trajs, obs_len, pred_len, args))
         q.update(local_map_metrics(target[obs_len - 1], map_data, args))
+        q.update(trajectory_footprint_metrics(target, footprint_planner))
         q.update(heuristic_quality_scores(q, args))
-        row = {"source_index": idx, **meta, **q}
+        route_metrics = {
+            "route_guidance_valid": 0.0,
+            "route_start_snap_m": math.nan,
+            "route_goal_snap_m": math.nan,
+            "route_path_length_m": math.nan,
+            "route_path_pose_count": math.nan,
+            "route_planning_resolution_m": math.nan,
+            "route_guidance_lookahead_m": math.nan,
+        }
+        row = {"source_index": idx, **meta, **q, **route_metrics}
         if pass_basic_filter(q, args):
-            sample = make_model_sample(trajs, meta, q, obs_len, pred_len, map_data, args, idx)
+            guidance_override = None
+            guidance_metadata = None
+            if route_planner is not None:
+                final_goal = xy_from_meta(meta, "final_goal")
+                if final_goal is None:
+                    final_goal = target[obs_len + pred_len - 1].astype(np.float32)
+                try:
+                    route_points, computed_route_metrics = route_planner.route(
+                        target[obs_len - 1],
+                        final_goal,
+                        start_snap_distance_m=args.route_start_snap_distance,
+                        goal_snap_distance_m=args.route_goal_snap_distance,
+                    )
+                    guidance_override = guidance_point_along_route(
+                        route_points,
+                        args.guidance_radius,
+                    )
+                    if not route_planner.is_safe_world(guidance_override):
+                        raise ValueError("route guidance point is not footprint-safe")
+                except ValueError as exc:
+                    rejection_counts["route_guidance_failed"] += 1
+                    reason = str(exc)
+                    route_failure_reasons[reason] = route_failure_reasons.get(reason, 0) + 1
+                    row["split"] = "route_guidance_failed"
+                    quality_rows.append(row)
+                    continue
+
+                route_metrics.update(computed_route_metrics)
+                route_metrics["route_guidance_valid"] = 1.0
+                route_metrics["route_guidance_lookahead_m"] = min(
+                    max(float(args.guidance_radius), 0.0),
+                    float(computed_route_metrics["route_path_length_m"]),
+                )
+                q.update(route_metrics)
+                row.update(route_metrics)
+                guidance_metadata = {
+                    "guidance_policy": "inflated_occupancy_grid_route_lookahead",
+                    "guidance_radius": float(args.guidance_radius),
+                    "route_planner": "reverse_dijkstra_8_connected",
+                    "route_clearance_m": float(route_clearance_m),
+                    **computed_route_metrics,
+                }
+
+            sample = make_model_sample(
+                trajs,
+                meta,
+                q,
+                obs_len,
+                pred_len,
+                map_data,
+                args,
+                idx,
+                guidance_point_override=guidance_override,
+                guidance_metadata=guidance_metadata,
+            )
+            processed_meta = dict(sample["meta"])
             all_clean_samples.append(sample)
             all_clean_trajs.append(trajs)
-            all_clean_meta.append(dict(meta, source_index=idx))
+            all_clean_meta.append(processed_meta)
             row["split"] = "clean_all"
             if pass_social_filter(q, args):
                 if pass_between_humans_filter(q, args):
                     between_humans_samples.append(sample)
                     between_humans_trajs.append(trajs)
-                    between_humans_meta.append(dict(meta, source_index=idx))
+                    between_humans_meta.append(processed_meta)
                 elif args.between_humans_only:
                     rejection_counts["not_between_humans"] += 1
                     row["split"] = "not_between_humans"
@@ -1032,25 +1532,49 @@ def main() -> None:
                     continue
                 social_clean_samples.append(sample)
                 social_clean_trajs.append(trajs)
-                social_clean_meta.append(dict(meta, source_index=idx))
+                social_clean_meta.append(processed_meta)
                 row["split"] = "clean_between_humans" if q["between_humans"] >= 1.0 else "clean_social"
             else:
                 rejection_counts["not_social_window"] += 1
         else:
             rejection_counts["basic_filter"] += 1
+            failure_reasons = basic_filter_reasons(q, args)
+            row["filter_failure_reasons"] = ";".join(failure_reasons)
+            for reason in failure_reasons:
+                basic_failure_reasons[reason] = (
+                    basic_failure_reasons.get(reason, 0) + 1
+                )
             row["split"] = "rejected"
         quality_rows.append(row)
 
     common_meta = {
         **metadata,
-        "postprocess_format": "moai_social_nav_guidance_point_clean_v1",
+        "postprocess_format": "moai_social_nav_route_guidance_clean_v3",
         "input_path": str(args.input),
         "map_yaml_path": str(args.map_yaml),
         "map_image_path": map_data["image_path"],
         "local_map_size_m": args.map_size_m,
         "local_map_grid_size": args.map_grid_size,
         "guidance_radius": args.guidance_radius,
-        "guidance_policy": "circle_line_intersection_to_final_goal",
+        "guidance_policy": (
+            "inflated_occupancy_grid_route_lookahead"
+            if route_planner is not None
+            else "metadata_or_circle_line_intersection_to_final_goal"
+        ),
+        "route_planner": (
+            "reverse_dijkstra_8_connected" if route_planner is not None else None
+        ),
+        "route_robot_radius_m": float(args.route_robot_radius),
+        "route_safety_margin_m": float(args.route_safety_margin),
+        "route_clearance_m": float(route_clearance_m),
+        "target_trajectory_map_check": "inflated_grid_swept_path",
+        "route_start_snap_distance_m": float(args.route_start_snap_distance),
+        "route_goal_snap_distance_m": float(args.route_goal_snap_distance),
+        "route_planning_resolution_m": (
+            float(route_planner.resolution)
+            if route_planner is not None
+            else None
+        ),
         "input_keys": [
             "target_past",
             "target_future",
@@ -1070,7 +1594,11 @@ def main() -> None:
             "min_social_distance": args.min_social_distance,
             "max_social_distance": args.max_social_distance,
             "max_speed": args.max_speed,
+            "max_acceleration": args.max_acceleration,
+            "max_yaw_rate": args.max_yaw_rate,
+            "max_frame_interval_error": args.max_frame_interval_error,
             "collision_distance": args.collision_distance,
+            "guidance_policy": args.guidance_policy,
             "between_humans_only": args.between_humans_only,
             "between_min_path_length": args.between_min_path_length,
             "between_min_side_distance": args.between_min_side_distance,
@@ -1116,6 +1644,8 @@ def main() -> None:
         "clean_social_samples": len(social_clean_samples),
         "clean_between_humans_samples": len(between_humans_samples),
         "rejection_counts": rejection_counts,
+        "basic_failure_reasons": dict(sorted(basic_failure_reasons.items())),
+        "route_failure_reasons": dict(sorted(route_failure_reasons.items())),
         "clean_all_summary": summarize([s["quality"] for s in all_clean_samples]),
         "clean_social_summary": summarize([s["quality"] for s in social_clean_samples]),
         "clean_between_humans_summary": summarize([s["quality"] for s in between_humans_samples]),

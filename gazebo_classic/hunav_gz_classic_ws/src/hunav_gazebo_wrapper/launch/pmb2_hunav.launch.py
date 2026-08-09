@@ -25,7 +25,7 @@ from launch.actions import (IncludeLaunchDescription, DeclareLaunchArgument,
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
-from launch_ros.actions import Node
+from launch_ros.actions import Node, SetRemap
 from launch_ros.substitutions import FindPackageShare
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_param_builder import load_xacro
@@ -58,6 +58,7 @@ def generate_launch_description():
     ld.add_action(DeclareLaunchArgument("navigation", default_value="True"))
     ld.add_action(DeclareLaunchArgument("slam", default_value="False"))
     ld.add_action(DeclareLaunchArgument("use_rviz", default_value="True"))
+    ld.add_action(DeclareLaunchArgument("nav2_goal_topic", default_value="/goal_pose"))
     launch_arguments = LaunchArguments()
 
     launch_arguments.add_to_launch_description(ld)
@@ -184,6 +185,16 @@ def declare_actions(
         }.items(),
         condition=IfCondition(LaunchConfiguration("navigation"))
     )
+    nav2_bringup_group = GroupAction(
+        scoped=True,
+        actions=[
+            SetRemap(
+                src="/goal_pose",
+                dst=LaunchConfiguration("nav2_goal_topic"),
+            ),
+            nav2_bringup_launch,
+        ],
+    )
 
     slam_launch = PathJoinSubstitution([
         FindPackageShare("nav2_bringup"),
@@ -237,7 +248,7 @@ def declare_actions(
         ]))
     )
 
-    launch_description.add_action(nav2_bringup_launch)
+    launch_description.add_action(nav2_bringup_group)
     launch_description.add_action(loc_bringup_launch)
     launch_description.add_action(slam_bringup_launch)
     launch_description.add_action(rviz_bringup_launch)

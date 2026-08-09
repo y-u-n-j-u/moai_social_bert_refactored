@@ -25,7 +25,7 @@ def parse_args() -> argparse.Namespace:
         help="Directory recursively containing *_clean_social.pkl run files.",
     )
     parser.add_argument("--out-dir", type=Path, required=True)
-    parser.add_argument("--prefix", default="pmb2_true_goal_gp_v1_clean_social")
+    parser.add_argument("--prefix", default="pmb2_route_gp_v2_clean_social")
     parser.add_argument("--seed", type=int, default=11)
     parser.add_argument("--train-ratio", type=float, default=0.70)
     parser.add_argument("--val-ratio", type=float, default=0.15)

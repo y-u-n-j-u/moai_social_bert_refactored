@@ -131,5 +131,7 @@ cd /path/to/cloned/repository
 guided 입력 의미가 기존 입력과 다르므로 checkpoint를 그대로 평가만 하지
 말고 guided Gazebo 데이터로 fine-tuning해야 한다.
 
-`col_weight`는 `0`을 유지한다. 현재 collision 코드는 hard grid indexing이라
-평가/필터에는 쓸 수 있지만 학습 gradient를 만들지는 않는다.
+collision loss는 occupancy grid를 bilinear sampling해 예측 좌표로 gradient를
+전달한다. 먼저 `col_weight: 0.0`을 기준으로 두고 동일한 route-GP 데이터에서
+`0.1`, `1.0`을 비교한다. 서로 다른 weight의 total loss 값은 직접 비교하지
+말고 held-out map collision rate와 closed-loop 주행 결과로 선택한다.

@@ -1,0 +1,99 @@
+experiment:
+  name: spubert_route_gp_continue_b21_col0
+  framework: spubert
+  task: finetune
+  seed: 21
+
+data:
+  dataset_name: moai_social_nav_ext
+  dataset_path: /data/gazebo
+  dataset_split: pmb2_route_gp_v2_clean_social
+  obs_len: 8
+  pred_len: 12
+  min_obs_len: 8
+  num_nbr: 4
+  augment: false
+  sampling: 1.0
+  view_range: 20.0
+  view_angle: 1.0471975512
+  social_range: 2.0
+  input_dim: 2
+  output_dim: 2
+  goal_dim: 2
+  local_map_size_m: 20.0
+  local_map_grid_size: 32
+
+scene:
+  enabled: true
+  env_range: 10.0
+  env_resol: 0.625
+  patch_size: 16
+  num_patch: 4
+  binary: false
+  map_align_to_target: true
+  map_source_unknown_value: 0.5
+
+model:
+  backbone:
+    type: bert
+    hidden_size: 256
+    num_hidden_layers: 4
+    num_attention_heads: 4
+    intermediate_size: 1024
+    dropout_prob: 0.1
+    act_fn: relu
+  heads:
+    social:
+      sip: false
+    spubert:
+      share_backbone: false
+      goal_hidden: 64
+      goal_latent: 32
+      k_sample: 20
+      d_sample: 400
+      normal: false
+      guidance_conditioned: true
+      reject_unknown_goals: true
+
+loss:
+  traj_weight: 1.0
+  goal_weight: 1.0
+  kld_weight: 1.0
+  col_weight: 0.0
+  cvae_sigma: 1.0
+  kld_clamp: null
+
+train:
+  train_mode: pt
+  batch_size: 32
+  test_batch_size: 32
+  epoch: 20
+  eval_interval: 1
+  checkpoint_interval: 5
+  patience: 5
+  lr_scheduler: it_linear
+  clip_grads: false
+  num_cycle: 0
+  evaluate_on_test: false
+  use_gt_goal: false
+  guided_inference: true
+  optimizer:
+    name: adamw
+    lr: 2.0e-5
+    weight_decay: 0.01
+    eps: 1.0e-8
+  scheduler:
+    warm_up: 0.0
+    decay_step: 10
+    decay_gamma: 0.5
+
+runtime:
+  cuda: true
+  num_worker: 0
+  model_dir: ./output/spubert_route_gp_continue_b21_col0
+  checkpoint: ""
+  pretrain_checkpoint: ""
+  finetune_checkpoint: ./output/spubert_gazebo_augmented_ethucy_pt_seed21/model_best.pth
+  viz: false
+  shuffle: true
+  dry_run: false

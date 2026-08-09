@@ -22,6 +22,9 @@ class GuidedInferenceResult:
     selected_goal_valid: bool
     trajectory_map_safe: bool
     execution_valid: bool
+    candidate_rank: int = 1
+    candidate_index: int = -1
+    guidance_distance_m: float = math.inf
 
 
 def guidance_point(current: XY, final_goal: XY, radius: float) -> XY:
@@ -159,6 +162,7 @@ class GuidedSpubertRuntime:
         use_cuda: bool,
         d_sample: int,
         guidance_radius: float,
+        tgp_top_k: int,
         logger: Any,
     ) -> None:
         self.repo_path = os.path.abspath(os.path.expanduser(repo_path))
@@ -166,6 +170,7 @@ class GuidedSpubertRuntime:
         self.checkpoint_path = os.path.abspath(os.path.expanduser(checkpoint_path))
         self.map_provider = map_provider
         self.guidance_radius = float(guidance_radius)
+        self.tgp_top_k = max(int(tgp_top_k), 1)
         self.logger = logger
 
         for label, path, predicate in (
@@ -314,6 +319,23 @@ class GuidedSpubertRuntime:
         final_goal: XY,
         guidance_point_world: Optional[XY] = None,
     ) -> GuidedInferenceResult:
+        return self.predict_candidates(
+            robot_history=robot_history,
+            robot_yaw=robot_yaw,
+            human_histories=human_histories,
+            final_goal=final_goal,
+            guidance_point_world=guidance_point_world,
+        )[0]
+
+    def predict_candidates(
+        self,
+        *,
+        robot_history: Sequence[XY],
+        robot_yaw: float,
+        human_histories: Mapping[int, Sequence[XY]],
+        final_goal: XY,
+        guidance_point_world: Optional[XY] = None,
+    ) -> List[GuidedInferenceResult]:
         robot_world = pad_history(robot_history, self.obs_len)
         origin = robot_world[-1]
         theta = heading_from_history(robot_world, robot_yaw)
@@ -360,7 +382,7 @@ class GuidedSpubertRuntime:
         batch = self._tensor_batch(streams, scene, gp_local)
 
         with self.torch.no_grad():
-            output = self.model.inference_guided(
+            output = self.model.inference_guided_candidates(
                 mgp_spatial_ids=batch["mgp_spatial_ids"],
                 mgp_temporal_ids=batch["mgp_temporal_ids"],
                 mgp_segment_ids=batch["mgp_segment_ids"],
@@ -377,34 +399,54 @@ class GuidedSpubertRuntime:
                 envs_params=batch["envs_params"],
                 d_sample=self.d_sample,
                 reject_unknown=bool(self.args.reject_unknown_goals),
+                top_k=self.tgp_top_k,
             )
 
-        path_local = output["pred_trajs"][0].detach().cpu().numpy()
+        paths_local = output["guided_pred_trajs"][0].detach().cpu().numpy()
         candidates_local = output["candidate_goals"][0].detach().cpu().numpy()
-        selected_local = output["pred_goals"][0].detach().cpu().numpy()
-        path_world = [
-            local_to_world((float(point[0]), float(point[1])), origin, theta)
-            for point in path_local
-        ]
+        selected_local = output["guided_candidate_goals"][0].detach().cpu().numpy()
+        candidate_indices = output["guided_candidate_indices"][0].detach().cpu().numpy()
+        goal_valid = output["guided_candidate_goal_valid"][0].detach().cpu().numpy()
+        guidance_distances = output[
+            "guided_candidate_guidance_distances"
+        ][0].detach().cpu().numpy()
+        trajectory_map_safe = output[
+            "guided_trajectory_map_safe"
+        ][0].detach().cpu().numpy()
+        execution_valid = output["guided_execution_valid"][0].detach().cpu().numpy()
         candidates_world = [
             local_to_world((float(point[0]), float(point[1])), origin, theta)
             for point in candidates_local
             if np.isfinite(point[:2]).all()
         ]
-        selected_world = local_to_world(
-            (float(selected_local[0]), float(selected_local[1])),
-            origin,
-            theta,
-        )
-        return GuidedInferenceResult(
-            path_world=path_world,
-            candidate_goals_world=candidates_world,
-            selected_goal_world=selected_world,
-            guidance_point_world=gp_world,
-            selected_goal_valid=bool(output["selected_goal_valid"][0].item()),
-            trajectory_map_safe=bool(output["trajectory_map_safe"][0].item()),
-            execution_valid=bool(output["execution_valid"][0].item()),
-        )
+        valid_goal_count = int(np.count_nonzero(goal_valid))
+        attempt_count = max(valid_goal_count, 1)
+        results = []
+        for rank in range(min(attempt_count, len(paths_local))):
+            path_world = [
+                local_to_world((float(point[0]), float(point[1])), origin, theta)
+                for point in paths_local[rank]
+            ]
+            selected_world = local_to_world(
+                (float(selected_local[rank][0]), float(selected_local[rank][1])),
+                origin,
+                theta,
+            )
+            results.append(
+                GuidedInferenceResult(
+                    path_world=path_world,
+                    candidate_goals_world=candidates_world,
+                    selected_goal_world=selected_world,
+                    guidance_point_world=gp_world,
+                    selected_goal_valid=bool(goal_valid[rank]),
+                    trajectory_map_safe=bool(trajectory_map_safe[rank]),
+                    execution_valid=bool(execution_valid[rank]),
+                    candidate_rank=rank + 1,
+                    candidate_index=int(candidate_indices[rank]),
+                    guidance_distance_m=float(guidance_distances[rank]),
+                )
+            )
+        return results
 
     def _build_scene(self, *, origin: XY, theta: float) -> Dict[str, np.ndarray]:
         patches, patch_mask = self.map_provider.scene_patches(

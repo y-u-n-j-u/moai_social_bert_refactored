@@ -121,8 +121,6 @@ def main() -> int:
         raise ValueError("Smoke test must use train_mode=fs and require no checkpoint")
     if not args.scene:
         raise ValueError("Smoke test must use scene.enabled=true")
-    if args.col_weight != 0:
-        raise ValueError("Keep col_weight=0 until collision-map semantics are fixed")
     if args.cuda and not torch.cuda.is_available():
         raise RuntimeError("runtime.cuda=true but CUDA is unavailable")
 

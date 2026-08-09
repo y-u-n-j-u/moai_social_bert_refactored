@@ -219,10 +219,14 @@ def _validate_config(cfg: dict[str, Any], config_path: str) -> None:
             )
         if not cfg['scene']['enabled']:
             raise SystemExit(f'MoAI guided-goal training requires scene.enabled=true: {config_path}')
-    if float(cfg['loss']['col_weight']) != 0.0:
+    col_weight = float(cfg['loss']['col_weight'])
+    if col_weight < 0.0:
         raise SystemExit(
-            f'loss.col_weight must remain 0: current grid collision code is a '
-            f'non-differentiable filter/metric, not a training loss: {config_path}'
+            f'loss.col_weight must be non-negative: {config_path}'
+        )
+    if col_weight > 0.0 and not cfg['scene']['enabled']:
+        raise SystemExit(
+            f'loss.col_weight requires scene.enabled=true: {config_path}'
         )
     if cfg['train']['guided_inference'] and cfg['train']['use_gt_goal']:
         raise SystemExit(

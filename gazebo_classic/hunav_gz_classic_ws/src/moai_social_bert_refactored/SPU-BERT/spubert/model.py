@@ -147,6 +147,27 @@ def select_guided_goal_candidates(
         torch.full_like(distances, torch.inf),
     )
 
+    ranked_gather_indices = torch.argsort(safe_distances, dim=1)
+    ranked_goal_valid = torch.gather(
+        candidate_safe_mask,
+        dim=1,
+        index=ranked_gather_indices,
+    )
+    ranked_candidate_indices = torch.where(
+        ranked_goal_valid,
+        ranked_gather_indices,
+        torch.full_like(ranked_gather_indices, -1),
+    )
+    ranked_goals = pred_goals[
+        torch.arange(batch_size, device=pred_goals.device).unsqueeze(1),
+        ranked_gather_indices,
+    ]
+    ranked_goals = torch.where(
+        ranked_goal_valid.unsqueeze(-1),
+        ranked_goals,
+        torch.zeros_like(ranked_goals),
+    )
+
     all_candidates_invalid = ~candidate_safe_mask.any(dim=1)
     safe_indices = safe_distances.argmin(dim=1)
     fallback_indices = distances.argmin(dim=1)
@@ -178,6 +199,9 @@ def select_guided_goal_candidates(
         "candidate_in_bounds_mask": in_bounds,
         "candidate_cell_values": cell_values,
         "candidate_guidance_distances": distances,
+        "ranked_candidate_indices": ranked_candidate_indices,
+        "ranked_goals": ranked_goals,
+        "ranked_goal_valid": ranked_goal_valid,
     }
 
 
@@ -883,7 +907,8 @@ class SBertPlusFTModel(SBertModelBase):
     # ── k개 복제용 (MGP 흐름) ──────────────────────────────────────────────
     # MGP가 예측한 k개 goal을 spatial_ids에 삽입, TGP 입력용 준비
     def add_goals(self, spatial_ids, goals, mask_val, pad_val):
-        spatial_ids = spatial_ids.unsqueeze(1).repeat(1, self.cfgs.k_sample, 1, 1)
+        num_goals = goals.size(1)
+        spatial_ids = spatial_ids.unsqueeze(1).repeat(1, num_goals, 1, 1)
         spatial_ids[:, :, 1 + self.cfgs.obs_len : 1 + self.cfgs.obs_len + self.cfgs.pred_len, :] = mask_val
         spatial_ids[:, :, 1 + self.cfgs.obs_len + self.cfgs.pred_len, : self.cfgs.goal_dim] = goals
         spatial_ids[:, :, 1 + self.cfgs.obs_len + self.cfgs.pred_len, self.cfgs.goal_dim :] = pad_val
@@ -978,6 +1003,146 @@ class SBertPlusFTModel(SBertModelBase):
             "pred_goals": pred_goals,          # (batch, k, 2)
             "goal_attentions": mgp_out["attentions"],
             "traj_attentions": tgp_out["attentions"],
+        }
+
+    def inference_guided_candidates(
+        self,
+        mgp_spatial_ids,
+        mgp_temporal_ids,
+        mgp_segment_ids,
+        mgp_attn_mask,
+        tgp_temporal_ids,
+        tgp_segment_ids,
+        tgp_attn_mask,
+        guidance_points,
+        env_spatial_ids,
+        env_temporal_ids,
+        env_segment_ids,
+        env_attn_mask,
+        envs,
+        envs_params,
+        output_attentions=False,
+        d_sample=0,
+        reject_unknown=True,
+        top_k=5,
+    ):
+        """Run one TGP for each of the closest map-safe guided goals."""
+        if not self.cfgs.guidance_conditioned:
+            raise ValueError(
+                "inference_guided_candidates requires a guidance-conditioned MGP"
+            )
+
+        mgp_out = self.mgp_model.inference(
+            spatial_ids=mgp_spatial_ids,
+            segment_ids=mgp_segment_ids,
+            temporal_ids=mgp_temporal_ids,
+            attn_mask=mgp_attn_mask,
+            env_spatial_ids=env_spatial_ids,
+            env_temporal_ids=env_temporal_ids,
+            env_segment_ids=env_segment_ids,
+            env_attn_mask=env_attn_mask,
+            envs=envs,
+            output_attentions=output_attentions,
+            d_sample=d_sample,
+        )
+        candidate_goals = mgp_out["pred_goals"]
+        selection = select_guided_goal_candidates(
+            candidate_goals,
+            guidance_points,
+            envs,
+            envs_params,
+            reject_unknown=reject_unknown,
+        )
+
+        batch_size, candidate_count, _ = candidate_goals.shape
+        attempt_count = min(max(int(top_k), 1), candidate_count)
+        guided_goals = selection["ranked_goals"][:, :attempt_count]
+        guided_indices = selection["ranked_candidate_indices"][:, :attempt_count]
+        guided_goal_valid = selection["ranked_goal_valid"][:, :attempt_count]
+
+        _, traj_seq_len, traj_spatial_dim = mgp_spatial_ids.size()
+        goal_spatial_ids = self.add_goals(
+            mgp_spatial_ids,
+            guided_goals,
+            mask_val=self.cfgs.view_range,
+            pad_val=-self.cfgs.view_range,
+        ).reshape(batch_size * attempt_count, traj_seq_len, traj_spatial_dim)
+
+        def repeat_candidates(tensor):
+            if tensor is None:
+                return None
+            return tensor.unsqueeze(1).repeat(
+                1,
+                attempt_count,
+                *([1] * (tensor.ndim - 1)),
+            ).reshape(batch_size * attempt_count, *tensor.shape[1:])
+
+        tgp_out = self.tgp_model.inference(
+            spatial_ids=goal_spatial_ids,
+            segment_ids=repeat_candidates(tgp_segment_ids),
+            temporal_ids=repeat_candidates(tgp_temporal_ids),
+            attn_mask=repeat_candidates(tgp_attn_mask),
+            env_spatial_ids=repeat_candidates(env_spatial_ids),
+            env_segment_ids=repeat_candidates(env_segment_ids),
+            env_temporal_ids=repeat_candidates(env_temporal_ids),
+            env_attn_mask=repeat_candidates(env_attn_mask),
+            envs=repeat_candidates(envs),
+            output_attentions=output_attentions,
+        )
+        raw_pred_trajs = tgp_out["pred_trajs"]
+        pred_trajs = raw_pred_trajs.reshape(
+            batch_size,
+            attempt_count,
+            *raw_pred_trajs.shape[1:],
+        )
+        pred_len = pred_trajs.size(2)
+        trajectory_classification = classify_map_points(
+            pred_trajs.reshape(
+                batch_size,
+                attempt_count * pred_len,
+                pred_trajs.size(-1),
+            ),
+            envs,
+            envs_params,
+            reject_unknown=reject_unknown,
+        )
+        trajectory_point_safe_mask = trajectory_classification[
+            "point_safe_mask"
+        ].reshape(batch_size, attempt_count, pred_len)
+        trajectory_point_in_bounds_mask = trajectory_classification[
+            "point_in_bounds_mask"
+        ].reshape(batch_size, attempt_count, pred_len)
+        trajectory_point_cell_values = trajectory_classification[
+            "point_cell_values"
+        ].reshape(batch_size, attempt_count, pred_len)
+        trajectory_map_safe = trajectory_point_safe_mask.all(dim=2)
+        execution_valid = guided_goal_valid & trajectory_map_safe
+
+        gathered_distances = torch.gather(
+            selection["candidate_guidance_distances"],
+            dim=1,
+            index=guided_indices.clamp_min(0),
+        )
+        guided_distances = torch.where(
+            guided_goal_valid,
+            gathered_distances,
+            torch.full_like(gathered_distances, torch.inf),
+        )
+        return {
+            "candidate_goals": candidate_goals,
+            "guided_candidate_indices": guided_indices,
+            "guided_candidate_goals": guided_goals,
+            "guided_candidate_goal_valid": guided_goal_valid,
+            "guided_candidate_guidance_distances": guided_distances,
+            "guided_pred_trajs": pred_trajs,
+            "guided_trajectory_point_safe_mask": trajectory_point_safe_mask,
+            "guided_trajectory_point_in_bounds_mask": trajectory_point_in_bounds_mask,
+            "guided_trajectory_point_cell_values": trajectory_point_cell_values,
+            "guided_trajectory_map_safe": trajectory_map_safe,
+            "guided_execution_valid": execution_valid,
+            "goal_attentions": mgp_out["attentions"],
+            "traj_attentions": tgp_out["attentions"],
+            **selection,
         }
 
     def inference_guided(
