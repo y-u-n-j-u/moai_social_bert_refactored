@@ -178,6 +178,35 @@ def _spubert_finetune_batch_kwargs(data, *, scene: bool, kld_weight=None, traj_w
     return kwargs
 
 
+def _spubert_gaussian_bom_kwargs(data, *, scene: bool, kld_weight=None, traj_weight=None, goal_weight=None,
+                                  gaussian_k: int = 10, gaussian_sigma: float = 1.0):
+    """Gaussian BOM 학습용 kwargs: tgp_spatial_ids 대신 tgp_temporal/segment/attn만 전달
+    (goal은 model 내부에서 Gaussian 샘플링으로 생성)
+    """
+    kwargs = {
+        "mgp_spatial_ids": data["mgp_spatial_ids"],
+        "mgp_temporal_ids": data["mgp_temporal_ids"],
+        "mgp_segment_ids": data["mgp_segment_ids"],
+        "mgp_attn_mask": data["mgp_attn_mask"],
+        "tgp_temporal_ids": data["tgp_temporal_ids"],
+        "tgp_segment_ids": data["tgp_segment_ids"],
+        "tgp_attn_mask": data["tgp_attn_mask"],
+        "traj_lbl": data["traj_lbl"],
+        "goal_lbl": data["goal_lbl"],
+        "gaussian_k": gaussian_k,
+        "gaussian_sigma": gaussian_sigma,
+    }
+    if kld_weight is not None:
+        kwargs["kld_weight"] = kld_weight
+    if traj_weight is not None:
+        kwargs["traj_weight"] = traj_weight
+    if goal_weight is not None:
+        kwargs["goal_weight"] = goal_weight
+    if scene:
+        kwargs.update(_scene_batch_kwargs(data, include_env_params=True))
+    return kwargs
+
+
 
 def _spubert_inference_kwargs(data, *, scene: bool, d_sample):
     kwargs = {
@@ -297,7 +326,7 @@ class SBertPlusFTTrainer(SimpleTrainerBase):
                 data = _to_device(it_data, self.device)
 
                 if use_goal_sampling:
-                    # goal sampling 경로 — primary_goal 주변에서 k개 샘플링 후 최적 trajectory 선택
+                    # goal sampling 경로 — primary_goal 주변에서 k개 샘플링 후 oracle BOM(ADE 최소) 선택
                     gs_kwargs = {
                         "mgp_spatial_ids": data["mgp_spatial_ids"],
                         "tgp_temporal_ids": data["tgp_temporal_ids"],
@@ -306,6 +335,7 @@ class SBertPlusFTTrainer(SimpleTrainerBase):
                         "primary_goal": data["goal_lbl"],
                         "k": goal_k,
                         "sigma": goal_sigma,
+                        "gt_traj": data["traj_lbl"],   # oracle BOM: ADE 최소 trajectory 선택
                     }
                     if self.args.scene:
                         gs_kwargs.update({
@@ -496,15 +526,29 @@ def _train_spubert_finetune(trainer, args, epoch: int):
         trainer.mgp_optim.zero_grad(set_to_none=True)
         trainer.tgp_optim.zero_grad(set_to_none=True)
 
-        outputs = trainer.model(
-            **_spubert_finetune_batch_kwargs(
-                data,
-                scene=args.scene,
-                kld_weight=kld_weight,
-                traj_weight=traj_weight,
-                goal_weight=goal_weight,
+        if getattr(args, 'use_gaussian_goal', False):
+            # Gaussian BOM 학습: GT goal 주변 N(GT_goal, sigma^2)에서 k개 샘플 → BOM loss
+            outputs = trainer.model.forward_with_gaussian_bom(
+                **_spubert_gaussian_bom_kwargs(
+                    data,
+                    scene=args.scene,
+                    kld_weight=kld_weight,
+                    traj_weight=traj_weight,
+                    goal_weight=goal_weight,
+                    gaussian_k=getattr(args, 'gaussian_goal_k', 10),
+                    gaussian_sigma=getattr(args, 'gaussian_goal_sigma', 1.0),
+                )
             )
-        )
+        else:
+            outputs = trainer.model(
+                **_spubert_finetune_batch_kwargs(
+                    data,
+                    scene=args.scene,
+                    kld_weight=kld_weight,
+                    traj_weight=traj_weight,
+                    goal_weight=goal_weight,
+                )
+            )
 
         mgp_loss = outputs["mgp_loss"].mean()
         tgp_loss = outputs["tgp_loss"].mean()

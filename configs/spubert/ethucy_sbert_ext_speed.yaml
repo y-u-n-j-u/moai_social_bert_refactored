@@ -47,7 +47,13 @@ train:
   optimizer:
     lr: 1.0e-4
   evaluate_on_test: false
-  use_gt_goal: true
+  use_gt_goal: false
+  use_gaussian_goal: true
+  gaussian_goal_k: 10
+  gaussian_goal_sigma: 1.0
+  use_goal_sampling: true
+  goal_k: 10
+  goal_sigma: 1.0
 
 runtime:
   cuda: true

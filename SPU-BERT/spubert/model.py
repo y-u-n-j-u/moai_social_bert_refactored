@@ -893,6 +893,7 @@ class SBertPlusFTModel(SBertModelBase):
         primary_goal,           # (batch, goal_dim) — external module이 준 기준 goal
         k: int = 10,
         sigma: float = 1.0,
+        gt_traj=None,           # (batch, pred_len, output_dim) — oracle BOM 선택 시 사용
         env_spatial_ids=None,
         env_temporal_ids=None,
         env_segment_ids=None,
@@ -928,15 +929,16 @@ class SBertPlusFTModel(SBertModelBase):
                     else:
                         valid_indices.append(i)  # 맵 범위 밖 → 일단 유지
                 if not valid_indices:
-                    valid_indices = []  # 모두 장애물이면 primary_goal만 사용
+                    valid_indices = None  # 모두 장애물 → primary_goal fallback
             else:
                 valid_indices = list(range(k))
 
-            # primary_goal도 후보에 포함 (항상 첫 번째)
-            goal_candidates = (
-                [primary_goal[b:b+1]]
-                + [sampled_goals[b, i:i+1] for i in valid_indices]
-            )
+            # 후보 goal 구성
+            # 모두 장애물이면 primary_goal만 사용 (fallback), 아니면 Gaussian 샘플 k개
+            if valid_indices is None:
+                goal_candidates = [primary_goal[b:b+1]]  # primary_goal fallback
+            else:
+                goal_candidates = [sampled_goals[b, i:i+1] for i in valid_indices]
 
             # 단일 배치 슬라이스
             obs_b  = mgp_spatial_ids[b:b+1]
@@ -955,8 +957,8 @@ class SBertPlusFTModel(SBertModelBase):
                 )
 
             # 3. 각 후보 goal에 대해 TGP 실행 + collision rate 계산
-            pg = primary_goal[b]  # (goal_dim,) — 선택 기준 기준점
-            candidates = []
+            candidates = []  # (col, dist, traj, goal_c)
+            pg = primary_goal[b]  # primary_goal까지의 거리 계산 기준
             for goal_c in goal_candidates:
                 out = self.inference_with_gt_goal(
                     obs_b, temp_b, seg_b, mask_b,
@@ -965,26 +967,39 @@ class SBertPlusFTModel(SBertModelBase):
                 )
                 traj = out["pred_trajs"]  # (1, pred_len, 2)
 
+                # 지도 기반 collision rate 계산
                 col = 0.0
                 if envs is not None and envs_params is not None:
                     col_val = pos_collision_loss(traj, envs[b:b+1], envs_params[b:b+1])
                     if not torch.isnan(col_val):
                         col = col_val.item()
 
-                # primary_goal까지의 goal 거리 (선택 tie-break용)
                 dist = torch.norm(goal_c[0] - pg).item()
                 candidates.append((col, dist, traj, goal_c))
 
-            # 4. 선택 전략
-            #    - 충돌 없는(col=0) 후보 존재 → 그 중 primary_goal과 가장 가까운 goal 선택
-            #    - 모두 충돌 → collision rate 최소인 것 선택
-            collision_free = [(col, dist, traj, gc) for col, dist, traj, gc in candidates if col == 0.0]
-            if collision_free:
-                collision_free.sort(key=lambda x: x[1])   # dist 기준 정렬
-                _, _, best_traj, best_goal = collision_free[0]
-            else:
-                candidates.sort(key=lambda x: x[0])       # col 기준 정렬
+            # 4. 모드별 선택
+            if gt_traj is not None:
+                # 평가 모드: oracle BOM — GT traj와 ADE 최소인 trajectory 선택
+                gt_b = gt_traj[b]  # (pred_len, output_dim)
+                best_ade = float("inf")
                 _, _, best_traj, best_goal = candidates[0]
+                for col, dist, traj, goal_c in candidates:
+                    ade = torch.mean(torch.norm(traj[0] - gt_b, dim=-1)).item()
+                    if ade < best_ade:
+                        best_ade = ade
+                        best_traj, best_goal = traj, goal_c
+            else:
+                # 배포 모드: 지도 기반 충돌 선택
+                #   충돌 없는(col=0) 후보 → primary_goal과 가장 가까운 것 선택
+                #   모두 충돌 → collision rate 최소인 것 선택
+                collision_free = [(col, dist, traj, gc) for col, dist, traj, gc in candidates if col == 0.0]
+                if collision_free:
+                    collision_free.sort(key=lambda x: x[1])  # dist 기준 정렬
+                    _, _, best_traj, best_goal = collision_free[0]
+                else:
+                    candidates_sorted = sorted(candidates, key=lambda x: x[0])  # col 기준 정렬
+                    _, _, best_traj, best_goal = candidates_sorted[0]
+
             best_trajs.append(best_traj)
             best_goals_out.append(best_goal)
 
@@ -1059,6 +1074,136 @@ class SBertPlusFTModel(SBertModelBase):
             "kld_loss": mgp_out["kld_loss"],
             "pred_trajs": tgp_out["pred_trajs"],
             "pred_goals": mgp_out["pred_goals"],
+            "goal_attentions": mgp_out["attentions"],
+            "traj_attentions": tgp_out["attentions"],
+        }
+
+    def forward_with_gaussian_bom(
+        self,
+        mgp_spatial_ids,
+        mgp_temporal_ids,
+        mgp_segment_ids,
+        mgp_attn_mask,
+        tgp_temporal_ids,
+        tgp_segment_ids,
+        tgp_attn_mask,
+        traj_lbl,
+        goal_lbl,
+        gaussian_k: int = 10,
+        gaussian_sigma: float = 1.0,
+        env_spatial_ids=None,
+        env_temporal_ids=None,
+        env_segment_ids=None,
+        env_attn_mask=None,
+        envs=None,
+        envs_params=None,
+        output_attentions=False,
+        kld_weight=1.0,
+        traj_weight=1.0,
+        goal_weight=1.0,
+    ):
+        """Gaussian BOM 학습:
+        GT goal 주변 N(GT_goal, sigma^2)에서 k개 샘플 → TGP로 k개 trajectory → BOM loss
+        MGP(CVAE)는 기존과 동일하게 학습됨
+        """
+        from src.loss import bom_loss_3
+
+        batch_size = goal_lbl.shape[0]
+        traj_seq_len = mgp_spatial_ids.shape[1]
+
+        # 1. MGP forward (CVAE 학습 - 변경 없음)
+        mgp_out = self.mgp_model(
+            spatial_ids=mgp_spatial_ids,
+            segment_ids=mgp_segment_ids,
+            temporal_ids=mgp_temporal_ids,
+            attn_mask=mgp_attn_mask,
+            env_spatial_ids=env_spatial_ids,
+            env_temporal_ids=env_temporal_ids,
+            env_segment_ids=env_segment_ids,
+            env_attn_mask=env_attn_mask,
+            envs=envs,
+            envs_params=envs_params,
+            traj_lbl=traj_lbl,
+            goal_lbl=goal_lbl,
+            output_attentions=output_attentions,
+            kld_weight=kld_weight,
+        )
+
+        # 2. GT goal 주변 Gaussian 샘플링 (batch, k, goal_dim)
+        noise = torch.randn(
+            batch_size, gaussian_k, goal_lbl.shape[-1], device=goal_lbl.device
+        ) * gaussian_sigma
+        sampled_goals = goal_lbl.unsqueeze(1) + noise  # (batch, k, goal_dim)
+
+        # 3. k개 goal로 spatial_ids 구성 (gaussian_k 기준으로 직접 처리)
+        # add_goals()는 self.cfgs.k_sample로 repeat해서 gaussian_k와 불일치 → 직접 구현
+        k_spatial_ids = mgp_spatial_ids.unsqueeze(1).repeat(1, gaussian_k, 1, 1)
+        goal_start = 1 + self.cfgs.obs_len
+        goal_pos   = 1 + self.cfgs.obs_len + self.cfgs.pred_len
+        k_spatial_ids[:, :, goal_start:goal_pos, :]                      = self.cfgs.view_range
+        k_spatial_ids[:, :, goal_pos, :self.cfgs.goal_dim]               = sampled_goals
+        k_spatial_ids[:, :, goal_pos, self.cfgs.goal_dim:]               = -self.cfgs.view_range
+        k_spatial_ids = k_spatial_ids.view(-1, traj_seq_len, self.cfgs.input_dim)  # (batch*k, seq_len, dim)
+
+        k_segment_ids  = tgp_segment_ids.unsqueeze(1).repeat(1, gaussian_k, 1).view(-1, traj_seq_len)
+        k_temporal_ids = tgp_temporal_ids.unsqueeze(1).repeat(1, gaussian_k, 1).view(-1, traj_seq_len)
+        k_attn_mask    = tgp_attn_mask.unsqueeze(1).repeat(1, gaussian_k, 1).view(-1, traj_seq_len)
+
+        if self.cfgs.scene and env_spatial_ids is not None:
+            _, env_seq_len, env_dim = env_spatial_ids.size()
+            k_env_spatial  = env_spatial_ids.unsqueeze(1).repeat(1, gaussian_k, 1, 1).view(-1, env_seq_len, env_dim)
+            k_env_segment  = env_segment_ids.unsqueeze(1).repeat(1, gaussian_k, 1).view(-1, env_seq_len)
+            k_env_temporal = env_temporal_ids.unsqueeze(1).repeat(1, gaussian_k, 1).view(-1, env_seq_len)
+            k_env_attn     = env_attn_mask.unsqueeze(1).repeat(1, gaussian_k, 1).view(-1, env_seq_len)
+            k_envs = envs.unsqueeze(1).repeat(1, gaussian_k, 1, 1).view(
+                -1, envs.size(-2), envs.size(-1)
+            ) if envs is not None else None
+        else:
+            k_env_spatial = k_env_segment = k_env_temporal = k_env_attn = k_envs = None
+
+        # 4. TGP inference (k개 trajectory 생성)
+        tgp_out = self.tgp_model.inference(
+            spatial_ids=k_spatial_ids,
+            segment_ids=k_segment_ids,
+            temporal_ids=k_temporal_ids,
+            attn_mask=k_attn_mask,
+            env_spatial_ids=k_env_spatial,
+            env_segment_ids=k_env_segment,
+            env_temporal_ids=k_env_temporal,
+            env_attn_mask=k_env_attn,
+            envs=k_envs,
+            output_attentions=output_attentions,
+        )
+
+        # (batch*k, pred_len, 2) → (batch, k, pred_len, 2)
+        pred_trajs = tgp_out["pred_trajs"].reshape(
+            batch_size, gaussian_k, self.cfgs.pred_len, self.cfgs.output_dim
+        )
+
+        # 5. BOM loss: k개 중 GT trajectory에 가장 가까운 것만 반영
+        gde_loss, ade_loss, fde_loss = bom_loss_3(
+            sampled_goals,   # (batch, k, 2)
+            pred_trajs,      # (batch, k, pred_len, 2)
+            goal_lbl,        # (batch, 2)
+            traj_lbl,        # (batch, pred_len, 2)
+            k_sample=gaussian_k,
+            output_dim=self.cfgs.output_dim,
+        )
+
+        tgp_loss = ade_loss * traj_weight
+        zero = torch.tensor(0.0, device=goal_lbl.device)
+
+        return {
+            "mgp_loss":    mgp_out["total_loss"],
+            "tgp_loss":    tgp_loss,
+            "ade_loss":    ade_loss,
+            "fde_loss":    fde_loss,
+            "gde_loss":    mgp_out["gde_loss"],
+            "tgp_col_loss": zero,
+            "mgp_col_loss": mgp_out["col_loss"],
+            "kld_loss":    mgp_out["kld_loss"],
+            "pred_trajs":  pred_trajs,
+            "pred_goals":  sampled_goals,
             "goal_attentions": mgp_out["attentions"],
             "traj_attentions": tgp_out["attentions"],
         }

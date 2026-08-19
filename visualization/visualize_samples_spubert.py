@@ -469,8 +469,9 @@ def _collect_samples(args):
             envs_params = item["envs_params"].unsqueeze(0).to(device) if "envs_params" in item else None
 
             if getattr(args, "goal_sampling", False):
-                # Gaussian sampling 경로 — primary_goal 주변에서 k개 샘플, 최적 trajectory 선택
+                # Gaussian sampling 경로 — primary_goal 주변에서 k개 샘플, oracle BOM(ADE 최소) 선택
                 primary_goal_tensor = item["goal_lbl"].unsqueeze(0).to(device)
+                gt_traj_tensor = item["traj_lbl"].unsqueeze(0).to(device)
                 gs_kwargs = dict(
                     mgp_spatial_ids=batched["mgp_spatial_ids"],
                     tgp_temporal_ids=batched["tgp_temporal_ids"],
@@ -479,6 +480,7 @@ def _collect_samples(args):
                     primary_goal=primary_goal_tensor,
                     k=args.goal_k,
                     sigma=args.goal_sigma,
+                    gt_traj=gt_traj_tensor,   # oracle BOM: ADE 최소 trajectory 선택
                 )
                 if args.scene:
                     gs_kwargs.update(dict(
