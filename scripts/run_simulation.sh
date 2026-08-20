@@ -33,10 +33,12 @@ export HUNAV_ROBOT_PATH_PLANNER="${HUNAV_ROBOT_PATH_PLANNER:-nav2}"
 export HUNAV_ROBOT_SAVE_TRAINING_PKL="${HUNAV_ROBOT_SAVE_TRAINING_PKL:-True}"
 export HUNAV_ROBOT_TRAINING_PKL_PATH="/home/hunav_gz_classic_ws/moai_recordings/${run_name}.pkl"
 export HUNAV_ROBOT_SPUBERT_DIAGNOSTICS_PATH="${HUNAV_ROBOT_SPUBERT_DIAGNOSTICS_PATH:-/home/hunav_gz_classic_ws/moai_recordings/${run_name}_spubert_diagnostics.jsonl}"
+export HUNAV_ROBOT_SPUBERT_RUNTIME_SEED="${HUNAV_ROBOT_SPUBERT_RUNTIME_SEED:-21}"
 # HuNav actors are teleported to each computed pose at this rate. 30 Hz keeps
 # pedestrian motion visually smooth while the 500 Hz physics loop leaves
 # enough CPU headroom for Nav2 and Gazebo.
 export HUNAV_UPDATE_RATE="${HUNAV_UPDATE_RATE:-30.0}"
+export HUNAV_PHYSICS_UPDATE_RATE="${HUNAV_PHYSICS_UPDATE_RATE:-500.0}"
 export HUNAV_USE_GAZEBO_GUI="${HUNAV_USE_GAZEBO_GUI:-True}"
 export HUNAV_USE_RVIZ="${HUNAV_USE_RVIZ:-True}"
 export HUNAV_AUTO_GOAL="${HUNAV_AUTO_GOAL:-False}"

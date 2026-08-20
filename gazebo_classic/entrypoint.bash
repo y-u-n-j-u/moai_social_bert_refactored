@@ -31,6 +31,49 @@ HUNAV_ROBOT_TYPE="${HUNAV_ROBOT_TYPE:-pmb2}"
 HUNAV_ROBOT_NAME="${HUNAV_ROBOT_NAME:-$HUNAV_ROBOT_TYPE}"
 HUNAV_AGENT_MOTION_MODEL="${HUNAV_AGENT_MOTION_MODEL:-hunav}"
 HUNAV_NAVIGATION="${HUNAV_NAVIGATION:-False}"
+CONFIG_DIR="/home/hunav_gz_classic_ws/src/hunav_gazebo_wrapper/scenarios"
+
+run_scenario() {
+    local selected_yaml="$1"
+    local map_value
+    local map_name
+    local yaml_name
+
+    map_value=$(grep '^[[:space:]]*map:' "$selected_yaml" | head -n1 | awk -F': ' '{print $2}')
+    map_name="${map_value%.*}"
+    yaml_name=$(basename "$selected_yaml")
+    if [ -z "$map_name" ]; then
+        echo -e "\e[31mScenario does not define a map: $selected_yaml\e[0m"
+        return 2
+    fi
+
+    echo ""
+    echo "Launching scenario: $yaml_name"
+    echo -e "\e[33mros2 launch hunav_gazebo_wrapper simulation.launch.py environment_name:=$map_name configuration_file:=$yaml_name robot_type:=$HUNAV_ROBOT_TYPE robot_name:=$HUNAV_ROBOT_NAME agent_motion_model:=$HUNAV_AGENT_MOTION_MODEL navigation:=$HUNAV_NAVIGATION update_rate:=${HUNAV_UPDATE_RATE:-30.0}\e[0m"
+    echo ""
+    ros2 launch hunav_gazebo_wrapper simulation.launch.py \
+        environment_name:="$map_name" \
+        configuration_file:="$yaml_name" \
+        robot_type:="$HUNAV_ROBOT_TYPE" \
+        robot_name:="$HUNAV_ROBOT_NAME" \
+        agent_motion_model:="$HUNAV_AGENT_MOTION_MODEL" \
+        navigation:="$HUNAV_NAVIGATION" \
+        update_rate:="${HUNAV_UPDATE_RATE:-30.0}"
+}
+
+if [ -n "${HUNAV_SCENARIO:-}" ]; then
+    requested_scenario=$(basename "$HUNAV_SCENARIO")
+    if [[ "$requested_scenario" != *.yaml ]]; then
+        requested_scenario="${requested_scenario}.yaml"
+    fi
+    selected_yaml="$CONFIG_DIR/$requested_scenario"
+    if [ ! -f "$selected_yaml" ]; then
+        echo -e "\e[31mUnknown HUNAV_SCENARIO: $requested_scenario\e[0m"
+        exit 2
+    fi
+    run_scenario "$selected_yaml"
+    exit $?
+fi
 
 echo -e "\e[31mNOTE: First execution may fail if Gazebo takes long time. Stop the system (crtl+c) and re-run from the menu\e[0m"
 # Menu loop
@@ -38,7 +81,6 @@ while true; do
     echo ""
     echo -e "\e[36m========= HuNavSim Docker Menu =========\e[0m"
     #echo -e "\e[33mAvailable YAML environment files:"
-    CONFIG_DIR="/home/hunav_gz_classic_ws/src/hunav_gazebo_wrapper/scenarios"
     yaml_files=($CONFIG_DIR/*.yaml)
     number_of_files=${#yaml_files[@]}
     i=1
@@ -68,14 +110,7 @@ while true; do
         if [ $idx -ge 0 ] && [ $idx -lt ${#yaml_files[@]} ]; then
             selected_yaml="${yaml_files[$idx]}"
             echo "You selected: $selected_yaml"
-            MAP_VALUE=$(grep '^[[:space:]]*map:' "$selected_yaml" | head -n1 | awk -F': ' '{print $2}')
-            map_name="${MAP_VALUE%.*}"
-            yaml_name=$(basename "$selected_yaml")
-            echo ""
-            echo "Launching..."
-            echo -e "\e[33mros2 launch hunav_gazebo_wrapper simulation.launch.py environment_name:=$map_name configuration_file:=$yaml_name robot_type:=$HUNAV_ROBOT_TYPE robot_name:=$HUNAV_ROBOT_NAME agent_motion_model:=$HUNAV_AGENT_MOTION_MODEL navigation:=$HUNAV_NAVIGATION update_rate:=${HUNAV_UPDATE_RATE:-30.0}\e[0m"
-            echo ""
-            ros2 launch hunav_gazebo_wrapper simulation.launch.py environment_name:=$map_name configuration_file:=$yaml_name robot_type:=$HUNAV_ROBOT_TYPE robot_name:=$HUNAV_ROBOT_NAME agent_motion_model:=$HUNAV_AGENT_MOTION_MODEL navigation:=$HUNAV_NAVIGATION update_rate:=${HUNAV_UPDATE_RATE:-30.0}
+            run_scenario "$selected_yaml"
         elif [ "$opt" -eq "$bash_option" ]; then
             echo -e "\e[33mTo open a new terminal inside this Docker container, open a new terminal on your host and run:\e[0m"
             echo -e "\e[3m\e[32mdocker exec -it hunavsim_pmb2 bash\e[0m"

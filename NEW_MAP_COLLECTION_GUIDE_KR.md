@@ -20,6 +20,7 @@ occupancy map과 Gazebo 장애물 위치가 서로 달라지는 문제를 방지
 |---|---:|---|---|
 | `training_slalom` | 24 m x 18 m | 교대로 배치한 벽 3개, 우회 폭 약 3 m 이상, 분산된 보행자 횡단 지점 4개 | 학습 데이터 수집 |
 | `training_open_plaza` | 24 m x 24 m | 1.4 m 섬형 장애물 4개, 넓은 자유 공간 | 학습 데이터 수집 |
+| `training_route_choice` | 22 m x 16 m | 비대칭 중앙 블록, 상·하 우회 선택 | **학습 데이터 수집** |
 | `training_dual_route` | 24 m x 18 m | 중앙에서 벗어난 5 m 블록, 상·하 경로 선택 | **미학습 테스트 맵** |
 
 시각화: `figures/training_map_design/new_maps_overview.png`
@@ -88,9 +89,11 @@ HUNAV_AUTO_GOAL_TIMEOUT=60 \
 
 1. `training_slalom` low/medium/high를 학습용으로 수집한다.
 2. `training_open_plaza` low/medium/high를 학습용으로 수집한다.
-3. 수집 파일을 검사하고 기존 Gazebo 데이터와 합쳐 B seed21 체크포인트에서
-   이어서 fine-tuning한다.
-4. `training_dual_route`는 학습 데이터에 합치지 않고 최종 일반화 평가에만 쓴다.
+3. `training_route_choice`는 `gazebo_classic/ROUTE_CHOICE_SAFE_TEACHER_KR.md`의
+   승인된 virtual-footprint teacher로 수집한다.
+4. recording과 10-run aggregate 품질 게이트를 통과한 파일만 기존 Gazebo
+   데이터와 합쳐 B seed21 체크포인트에서 이어서 fine-tuning한다.
+5. `training_dual_route`는 학습 데이터에 합치지 않고 최종 일반화 평가에만 쓴다.
 
 ## 구현 후 스모크 테스트 결과
 

@@ -108,6 +108,7 @@ def select_guided_goal_candidates(
     envs_params,
     *,
     reject_unknown=True,
+    additional_safe_mask=None,
 ):
 
     if pred_goals.ndim != 3 or pred_goals.size(-1) < 2:
@@ -133,6 +134,19 @@ def select_guided_goal_candidates(
         reject_unknown=reject_unknown,
     )
     candidate_safe_mask = classification["point_safe_mask"]
+    if additional_safe_mask is not None:
+        additional_safe_mask = torch.as_tensor(
+            additional_safe_mask,
+            device=candidate_safe_mask.device,
+            dtype=torch.bool,
+        )
+        if additional_safe_mask.shape != candidate_safe_mask.shape:
+            raise ValueError(
+                "additional_safe_mask must match candidate shape "
+                f"{tuple(candidate_safe_mask.shape)}, got "
+                f"{tuple(additional_safe_mask.shape)}"
+            )
+        candidate_safe_mask = candidate_safe_mask & additional_safe_mask
     in_bounds = classification["point_in_bounds_mask"]
     cell_values = classification["point_cell_values"]
 
@@ -1025,8 +1039,9 @@ class SBertPlusFTModel(SBertModelBase):
         d_sample=0,
         reject_unknown=True,
         top_k=5,
+        candidate_safety_fn=None,
     ):
-        """Run one TGP for each of the closest map-safe guided goals."""
+        """Run TGP for the closest goals that pass map and runtime safety."""
         if not self.cfgs.guidance_conditioned:
             raise ValueError(
                 "inference_guided_candidates requires a guidance-conditioned MGP"
@@ -1046,12 +1061,18 @@ class SBertPlusFTModel(SBertModelBase):
             d_sample=d_sample,
         )
         candidate_goals = mgp_out["pred_goals"]
+        additional_safe_mask = (
+            candidate_safety_fn(candidate_goals)
+            if candidate_safety_fn is not None
+            else None
+        )
         selection = select_guided_goal_candidates(
             candidate_goals,
             guidance_points,
             envs,
             envs_params,
             reject_unknown=reject_unknown,
+            additional_safe_mask=additional_safe_mask,
         )
 
         batch_size, candidate_count, _ = candidate_goals.shape

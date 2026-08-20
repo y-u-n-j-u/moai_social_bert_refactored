@@ -14,6 +14,7 @@ from hunav_msgs.msg import Agent, Agents
 from nav_msgs.msg import Path
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from std_msgs.msg import Bool
 
 from .guided_spubert_runtime import guidance_point_along_path
 
@@ -36,6 +37,12 @@ class JackalTeleopDatasetLoggerNode(Node):
         self.global_path_topic = str(
             self.declare_parameter("global_path_topic", "/plan").value
         )
+        self.avoidance_status_topic = str(
+            self.declare_parameter(
+                "avoidance_status_topic",
+                "/moai/human_avoidance_active",
+            ).value
+        )
         self.scenario_name = str(
             self.declare_parameter("scenario_name", "unknown").value
         )
@@ -50,6 +57,12 @@ class JackalTeleopDatasetLoggerNode(Node):
         )
         self.pedestrians_avoid_robot = self._as_bool(
             self.declare_parameter("pedestrians_avoid_robot", True).value
+        )
+        self.human_avoidance_mode = str(
+            self.declare_parameter("human_avoidance_mode", "off").value
+        ).strip().lower()
+        self.human_yield_supervisor = self._as_bool(
+            self.declare_parameter("human_yield_supervisor", False).value
         )
         self.agents_wait_for_goal = self._as_bool(
             self.declare_parameter("agents_wait_for_goal", False).value
@@ -84,6 +97,7 @@ class JackalTeleopDatasetLoggerNode(Node):
         self._latest_humans: Dict[int, Tuple[float, float]] = {}
         self._latest_goal: Optional[Tuple[float, float]] = None
         self._latest_global_path: List[Tuple[float, float]] = []
+        self._human_avoidance_active = False
         self._goal_active = False
         self._has_received_goal = False
         self._last_robot_stamp: Optional[float] = None
@@ -110,6 +124,12 @@ class JackalTeleopDatasetLoggerNode(Node):
             Path,
             self.global_path_topic,
             self._on_global_path,
+            10,
+        )
+        self._avoidance_status_sub = self.create_subscription(
+            Bool,
+            self.avoidance_status_topic,
+            self._on_avoidance_status,
             10,
         )
         self._timer = self.create_timer(1.0 / max(self.timer_rate, 0.1), self._on_timer)
@@ -144,6 +164,9 @@ class JackalTeleopDatasetLoggerNode(Node):
             for agent in msg.agents
         }
         self._last_humans_stamp = self._now_float()
+
+    def _on_avoidance_status(self, msg: Bool) -> None:
+        self._human_avoidance_active = bool(msg.data)
 
     def _on_goal(self, msg: PoseStamped) -> None:
         # A new RViz goal starts a new collection episode. Keeping frames from
@@ -229,6 +252,7 @@ class JackalTeleopDatasetLoggerNode(Node):
                 "goal": self._latest_goal,
                 "goal_stamp": self._last_goal_stamp,
                 "global_path": list(self._latest_global_path),
+                "human_avoidance_active": self._human_avoidance_active,
                 "global_path_stamp": self._last_global_path_stamp,
                 "robot_state_age_s": max(
                     0.0,
@@ -392,6 +416,19 @@ class JackalTeleopDatasetLoggerNode(Node):
             "robot_path_planner": self.robot_path_planner,
             "agent_motion_model": self.agent_motion_model,
             "pedestrians_avoid_robot": self.pedestrians_avoid_robot,
+            "human_avoidance_mode": self.human_avoidance_mode,
+            "human_avoidance_active_any": any(
+                bool(frame["human_avoidance_active"]) for frame in frames
+            ),
+            "human_avoidance_active_observed": any(
+                bool(frame["human_avoidance_active"])
+                for frame in frames[: self.obs_len]
+            ),
+            "human_avoidance_active_future": any(
+                bool(frame["human_avoidance_active"])
+                for frame in frames[self.obs_len :]
+            ),
+            "human_yield_supervisor": self.human_yield_supervisor,
             "agents_wait_for_goal": self.agents_wait_for_goal,
             "collection_seed": self.collection_seed,
             "final_goal": [float(final_goal[0]), float(final_goal[1])],
@@ -475,11 +512,14 @@ class JackalTeleopDatasetLoggerNode(Node):
                 "human_states_topic": self.human_states_topic,
                 "goal_topic": self.goal_topic,
                 "global_path_topic": self.global_path_topic,
+                "avoidance_status_topic": self.avoidance_status_topic,
                 "scenario_name": self.scenario_name,
                 "map_yaml_path": self.map_yaml_path,
                 "robot_path_planner": self.robot_path_planner,
                 "agent_motion_model": self.agent_motion_model,
                 "pedestrians_avoid_robot": self.pedestrians_avoid_robot,
+                "human_avoidance_mode": self.human_avoidance_mode,
+                "human_yield_supervisor": self.human_yield_supervisor,
                 "agents_wait_for_goal": self.agents_wait_for_goal,
                 "collection_seed": self.collection_seed,
                 "require_goal": self.require_goal,

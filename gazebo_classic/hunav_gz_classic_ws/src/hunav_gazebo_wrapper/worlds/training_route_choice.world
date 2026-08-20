@@ -1,0 +1,146 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <world name="default">
+    <gravity>0 0 -9.8</gravity>
+    <physics name="default_physics" type="ode">
+      <max_step_size>0.002</max_step_size>
+      <real_time_factor>1</real_time_factor>
+      <real_time_update_rate>500</real_time_update_rate>
+    </physics>
+    <include><uri>model://sun</uri></include>
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>22.000 16.000 0.02</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>22.000 16.000 0.02</size></box></geometry>
+          <material>
+            <ambient>0.72 0.72 0.72 1</ambient>
+            <diffuse>0.72 0.72 0.72 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_north">
+      <static>true</static>
+      <pose>0.000 7.875 0.500 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>22.000 0.250 1.000</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>22.000 0.250 1.000</size></box></geometry>
+          <material>
+            <ambient>0.35 0.38 0.40 1</ambient>
+            <diffuse>0.35 0.38 0.40 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_south">
+      <static>true</static>
+      <pose>0.000 -7.875 0.500 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>22.000 0.250 1.000</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>22.000 0.250 1.000</size></box></geometry>
+          <material>
+            <ambient>0.35 0.38 0.40 1</ambient>
+            <diffuse>0.35 0.38 0.40 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_west">
+      <static>true</static>
+      <pose>-10.875 0.000 0.500 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.250 16.000 1.000</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.250 16.000 1.000</size></box></geometry>
+          <material>
+            <ambient>0.35 0.38 0.40 1</ambient>
+            <diffuse>0.35 0.38 0.40 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_east">
+      <static>true</static>
+      <pose>10.875 0.000 0.500 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.250 16.000 1.000</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.250 16.000 1.000</size></box></geometry>
+          <material>
+            <ambient>0.35 0.38 0.40 1</ambient>
+            <diffuse>0.35 0.38 0.40 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="route_choice_block">
+      <static>true</static>
+      <pose>2.800 0.800 0.500 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>4.000 5.400 1.000</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>4.000 5.400 1.000</size></box></geometry>
+          <material>
+            <ambient>0.35 0.38 0.40 1</ambient>
+            <diffuse>0.35 0.38 0.40 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="route_choice_upper_island">
+      <static>true</static>
+      <pose>7.000 6.400 0.400 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>1.600 1.200 0.800</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>1.600 1.200 0.800</size></box></geometry>
+          <material>
+            <ambient>0.55 0.45 0.28 1</ambient>
+            <diffuse>0.55 0.45 0.28 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="route_choice_lower_island">
+      <static>true</static>
+      <pose>-6.800 -5.800 0.400 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>1.800 1.200 0.800</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>1.800 1.200 0.800</size></box></geometry>
+          <material>
+            <ambient>0.55 0.45 0.28 1</ambient>
+            <diffuse>0.55 0.45 0.28 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+  </world>
+</sdf>

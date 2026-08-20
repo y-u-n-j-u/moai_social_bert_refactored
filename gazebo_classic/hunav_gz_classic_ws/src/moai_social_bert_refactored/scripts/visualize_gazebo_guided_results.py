@@ -117,6 +117,12 @@ def load_model_and_test_loader(args: argparse.Namespace, checkpoint: Path):
         weights_only=True,
     )
     model = trainer.model.module if trainer.parallel else trainer.model
+    # Older transformers releases did not persist this deterministic buffer.
+    # It is not learned, so recover it from the freshly constructed model
+    # while keeping strict loading for all actual checkpoint parameters.
+    for key, value in model.state_dict().items():
+        if key.endswith(".embeddings.position_ids") and key not in state:
+            state[key] = value
     model.load_state_dict(state)
     model.eval()
     return model, trainer.device, test_loader

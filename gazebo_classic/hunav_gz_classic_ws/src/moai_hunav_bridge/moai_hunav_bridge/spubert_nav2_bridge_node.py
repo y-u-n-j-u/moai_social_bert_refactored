@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import rclpy
 from builtin_interfaces.msg import Duration
+from gazebo_msgs.msg import PerformanceMetrics
 from geometry_msgs.msg import Point, PoseStamped, Quaternion
 from hunav_msgs.msg import Agent, Agents
 from nav2_msgs.action import ComputePathToPose, FollowPath, NavigateToPose
@@ -23,6 +24,7 @@ from .guided_spubert_runtime import (
     GuidedInferenceResult,
     GuidedSpubertRuntime,
     guidance_point_along_path,
+    sample_polyline,
 )
 from .social_bert_compute_agents_node import OccupancyMapProvider
 
@@ -39,6 +41,7 @@ class SpubertNav2BridgeNode(Node):
         "model_map_check_failed",
         "invalid_path_length",
         "nonfinite_path",
+        "robot_footprint_goal_collision",
         "robot_footprint_collision",
         "kinematic_jump",
         "insufficient_goal_progress",
@@ -59,6 +62,12 @@ class SpubertNav2BridgeNode(Node):
 
         self.robot_topic = str(self.declare_parameter("robot_topic", "/robot_states").value)
         self.humans_topic = str(self.declare_parameter("humans_topic", "/human_states").value)
+        self.performance_metrics_topic = str(
+            self.declare_parameter(
+                "performance_metrics_topic",
+                "/performance_metrics",
+            ).value
+        )
         self.goal_topic = str(self.declare_parameter("goal_topic", "/goal_pose").value)
         self.predicted_humans_topic = str(
             self.declare_parameter(
@@ -127,6 +136,9 @@ class SpubertNav2BridgeNode(Node):
         )
         self.use_cuda = self._as_bool(self.declare_parameter("use_cuda", True).value)
         self.d_sample = int(self.declare_parameter("d_sample", 40).value)
+        self.runtime_seed = int(
+            self.declare_parameter("runtime_seed", 21).value
+        )
         self.tgp_top_k = max(
             int(self.declare_parameter("tgp_top_k", 5).value),
             1,
@@ -176,6 +188,7 @@ class SpubertNav2BridgeNode(Node):
 
         self._robot: Optional[Agent] = None
         self._humans: Dict[int, Agent] = {}
+        self._real_time_factor: Optional[float] = None
         self._robot_history: deque[XY] = deque(maxlen=self.obs_len)
         self._human_histories: Dict[int, deque[XY]] = {}
         self._predicted_human_paths: Dict[int, List[XY]] = {}
@@ -222,6 +235,12 @@ class SpubertNav2BridgeNode(Node):
             self._on_humans,
             10,
         )
+        self._performance_sub = self.create_subscription(
+            PerformanceMetrics,
+            self.performance_metrics_topic,
+            self._on_performance_metrics,
+            10,
+        )
         self._goal_sub = self.create_subscription(
             PoseStamped,
             self.goal_topic,
@@ -266,6 +285,7 @@ class SpubertNav2BridgeNode(Node):
             "map_yaml_path": self.map_yaml_path,
             "use_cuda": bool(self.use_cuda),
             "d_sample": int(self.d_sample),
+            "runtime_seed": int(self.runtime_seed),
             "tgp_top_k": int(self.tgp_top_k),
             "guidance_radius_m": float(self.guidance_radius),
             "replan_period_s": float(self.replan_period),
@@ -307,8 +327,10 @@ class SpubertNav2BridgeNode(Node):
                 map_provider=self._map_provider,
                 use_cuda=self.use_cuda,
                 d_sample=self.d_sample,
+                runtime_seed=self.runtime_seed,
                 guidance_radius=self.guidance_radius,
                 tgp_top_k=self.tgp_top_k,
+                footprint_radius=self.robot_radius + self.static_safety_margin,
                 logger=self.get_logger(),
             )
             if self._runtime.obs_len != self.obs_len:
@@ -330,6 +352,10 @@ class SpubertNav2BridgeNode(Node):
 
     def _on_humans(self, msg: Agents) -> None:
         self._humans = {int(agent.id): agent for agent in msg.agents}
+
+    def _on_performance_metrics(self, msg: PerformanceMetrics) -> None:
+        value = float(msg.real_time_factor)
+        self._real_time_factor = value if math.isfinite(value) else None
 
     def _on_goal(self, msg: PoseStamped) -> None:
         self._goal_generation += 1
@@ -669,6 +695,9 @@ class SpubertNav2BridgeNode(Node):
         if self._map_provider is None:
             return False, "map_unavailable"
 
+        if diagnostics["selected_goal_footprint_collision"]:
+            return False, "robot_footprint_goal_collision"
+
         if diagnostics["footprint_collision_count"] > 0:
             return False, "robot_footprint_collision"
 
@@ -696,6 +725,13 @@ class SpubertNav2BridgeNode(Node):
             float(self._goal.pose.position.y),
         )
         footprint_radius = self.robot_radius + self.static_safety_margin
+        selected_goal_footprint_collision = (
+            self._map_provider.path_collision_cost(
+                [result.selected_goal_world],
+                radius=footprint_radius,
+                weight=1.0,
+            ) > 0.0
+        ) if self._map_provider is not None else True
         collision_steps = [
             index
             for index, point in enumerate(result.path_world)
@@ -703,6 +739,20 @@ class SpubertNav2BridgeNode(Node):
                 [point], radius=footprint_radius, weight=1.0
             ) > 0.0
         ] if self._map_provider is not None else []
+        swept_path = sample_polyline(
+            [current, *result.path_world],
+            max_spacing=max(
+                float(getattr(self._map_provider, "resolution", 0.05)) * 0.5,
+                0.01,
+            ),
+        )
+        swept_collision_samples = [
+            index
+            for index, point in enumerate(swept_path)
+            if self._map_provider.path_collision_cost(
+                [point], radius=footprint_radius, weight=1.0
+            ) > 0.0
+        ] if self._map_provider is not None else list(range(len(swept_path)))
 
         previous = current
         step_distances = []
@@ -732,8 +782,13 @@ class SpubertNav2BridgeNode(Node):
             "trajectory_map_safe": bool(result.trajectory_map_safe),
             "execution_valid": bool(result.execution_valid),
             "footprint_radius_m": float(footprint_radius),
+            "selected_goal_footprint_collision": bool(
+                selected_goal_footprint_collision
+            ),
             "footprint_collision_steps": collision_steps,
-            "footprint_collision_count": len(collision_steps),
+            "footprint_collision_count": len(swept_collision_samples),
+            "swept_path_sample_count": len(swept_path),
+            "swept_collision_sample_indices": swept_collision_samples,
             "step_distances_m": step_distances,
             "max_step_m": float(max_step_m),
             "max_step_index": int(max_step_index),
@@ -811,6 +866,16 @@ class SpubertNav2BridgeNode(Node):
                     float(human.position.position.x),
                     float(human.position.position.y),
                 ],
+                "yaw": float(human.yaw),
+                "linear_velocity": [
+                    float(human.velocity.linear.x),
+                    float(human.velocity.linear.y),
+                ],
+                "linear_speed": float(human.linear_vel),
+                "angular_speed": float(human.angular_vel),
+                "desired_speed": float(human.desired_velocity),
+                "active_goal_count": len(human.goals),
+                "cyclic_goals": bool(human.cyclic_goals),
                 "radius": float(human.radius),
                 "predicted": [
                     [float(x), float(y)]
@@ -821,6 +886,7 @@ class SpubertNav2BridgeNode(Node):
             "goal_generation": int(self._goal_generation),
             "valid": bool(valid),
             "reason": str(reason),
+            "real_time_factor": self._real_time_factor,
             "robot": [
                 float(robot.position.position.x),
                 float(robot.position.position.y),
@@ -839,6 +905,8 @@ class SpubertNav2BridgeNode(Node):
             "global_path_pose_count": len(self._route_path),
             "global_path_length_m": float(self._route_path_length_m),
             "candidate_goals": [list(point) for point in result.candidate_goals_world],
+            "candidate_footprint_safe_mask": list(result.candidate_safe_mask),
+            "candidate_footprint_safe_count": int(sum(result.candidate_safe_mask)),
             "tgp_top_k": int(self.tgp_top_k),
             "rejection_streak_before": int(self._consecutive_rejections),
             "rejection_streak_limit": int(self.rejection_streak_limit),

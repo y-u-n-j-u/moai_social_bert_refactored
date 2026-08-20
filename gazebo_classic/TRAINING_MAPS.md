@@ -1,51 +1,74 @@
 # SPU-BERT training maps
 
-The dataset collection suite contains three controlled social-navigation maps.
-Their occupancy grids and Gazebo collision models are generated together by:
+The Gazebo dataset suite contains eight training maps and one held-out test
+map. Occupancy grids, Gazebo collision models, and pedestrian scenarios are
+generated from the same geometry definitions:
 
 ```bash
-./scripts/generate_training_maps.py
+cd /home/junwoo/capstone/moai_social_bert_refactored
+/home/junwoo/miniconda3/envs/spubert/bin/python3.8 scripts/generate_training_maps.py
 ```
 
-| Map | Size | Main interaction | Pedestrian scenarios |
+| Map | Size | Primary interaction | Role |
 |---|---:|---|---|
-| `training_corridor` | 20 x 8 m | frontal approach, passing, following | 2 / 4 / 6 |
-| `training_intersection` | 18 x 18 m | perpendicular crossing | 4 / 6 / 8 |
-| `training_doorway` | 14 x 12 m | 1.5 m doorway bottleneck | 2 / 4 / 6 |
+| `training_corridor` | 20 x 8 m | passing and following | train |
+| `training_intersection` | 18 x 18 m | perpendicular crossing | train |
+| `training_doorway` | 14 x 12 m | doorway yielding | train |
+| `training_slalom` | 24 x 18 m | repeated static detours | train |
+| `training_open_plaza` | 24 x 24 m | unconstrained multi-human motion | train |
+| `training_route_choice` | 22 x 16 m | upper/lower bypass choice | train |
+| `training_bottleneck_merge` | 22 x 16 m | offset entry and narrow merge | train candidate |
+| `training_outdoor_chicane` | 26 x 20 m | outdoor-style S detour | train candidate |
+| `training_dual_route` | 24 x 18 m | unseen route-choice topology | held-out test only |
 
-Each map has `low`, `medium`, and `high` density scenario YAML files. The
-terminal menu discovers these files automatically.
+Every map has `low`, `medium`, and `high` density YAMLs containing 2, 3, and
+4 pedestrians. The two candidate maps become admitted training sources only
+after a ten-seed pilot passes the quality gate. Recordings from
+`training_dual_route` must never enter train or validation PKLs.
 
-The model receives an 8 x 8 m robot-centered map downsampled to 32 x 32 cells.
-The controlled maps place the relevant wall, intersection, or doorway inside
-that local field of view during the interaction. The global maps remain large
-enough to provide 8--20 m robot routes for guidance-point training.
+## Route-aware input
 
-## Basic waypoint curriculum
+The processed model input uses a 20 x 20 m robot-centered occupancy crop
+downsampled to 32 x 32 cells. Guidance is not the point eight metres along the
+straight robot-to-goal segment. It is selected by:
 
-Automatic collection defaults to repeatable centerline waypoint routes:
+1. computing a collision-free Nav2/A* global path;
+2. finding the path point nearest the current robot pose;
+3. accumulating arc length along that path;
+4. selecting the point at 8 m, or the final goal when less than 8 m remains.
 
-| Map | Robot route |
-|---|---|
-| `training_corridor` | `(-8, 0) <-> (8, 0)` |
-| `training_doorway` | `(-5.5, 0) <-> (5.5, 0)` |
-| `training_intersection` | `(-7.5, 0) <-> (7.5, 0)` |
+The route-choice, bottleneck, and chicane designs all block the direct
+start-goal segment. This makes route-aware guidance observable in the dataset
+instead of allowing the model to succeed on straight open-space examples.
 
-Pedestrian timing, direction, speed, and density provide variation while the
-robot first learns basic passing, yielding, following, doorway, and crossing
-interactions. Set `HUNAV_AUTO_GOAL_MODE=random` only for a later
-generalization-collection stage. A custom route can be supplied as
-`HUNAV_AUTO_GOAL_WAYPOINTS='-8,0;8,0'`.
+## Joint scenarios
 
-## Collection policy
+Six deterministic scenarios combine static detours with purposeful pedestrian
+encounters:
 
-- Collect all three density levels rather than training on one fixed count.
-- Use automatic waypoints only after Nav2 validates `ComputePathToPose`.
-- Keep complete goal episodes together when creating train/val/test splits.
-- Hold out complete runs, and preferably one layout variant, for testing.
-- Reject or label timeout, collision, and long stationary episodes.
-- Record the map name, scenario YAML, random seed, and Nav2 result with each
-  recording before scaling collection.
+| Scenario suffix | Map | Agents | Interaction |
+|---|---|---:|---|
+| `lower_crossing` | `training_route_choice` | 2 | lower bypass + crossings |
+| `upper_crossing` | `training_route_choice` | 2 | upper bypass + crossings |
+| `lower_oncoming` | `training_route_choice` | 2 | lower bypass + counterflow |
+| `upper_oncoming` | `training_route_choice` | 2 | upper bypass + counterflow |
+| `bottleneck_merge_joint_gate` | `training_bottleneck_merge` | 3 | gate merge + adjacent counterflow |
+| `outdoor_chicane_joint_crossing` | `training_outdoor_chicane` | 3 | S detour + three crossings |
+
+Joint-scenario pedestrians use one-pass goals. A cyclic return caused an
+unintended second encounter and physical overlap, so repeated timing diversity
+is produced by episode start profiles and seeds instead of mid-episode U-turns.
+
+## Design visualization
+
+```bash
+MPLCONFIGDIR=/tmp/mpl python3 scripts/visualize_joint_interaction_designs.py
+```
+
+The output is
+`figures/training_map_design/joint_interaction_scenarios.png`. It overlays the
+old straight direction, old GP, collision-free route, route-aware GP, and all
+pedestrian tracks.
 
 ## Files
 
@@ -54,4 +77,6 @@ hunav_gazebo_wrapper/maps/training_*.pgm
 hunav_gazebo_wrapper/maps/training_*.yaml
 hunav_gazebo_wrapper/worlds/training_*.world
 hunav_gazebo_wrapper/scenarios/agents_training_*_{low,medium,high}.yaml
+hunav_gazebo_wrapper/scenarios/agents_training_*_joint_*.yaml
+hunav_gazebo_wrapper/scenarios/joint_interaction_catalog.json
 ```

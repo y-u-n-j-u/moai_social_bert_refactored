@@ -3,6 +3,8 @@ import sys
 import types
 import unittest
 
+import torch
+
 from moai_hunav_bridge.guided_spubert_runtime import (
     GuidedSpubertRuntime,
     guidance_point,
@@ -10,11 +12,20 @@ from moai_hunav_bridge.guided_spubert_runtime import (
     heading_from_history,
     local_to_world,
     pad_history,
+    sample_polyline,
+    seed_runtime_rng,
     world_to_local,
 )
 
 
 class GuidedSpubertGeometryTest(unittest.TestCase):
+    def test_runtime_seed_reproduces_mgp_random_stream(self):
+        seed_runtime_rng(21, torch)
+        first = torch.randn(4)
+        seed_runtime_rng(21, torch)
+        second = torch.randn(4)
+        self.assertTrue(torch.equal(first, second))
+
     def test_guidance_point_uses_circle_intersection(self):
         point = guidance_point((1.0, 2.0), (11.0, 2.0), 8.0)
         self.assertAlmostEqual(point[0], 9.0)
@@ -56,6 +67,38 @@ class GuidedSpubertGeometryTest(unittest.TestCase):
     def test_route_guidance_rejects_empty_path(self):
         with self.assertRaises(ValueError):
             guidance_point_along_path([], (0.0, 0.0), (1.0, 0.0), 8.0)
+
+    def test_polyline_sampling_checks_between_sparse_tgp_points(self):
+        points = sample_polyline([(0.0, 0.0), (1.0, 0.0)], max_spacing=0.3)
+        self.assertEqual(len(points), 5)
+        self.assertEqual(points[0], (0.0, 0.0))
+        self.assertEqual(points[-1], (1.0, 0.0))
+        self.assertTrue(any(0.4 < x < 0.6 for x, _ in points))
+
+    def test_polyline_sampling_rejects_invalid_spacing(self):
+        with self.assertRaises(ValueError):
+            sample_polyline([(0.0, 0.0), (1.0, 0.0)], max_spacing=0.0)
+
+    def test_candidate_mask_uses_world_footprint_collision(self):
+        class FakeMapProvider:
+            @staticmethod
+            def path_collision_cost(path, radius, weight):
+                self.assertAlmostEqual(radius, 0.375)
+                return weight if path[0][0] >= 2.0 else 0.0
+
+        runtime = GuidedSpubertRuntime.__new__(GuidedSpubertRuntime)
+        runtime.map_provider = FakeMapProvider()
+        runtime.footprint_radius = 0.375
+        runtime.torch = torch
+        candidates = torch.tensor([[[0.5, 0.0], [1.5, 0.0]]])
+
+        mask = runtime._candidate_footprint_safe_mask(
+            candidates,
+            origin=(1.0, 0.0),
+            theta=0.0,
+        )
+
+        self.assertEqual(mask.tolist(), [[True, False]])
 
     def test_target_frame_round_trip(self):
         world = (4.5, -1.25)

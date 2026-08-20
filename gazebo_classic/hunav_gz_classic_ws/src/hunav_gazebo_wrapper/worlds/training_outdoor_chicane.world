@@ -1,0 +1,163 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <world name="default">
+    <gravity>0 0 -9.8</gravity>
+    <physics name="default_physics" type="ode">
+      <max_step_size>0.002</max_step_size>
+      <real_time_factor>1</real_time_factor>
+      <real_time_update_rate>500</real_time_update_rate>
+    </physics>
+    <include><uri>model://sun</uri></include>
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>26.000 20.000 0.02</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>26.000 20.000 0.02</size></box></geometry>
+          <material>
+            <ambient>0.72 0.72 0.72 1</ambient>
+            <diffuse>0.72 0.72 0.72 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_north">
+      <static>true</static>
+      <pose>0.000 9.875 0.500 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>26.000 0.250 1.000</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>26.000 0.250 1.000</size></box></geometry>
+          <material>
+            <ambient>0.35 0.38 0.40 1</ambient>
+            <diffuse>0.35 0.38 0.40 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_south">
+      <static>true</static>
+      <pose>0.000 -9.875 0.500 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>26.000 0.250 1.000</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>26.000 0.250 1.000</size></box></geometry>
+          <material>
+            <ambient>0.35 0.38 0.40 1</ambient>
+            <diffuse>0.35 0.38 0.40 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_west">
+      <static>true</static>
+      <pose>-12.875 0.000 0.500 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.250 20.000 1.000</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.250 20.000 1.000</size></box></geometry>
+          <material>
+            <ambient>0.35 0.38 0.40 1</ambient>
+            <diffuse>0.35 0.38 0.40 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_east">
+      <static>true</static>
+      <pose>12.875 0.000 0.500 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.250 20.000 1.000</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.250 20.000 1.000</size></box></geometry>
+          <material>
+            <ambient>0.35 0.38 0.40 1</ambient>
+            <diffuse>0.35 0.38 0.40 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="chicane_planter_west">
+      <static>true</static>
+      <pose>-3.000 2.500 0.400 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>3.000 5.500 0.800</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>3.000 5.500 0.800</size></box></geometry>
+          <material>
+            <ambient>0.28 0.48 0.34 1</ambient>
+            <diffuse>0.28 0.48 0.34 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="chicane_planter_east">
+      <static>true</static>
+      <pose>3.000 -2.500 0.400 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>3.000 5.500 0.800</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>3.000 5.500 0.800</size></box></geometry>
+          <material>
+            <ambient>0.28 0.48 0.34 1</ambient>
+            <diffuse>0.28 0.48 0.34 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="chicane_island_nw">
+      <static>true</static>
+      <pose>-9.000 6.800 0.350 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>1.800 1.200 0.700</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>1.800 1.200 0.700</size></box></geometry>
+          <material>
+            <ambient>0.55 0.45 0.28 1</ambient>
+            <diffuse>0.55 0.45 0.28 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="chicane_island_se">
+      <static>true</static>
+      <pose>9.000 -6.800 0.350 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>1.800 1.200 0.700</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>1.800 1.200 0.700</size></box></geometry>
+          <material>
+            <ambient>0.55 0.45 0.28 1</ambient>
+            <diffuse>0.55 0.45 0.28 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+  </world>
+</sdf>

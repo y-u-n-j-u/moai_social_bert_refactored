@@ -1,0 +1,101 @@
+hunav_loader:
+  ros__parameters:
+    yaml_base_name: agents_training_dual_route_joint_crossing
+    simulator: Gazebo Classic
+    map: training_dual_route
+    publish_people: true
+    global_goals:
+      1:
+        x: -2.000
+        y: -5.500
+      2:
+        x: -2.000
+        y: 5.500
+      3:
+        x: 9.000
+        y: -3.500
+      4:
+        x: -9.000
+        y: -3.500
+      5:
+        x: 9.000
+        y: 3.500
+      6:
+        x: -9.000
+        y: 3.500
+    agents:
+      - agent1
+      - agent2
+      - agent3
+    # Timed to cross the robot centerline before it reaches the route split.
+    agent1:
+      id: 1
+      group_id: -1
+      skin: 0
+      max_vel: 0.55
+      radius: 0.33
+      goal_radius: 0.45
+      cyclic_goals: true
+      init_pose:
+        x: -2.000
+        y: -5.500
+        z: 1.250
+        h: 1.57080
+      behavior:
+        type: Regular
+        configuration: 1
+        goal_force_factor: 2.0
+        obstacle_force_factor: 5.0
+        social_force_factor: 2.2
+        other_force_factor: 6.0
+      goals:
+        - 2
+        - 1
+    # One pedestrian approaches through each bypass. Whichever route Nav2
+    # selects, the robot receives an oncoming interaction instead of open space.
+    agent2:
+      id: 2
+      group_id: -1
+      skin: 1
+      max_vel: 0.65
+      radius: 0.33
+      goal_radius: 0.45
+      cyclic_goals: true
+      init_pose:
+        x: 9.000
+        y: -3.500
+        z: 1.250
+        h: 3.14159
+      behavior:
+        type: Regular
+        configuration: 1
+        goal_force_factor: 2.0
+        obstacle_force_factor: 5.0
+        social_force_factor: 2.2
+        other_force_factor: 6.0
+      goals:
+        - 4
+        - 3
+    agent3:
+      id: 3
+      group_id: -1
+      skin: 2
+      max_vel: 0.65
+      radius: 0.33
+      goal_radius: 0.45
+      cyclic_goals: true
+      init_pose:
+        x: 9.000
+        y: 3.500
+        z: 1.250
+        h: 3.14159
+      behavior:
+        type: Regular
+        configuration: 1
+        goal_force_factor: 2.0
+        obstacle_force_factor: 5.0
+        social_force_factor: 2.2
+        other_force_factor: 6.0
+      goals:
+        - 6
+        - 5

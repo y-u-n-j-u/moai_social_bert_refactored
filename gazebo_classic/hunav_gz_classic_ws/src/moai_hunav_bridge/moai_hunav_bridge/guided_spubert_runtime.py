@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import math
 import os
+import random
 import sys
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -11,6 +12,19 @@ import numpy as np
 
 
 XY = Tuple[float, float]
+
+
+def seed_runtime_rng(seed: int, torch_module: Any) -> None:
+    """Seed the stochastic MGP sampler once for a reproducible run."""
+    normalized_seed = int(seed)
+    random.seed(normalized_seed)
+    np.random.seed(normalized_seed)
+    torch_module.manual_seed(normalized_seed)
+    if torch_module.cuda.is_available():
+        torch_module.cuda.manual_seed(normalized_seed)
+        torch_module.cuda.manual_seed_all(normalized_seed)
+    torch_module.backends.cudnn.deterministic = True
+    torch_module.backends.cudnn.benchmark = False
 
 
 @dataclass(frozen=True)
@@ -22,6 +36,7 @@ class GuidedInferenceResult:
     selected_goal_valid: bool
     trajectory_map_safe: bool
     execution_valid: bool
+    candidate_safe_mask: Tuple[bool, ...] = ()
     candidate_rank: int = 1
     candidate_index: int = -1
     guidance_distance_m: float = math.inf
@@ -114,6 +129,32 @@ def guidance_point_along_path(
     return float(final_goal[0]), float(final_goal[1])
 
 
+def sample_polyline(points: Sequence[XY], max_spacing: float) -> List[XY]:
+    """Densely sample every segment, including both polyline endpoints."""
+    spacing = float(max_spacing)
+    if not math.isfinite(spacing) or spacing <= 0.0:
+        raise ValueError("max_spacing must be a positive finite value")
+
+    normalized = [(float(x), float(y)) for x, y in points]
+    if not normalized:
+        return []
+
+    sampled = [normalized[0]]
+    for start, end in zip(normalized, normalized[1:]):
+        dx = end[0] - start[0]
+        dy = end[1] - start[1]
+        distance = math.hypot(dx, dy)
+        steps = max(1, int(math.ceil(distance / spacing)))
+        sampled.extend(
+            (
+                start[0] + dx * step / steps,
+                start[1] + dy * step / steps,
+            )
+            for step in range(1, steps + 1)
+        )
+    return sampled
+
+
 def pad_history(points: Sequence[XY], length: int) -> List[XY]:
     result = [(float(x), float(y)) for x, y in points[-max(int(length), 1) :]]
     if not result:
@@ -161,8 +202,10 @@ class GuidedSpubertRuntime:
         map_provider: Any,
         use_cuda: bool,
         d_sample: int,
+        runtime_seed: int,
         guidance_radius: float,
         tgp_top_k: int,
+        footprint_radius: float,
         logger: Any,
     ) -> None:
         self.repo_path = os.path.abspath(os.path.expanduser(repo_path))
@@ -170,7 +213,9 @@ class GuidedSpubertRuntime:
         self.checkpoint_path = os.path.abspath(os.path.expanduser(checkpoint_path))
         self.map_provider = map_provider
         self.guidance_radius = float(guidance_radius)
+        self.runtime_seed = int(runtime_seed)
         self.tgp_top_k = max(int(tgp_top_k), 1)
+        self.footprint_radius = max(float(footprint_radius), 0.0)
         self.logger = logger
 
         for label, path, predicate in (
@@ -277,9 +322,13 @@ class GuidedSpubertRuntime:
         )
         self.model.to(self.device)
         self.model.eval()
+        # Seed after model construction/loading so inference sampling does not
+        # depend on implementation details of model initialization.
+        seed_runtime_rng(self.runtime_seed, torch)
         logger.info(
             "Loaded guidance-conditioned robot SPU-BERT "
-            f"from {self.checkpoint_path} on {self.device}"
+            f"from {self.checkpoint_path} on {self.device}; "
+            f"runtime_seed={self.runtime_seed}"
         )
 
     @staticmethod
@@ -400,6 +449,11 @@ class GuidedSpubertRuntime:
                 d_sample=self.d_sample,
                 reject_unknown=bool(self.args.reject_unknown_goals),
                 top_k=self.tgp_top_k,
+                candidate_safety_fn=lambda goals: self._candidate_footprint_safe_mask(
+                    goals,
+                    origin=origin,
+                    theta=theta,
+                ),
             )
 
         paths_local = output["guided_pred_trajs"][0].detach().cpu().numpy()
@@ -414,11 +468,16 @@ class GuidedSpubertRuntime:
             "guided_trajectory_map_safe"
         ][0].detach().cpu().numpy()
         execution_valid = output["guided_execution_valid"][0].detach().cpu().numpy()
-        candidates_world = [
-            local_to_world((float(point[0]), float(point[1])), origin, theta)
-            for point in candidates_local
-            if np.isfinite(point[:2]).all()
-        ]
+        candidate_safe = output["candidate_safe_mask"][0].detach().cpu().numpy()
+        candidates_world = []
+        candidate_safe_world = []
+        for index, point in enumerate(candidates_local):
+            if not np.isfinite(point[:2]).all():
+                continue
+            candidates_world.append(
+                local_to_world((float(point[0]), float(point[1])), origin, theta)
+            )
+            candidate_safe_world.append(bool(candidate_safe[index]))
         valid_goal_count = int(np.count_nonzero(goal_valid))
         attempt_count = max(valid_goal_count, 1)
         results = []
@@ -441,12 +500,45 @@ class GuidedSpubertRuntime:
                     selected_goal_valid=bool(goal_valid[rank]),
                     trajectory_map_safe=bool(trajectory_map_safe[rank]),
                     execution_valid=bool(execution_valid[rank]),
+                    candidate_safe_mask=tuple(candidate_safe_world),
                     candidate_rank=rank + 1,
                     candidate_index=int(candidate_indices[rank]),
                     guidance_distance_m=float(guidance_distances[rank]),
                 )
             )
         return results
+
+    def _candidate_footprint_safe_mask(
+        self,
+        candidate_goals: Any,
+        *,
+        origin: XY,
+        theta: float,
+    ) -> Any:
+        candidates = candidate_goals.detach().cpu().numpy()
+        if candidates.ndim != 3 or candidates.shape[0] != 1:
+            raise ValueError(
+                "live candidate footprint filtering expects shape (1,K,2+)"
+            )
+        mask = np.zeros(candidates.shape[:2], dtype=np.bool_)
+        for index, point in enumerate(candidates[0]):
+            if not np.isfinite(point[:2]).all():
+                continue
+            world = local_to_world(
+                (float(point[0]), float(point[1])),
+                origin,
+                theta,
+            )
+            mask[0, index] = self.map_provider.path_collision_cost(
+                [world],
+                radius=self.footprint_radius,
+                weight=1.0,
+            ) <= 0.0
+        return self.torch.as_tensor(
+            mask,
+            dtype=self.torch.bool,
+            device=candidate_goals.device,
+        )
 
     def _build_scene(self, *, origin: XY, theta: float) -> Dict[str, np.ndarray]:
         patches, patch_mask = self.map_provider.scene_patches(

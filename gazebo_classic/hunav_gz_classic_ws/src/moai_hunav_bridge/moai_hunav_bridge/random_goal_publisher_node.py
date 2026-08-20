@@ -36,6 +36,9 @@ DEFAULT_WAYPOINT_ROUTES = {
         (9.0, 0.0),
         (0.0, -9.0),
     ),
+    "training_route_choice": ((-8.2, -1.4), (9.0, -1.4)),
+    "training_bottleneck_merge": ((-9.0, 0.0), (9.0, 0.0)),
+    "training_outdoor_chicane": ((-11.0, 0.0), (11.0, 0.0)),
     "training_dual_route": ((-9.0, 0.0), (9.0, 0.0)),
 }
 
@@ -74,6 +77,9 @@ class RandomGoalPublisherNode(Node):
         )
         self.nav_recovery_retry_period = float(
             self.declare_parameter("nav_recovery_retry_period", 10.0).value
+        )
+        self.nav_ready_request_timeout = float(
+            self.declare_parameter("nav_ready_request_timeout", 3.0).value
         )
         self.seed = int(self.declare_parameter("seed", -1).value)
         self.min_goal_distance = float(self.declare_parameter("min_goal_distance", 6.0).value)
@@ -116,6 +122,8 @@ class RandomGoalPublisherNode(Node):
         self._waiting_logged = False
         self._nav_ready = False
         self._nav_ready_request_pending = False
+        self._nav_ready_request_started_at: Optional[float] = None
+        self._nav_ready_request_future = None
         self._nav_inactive_since: Optional[float] = None
         self._nav_startup_request_pending = False
         self._last_nav_startup_request_at = -math.inf
@@ -271,29 +279,51 @@ class RandomGoalPublisherNode(Node):
         return None
 
     def _request_nav_ready(self) -> None:
-        # On some Nav2 Humble runs the lifecycle manager advertises is_active
-        # but does not answer the Trigger request.  The planner action server
-        # is only usable after planner activation, so it is also a reliable
-        # readiness signal and prevents automatic collection from waiting
-        # forever on that service response.
-        if self._path_client.server_is_ready():
-            self._set_nav_ready("ComputePathToPose action server is ready")
-            return
+        # An action server is created before its lifecycle node is active.
+        # Treating server_is_ready() as navigation readiness can leave a path
+        # request pending forever when Nav2 bringup stalls during activation.
+        now = self._now()
         if self._nav_ready_request_pending:
+            started_at = self._nav_ready_request_started_at
+            if (
+                started_at is not None
+                and now - started_at >= max(self.nav_ready_request_timeout, 0.5)
+            ):
+                future = self._nav_ready_request_future
+                if future is not None:
+                    future.cancel()
+                self._nav_ready_request_pending = False
+                self._nav_ready_request_started_at = None
+                self._nav_ready_request_future = None
+                if self._nav_inactive_since is None:
+                    self._nav_inactive_since = now
+                self.get_logger().warning(
+                    "Nav2 lifecycle readiness request timed out; requesting "
+                    "startup recovery instead of sending a path goal early"
+                )
+                self._request_nav_startup(now)
             return
         if not self._nav_ready_client.service_is_ready():
+            if self._nav_inactive_since is None:
+                self._nav_inactive_since = now
             if not self._waiting_logged:
                 self.get_logger().info(
                     f"Waiting for Nav2 lifecycle service {self.nav_ready_service}..."
                 )
                 self._waiting_logged = True
+            if now - self._nav_inactive_since >= max(self.nav_recovery_delay, 0.0):
+                self._request_nav_startup(now)
             return
         self._nav_ready_request_pending = True
+        self._nav_ready_request_started_at = now
         future = self._nav_ready_client.call_async(Trigger.Request())
+        self._nav_ready_request_future = future
         future.add_done_callback(self._on_nav_ready_response)
 
     def _on_nav_ready_response(self, future) -> None:
         self._nav_ready_request_pending = False
+        self._nav_ready_request_started_at = None
+        self._nav_ready_request_future = None
         try:
             response = future.result()
         except Exception as exc:

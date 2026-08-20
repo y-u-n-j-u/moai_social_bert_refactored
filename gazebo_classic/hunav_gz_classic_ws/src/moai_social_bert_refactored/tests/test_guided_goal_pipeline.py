@@ -196,6 +196,24 @@ class GuidedMapContractTest(unittest.TestCase):
         self.assertFalse(bool(selected["selected_goal_valid"][0]))
         self.assertTrue(bool(selected["all_candidates_invalid"][0]))
 
+    def test_selector_applies_runtime_footprint_mask_before_ranking(self):
+        env = torch.ones(1, 4, 4)
+        params = torch.tensor([[-2.0, -2.0, 4.0, 4.0, 1.0, 2.0]])
+        candidates = torch.tensor([[[0.5, 0.5], [1.5, 0.5]]])
+        guidance = torch.tensor([[0.5, 0.5]])
+
+        selected = select_guided_goal_candidates(
+            candidates,
+            guidance,
+            env,
+            params,
+            additional_safe_mask=torch.tensor([[False, True]]),
+        )
+
+        self.assertEqual(selected["candidate_safe_mask"][0].tolist(), [False, True])
+        self.assertEqual(int(selected["selected_indices"][0]), 1)
+        torch.testing.assert_close(selected["selected_goals"][0], candidates[0, 1])
+
     def test_guided_inference_zeros_trajectory_when_all_candidates_are_invalid(self):
         model = SBertPlusFTModel.__new__(SBertPlusFTModel)
         torch.nn.Module.__init__(model)

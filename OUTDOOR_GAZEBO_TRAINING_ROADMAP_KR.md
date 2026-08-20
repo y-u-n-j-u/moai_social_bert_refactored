@@ -54,7 +54,64 @@ Intersection Low에서는 수집 시작 동기화의 중요성이 확인됐다.
 
 동기화된 유효 sample은 route GP, swept-footprint, 속도, 가속도, yaw-rate, timing 검사를 모두 통과했다. 그러나 같은 episode에서 보행자가 정지한 로봇을 통과하며 물리 반경 합보다 가까워지는 구간이 생겼다. 따라서 `HUNAV_USE_NAVGOAL_TO_START=True`는 수집 기본 조건으로 사용하되, 현재 Intersection Low를 그대로 positive 데이터 대량 수집에 사용하면 안 된다. 충돌 구간은 hard-negative/evaluation으로 보존하고, positive 수집에는 안전거리를 지키는 teacher와 시나리오 배치가 필요하다.
 
-아직 완료되지 않은 항목은 collision-safe expert 재조정, 10-seed 근접 상호작용 재검증, 150-episode pilot 수집, 5,952개 원본 데이터 재가공, collision-loss ablation 학습, 보지 않은 맵의 반복 폐루프 평가, 실제 로봇 안전 계층 구현이다. 따라서 현재 상태는 **학습/수집 파이프라인 기반 구현 완료, 새 모델 학습과 야외 주행 검증 전**이다.
+### 2.2 Intersection safe-teacher V3 검증
+
+기존 맵과 `agents_training_intersection_low.yaml`은 baseline으로 보존했다. 별도
+`agents_training_intersection_safe_teacher_low.yaml`에서 다음을 변경했다.
+
+- 로봇을 교차로 바깥에서 출발시키고 보행자 1명이 수직 횡단
+- one-way coupling으로 Nav2 teacher가 양보 책임을 가짐
+- 사람 obstacle cloud 10 Hz, 2.4초 예측, 0.65 m 추가 margin
+- teacher 전용 Nav2에서 짧은 후진 금지(`vx_min=0.0`)
+- goal y를 좁은 corridor 중심선 기준 `-0.2..0.2 m`로 제한
+- 실제 시작점-목표가 서로 다른 10개 encounter profile 사용
+
+초기 탐색에서 y=+0.4 profile은 2개 중 하나가 map collision, 하나가 최소거리
+1.167 m로 실패했다. 이 결과는 hard-negative/evaluation으로 보존하고 profile
+범위를 줄였다. 최종 V3 결과는 다음과 같다.
+
+| 항목 | 최종 결과 |
+| --- | ---: |
+| 고유 encounter profile | 10 |
+| recording 품질 게이트 | **10/10 통과** |
+| raw window | 63 |
+| `clean_social` window | 36 |
+| 전체 최소 사람 중심거리 | **1.332 m** |
+| 물리/사회거리 위반 | 0 |
+| map/route/속도/가속도/yaw/timing 위반 | 0 |
+| 인프라 재시도 | 0 |
+
+결과 파일은
+`gazebo_classic/hunav_gz_classic_ws/moai_recordings/intersection_safe_teacher_v3_corridor_safe_20260810/pilot_summary.json`에 있다. 이 결과는 수집 파이프라인과 단일 횡단형 low-density teacher의 승인이지, 전체 맵과 보행자 행동 일반화가 완료됐다는 뜻은 아니다.
+
+### 2.3 Route-choice safe-teacher V3 검증
+
+held-out `training_dual_route`를 학습에 노출하지 않고 route topology를 학습시키기
+위해 형상이 다른 `training_route_choice` 맵을 추가했다. start-goal 직선은 중앙
+블록과 충돌하며, Nav2 route GP가 위/아래 우회 방향을 제공한다.
+
+V1은 사람 lane과 장애물 margin 문제로 0/2였고, V2는 2-profile smoke는
+통과했지만 10-profile에서 6/10만 통과했다. 실패 4회는 모두 중앙 블록의
+왼쪽 위 코너에서 `target_map_collision`이 발생했다. 사람거리와 route GP는
+정상이었으므로 원인은 모델이 아니라 Nav2 teacher의 soft clearance였다.
+
+V3는 실제 반경 0.275 m 대신 수집 costmap에 0.40 m virtual footprint를 사용해
+데이터 기준 0.375 m를 hard constraint로 만들었다. 동일 profile의 코너 최소
+여유는 0.335 m에서 0.455 m로 증가했다.
+
+| 항목 | Route-choice V3 |
+| --- | ---: |
+| 고유 encounter profile | 10 |
+| recording 품질 게이트 | **10/10 통과** |
+| raw / clean_all window | 83 / 83 |
+| `clean_social` window | 38 |
+| 전체 최소 사람 중심거리 | **1.561 m** |
+| map/route/kinematic/timing 위반 | 0 |
+
+상세 내용과 비교 그림은 `gazebo_classic/ROUTE_CHOICE_SAFE_TEACHER_KR.md` 및
+`figures/training_map_design/route_choice_teacher_v2_v3_clearance.png`에 있다.
+
+아직 완료되지 않은 항목은 medium/high-density safe-teacher 확장, 150-episode pilot 수집, 5,952개 원본 데이터 재가공, collision-loss ablation 학습, 보지 않은 맵의 반복 폐루프 평가, 실제 로봇 안전 계층 구현이다. 따라서 현재 상태는 **학습/수집 파이프라인 기반 구현 완료, 새 모델 학습과 야외 주행 검증 전**이다.
 
 ## 3. 현재 가장 큰 문제
 
@@ -125,7 +182,7 @@ Pilot 결과를 보고 기준을 완화하거나 강화한다. 기준을 바꿀 
 - 야외와 닮은 최종 2개 이상 맵은 학습에 절대 넣지 않고 closed-loop test 전용으로 보관한다.
 - 보행자 수와 interaction category 비율을 train/validation에서 확인한다.
 
-현재 `prepare_gazebo_splits.py`는 episode leakage를 막는다. 다음 데이터 버전에서는 map/scenario metadata를 이용한 held-out-map split을 추가해야 한다.
+현재 `prepare_gazebo_splits.py`는 `recording_id + episode_id` leakage를 막고, `training_dual_route`를 기본 held-out map으로 제외한다. 또한 run qualification과 최소 10회 aggregate pilot 통과를 기본 요구해 failed pilot과 smoke data가 학습에 섞이지 않게 한다. 전체 recordings smoke에서 승인된 Intersection 36개와 Route-choice 38개만 남았고 50/12/12 sample, 14/3/3 episode로 분리됐다.
 
 ## 7. 학습 순서
 
@@ -181,12 +238,12 @@ ADE가 조금 낮다는 이유만으로 모델을 선택하지 않는다. 안전
 
 1. 연구실 또는 백업에서 기존 5,952개를 만든 raw/processed PKL과 수집 manifest를 가져온다.
 2. 새 route GP 후처리를 실행하고 `basic_failure_reasons`를 확인한다.
-3. 보행자 시작 동기화를 켜고 collision-safe Nav2 teacher와 시나리오 간격을 조정한다.
-4. Intersection/교차/정면 통과를 각 10 seed로 시험해 중심거리 1.2 m 미만 positive가 0인지 확인한다.
-5. 기준을 통과한 설정만 사용해 150-episode pilot을 새 stride와 metadata로 수집한다.
-6. old 5,952 route 재가공 데이터와 새 pilot을 recording 단위로 합친다.
-7. episode-safe + held-out-map split을 만든다.
-8. collision ablation 3개를 학습한다.
+3. 완료: Intersection Low safe-teacher 10개 profile을 10/10 승인했다.
+4. 완료: 별도 Route-choice 학습 맵과 virtual-footprint teacher를 10/10 승인했다.
+5. 완료: failed/smoke pilot과 Dual Route를 자동 제외하는 quality + held-out split guard를 추가했다.
+6. 다음: 정면/추월 및 medium-density teacher를 같은 방식으로 승인한 뒤 150-episode pilot을 수집한다.
+7. old 5,952 route 재가공 데이터와 새 승인 pilot을 recording 단위로 합친다.
+8. `col_weight=0.0, 0.1, 1.0` collision ablation 3개를 학습한다.
 9. Dual Route Low/Medium/High와 보지 않은 맵에서 3-seed closed-loop 평가를 실행한다.
 
 원본 PKL을 확보하기 전에는 새 모델 학습을 시작하지 않는다. 지금 저장소에 있는 checkpoint는 보존하고, 데이터와 config와 output 이름을 새 버전으로 분리한다.

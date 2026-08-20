@@ -100,6 +100,13 @@ void WorldGenerator::readPluginParams()
   plug_use_gazebo_obs_ = this->declare_parameter<bool>("use_gazebo_obs", false);
   plug_use_collision_ = this->declare_parameter<bool>("use_collision", false);
   plug_update_rate_ = this->declare_parameter<double>("update_rate", 100.0);
+  physics_update_rate_ = this->declare_parameter<double>("physics_update_rate", 500.0);
+  if (physics_update_rate_ <= 0.0)
+  {
+    RCLCPP_WARN(this->get_logger(), "Invalid physics_update_rate %.2f; using 500 Hz",
+                physics_update_rate_);
+    physics_update_rate_ = 500.0;
+  }
   plug_robot_name_ = this->declare_parameter<std::string>("robot_name", std::string("robot"));
   RCLCPP_INFO(this->get_logger(), "Robot name: %s", plug_robot_name_.c_str());
   plug_global_frame_ = this->declare_parameter<std::string>("global_frame_to_publish", std::string("map"));
@@ -345,13 +352,12 @@ bool WorldGenerator::processXML()
   tinyxml2::XMLElement* physics_tag = doc.NewElement("physics");
   physics_tag->SetAttribute("type", "ode");
   tinyxml2::XMLElement* max_step = doc.NewElement("max_step_size");
-  // Keep PMB2 contact dynamics stable while cutting the original 1000 Hz
-  // physics load in half.
-  max_step->SetText(0.002);
+  const double max_step_size = 1.0 / physics_update_rate_;
+  max_step->SetText(max_step_size);
   tinyxml2::XMLElement* time_factor = doc.NewElement("real_time_factor");
   time_factor->SetText(1);
   tinyxml2::XMLElement* time_rate = doc.NewElement("real_time_update_rate");
-  time_rate->SetText(500);
+  time_rate->SetText(physics_update_rate_);
 
   // Check if the tag <physics> exists
   tinyxml2::XMLElement* physics =
@@ -378,7 +384,7 @@ bool WorldGenerator::processXML()
       phy->InsertFirstChild(max_step);
       mss = phy->FirstChildElement("max_step_size");
     }
-    mss->SetText(0.002);
+    mss->SetText(max_step_size);
 
     XMLElement* rtf = phy->FirstChildElement("real_time_factor");
     if (rtf == nullptr)
@@ -394,7 +400,7 @@ bool WorldGenerator::processXML()
       phy->InsertAfterChild(time_factor, time_rate);
       rtur = phy->FirstChildElement("real_time_update_rate");
     }
-    rtur->SetText(500);
+    rtur->SetText(physics_update_rate_);
   }
 
   // CREATE PLUGIN TAG

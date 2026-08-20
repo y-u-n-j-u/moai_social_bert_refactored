@@ -51,13 +51,151 @@ def finite(values: Iterable[Optional[float]]) -> List[float]:
 def stats(values: Iterable[Optional[float]]) -> Dict[str, Optional[float]]:
     items = finite(values)
     if not items:
-        return {"min": None, "median": None, "mean": None, "max": None}
+        return {
+            "min": None,
+            "p10": None,
+            "median": None,
+            "mean": None,
+            "p90": None,
+            "max": None,
+        }
     array = np.asarray(items, dtype=float)
     return {
         "min": float(np.min(array)),
+        "p10": float(np.percentile(array, 10)),
         "median": float(np.median(array)),
         "mean": float(np.mean(array)),
+        "p90": float(np.percentile(array, 90)),
         "max": float(np.max(array)),
+    }
+
+
+def optional_float(value: Any) -> Optional[float]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def polyline_length(points: np.ndarray) -> float:
+    if len(points) < 2:
+        return 0.0
+    return float(np.linalg.norm(np.diff(points, axis=0), axis=1).sum())
+
+
+def max_line_deviation(points: np.ndarray, start: np.ndarray, end: np.ndarray) -> float:
+    if not points.size:
+        return 0.0
+    direction = end - start
+    length = float(np.linalg.norm(direction))
+    if length <= 1e-9:
+        return 0.0
+    offsets = points - start
+    return float(np.max(np.abs(direction[0] * offsets[:, 1] - direction[1] * offsets[:, 0]) / length))
+
+
+def build_human_motion_summary(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    tracks: Dict[int, List[Dict[str, Any]]] = {}
+    actual_distances: List[float] = []
+    interacting_agents = set()
+    moving_interaction_predictions = 0
+
+    for record in records:
+        stamp = optional_float(record.get("stamp_ns"))
+        if stamp is None:
+            continue
+        stamp *= 1e-9
+        robot = as_xy([record.get("robot")])
+        record_has_moving_interaction = False
+        for human in record.get("humans", []):
+            position = as_xy([human.get("current")])
+            if not position.size:
+                continue
+            agent_id = int(human.get("id", -1))
+            sample = {
+                "stamp": stamp,
+                "position": position[0],
+                "linear_speed": optional_float(human.get("linear_speed")),
+                "angular_speed": optional_float(human.get("angular_speed")),
+                "desired_speed": optional_float(human.get("desired_speed")),
+                "active_goal_count": human.get("active_goal_count"),
+                "cyclic_goals": human.get("cyclic_goals"),
+            }
+            tracks.setdefault(agent_id, []).append(sample)
+            if robot.size:
+                distance = float(np.linalg.norm(position[0] - robot[0]))
+                actual_distances.append(distance)
+                speed = sample["linear_speed"]
+                if distance <= 2.0 and speed is not None and speed >= 0.05:
+                    interacting_agents.add(agent_id)
+                    record_has_moving_interaction = True
+        moving_interaction_predictions += int(record_has_moving_interaction)
+
+    agents: Dict[str, Dict[str, Any]] = {}
+    for agent_id, samples in sorted(tracks.items()):
+        samples.sort(key=lambda item: item["stamp"])
+        if len(samples) < 2:
+            continue
+        step_distances = [
+            float(np.linalg.norm(current["position"] - previous["position"]))
+            for previous, current in zip(samples, samples[1:])
+        ]
+        step_times = [
+            max(float(current["stamp"] - previous["stamp"]), 0.0)
+            for previous, current in zip(samples, samples[1:])
+        ]
+        derived_speeds = [
+            distance / dt if dt > 1e-6 else 0.0
+            for distance, dt in zip(step_distances, step_times)
+        ]
+        speeds: List[float] = []
+        for index, sample in enumerate(samples[:-1]):
+            speed = sample["linear_speed"]
+            speeds.append(derived_speeds[index] if speed is None else float(speed))
+
+        stalled_duration = 0.0
+        longest_stall = 0.0
+        current_stall = 0.0
+        spin_duration = 0.0
+        for sample, speed, dt in zip(samples[:-1], speeds, step_times):
+            desired = sample["desired_speed"]
+            active_goal_count = sample["active_goal_count"]
+            active = active_goal_count is None or int(active_goal_count) > 0
+            expected_to_move = active and (desired is None or desired >= 0.10)
+            stalled = expected_to_move and speed < 0.05
+            if stalled:
+                stalled_duration += dt
+                current_stall += dt
+                longest_stall = max(longest_stall, current_stall)
+            else:
+                current_stall = 0.0
+            angular_speed = sample["angular_speed"]
+            if stalled and angular_speed is not None and abs(float(angular_speed)) >= 0.50:
+                spin_duration += dt
+
+        duration = max(float(samples[-1]["stamp"] - samples[0]["stamp"]), 0.0)
+        agents[str(agent_id)] = {
+            "sample_count": len(samples),
+            "duration_s": duration,
+            "distance_traveled_m": float(sum(step_distances)),
+            "mean_linear_speed_mps": float(np.mean(speeds)) if speeds else None,
+            "moving_fraction": (
+                float(sum(speed >= 0.05 for speed in speeds) / len(speeds))
+                if speeds else None
+            ),
+            "stalled_duration_s": stalled_duration,
+            "longest_stall_s": longest_stall,
+            "spin_in_place_duration_s": spin_duration,
+            "cyclic_goals": samples[-1]["cyclic_goals"],
+        }
+
+    return {
+        "observed_human_count": len(agents),
+        "human_motion": agents,
+        "actual_human_center_distance_m": stats(actual_distances),
+        "moving_interaction_prediction_count": moving_interaction_predictions,
+        "moving_interaction_agent_ids": sorted(interacting_agents),
     }
 
 
@@ -126,7 +264,71 @@ def build_summary(
             and int(record.get("rejection_streak_before", 0)) > 0
             for record in records
         ),
+        "simulation_real_time_factor": stats(
+            record.get("real_time_factor") for record in records
+        ),
     }
+
+    summary.update(build_human_motion_summary(records))
+
+    first_robot = as_xy([records[0].get("robot")])
+    last_robot = as_xy([records[-1].get("robot")])
+    final_goal = as_xy([records[-1].get("final_goal")])
+    robot_track = as_xy([
+        record.get("robot") for record in records if record.get("robot") is not None
+    ])
+    planned_path = as_xy(global_paths[0].get("path")) if global_paths else as_xy([])
+    remaining_distance = None
+    if last_robot.size and final_goal.size:
+        remaining_distance = float(np.linalg.norm(last_robot[0] - final_goal[0]))
+    human_motion = list(summary["human_motion"].values())
+    rtf_p10 = summary["simulation_real_time_factor"]["p10"]
+    actual_human_min = summary["actual_human_center_distance_m"]["min"]
+    planned_deviation = 0.0
+    actual_deviation = 0.0
+    direct_distance = 0.0
+    if first_robot.size and final_goal.size:
+        direct_distance = float(np.linalg.norm(final_goal[0] - first_robot[0]))
+        planned_deviation = max_line_deviation(
+            planned_path, first_robot[0], final_goal[0]
+        )
+        actual_deviation = max_line_deviation(
+            robot_track, first_robot[0], final_goal[0]
+        )
+    static_detour = planned_deviation >= 0.75 and actual_deviation >= 0.75
+    quality_checks = {
+        "goal_reached": remaining_distance is not None and remaining_distance <= 0.60,
+        "model_only": len(fallbacks) == 0,
+        "at_least_four_humans": summary["observed_human_count"] >= 4,
+        "all_humans_moved": bool(human_motion) and all(
+            float(agent["distance_traveled_m"]) >= 2.0 for agent in human_motion
+        ),
+        "no_long_human_stall": bool(human_motion) and all(
+            float(agent["longest_stall_s"]) <= 2.0 for agent in human_motion
+        ),
+        "no_sustained_spin_in_place": bool(human_motion) and all(
+            float(agent["spin_in_place_duration_s"]) <= 1.0 for agent in human_motion
+        ),
+        "moving_human_interaction": len(summary["moving_interaction_agent_ids"]) >= 2,
+        "static_obstacle_detour": static_detour,
+        "actual_human_clearance_ok": (
+            actual_human_min is not None and float(actual_human_min) >= 1.20
+        ),
+        "real_time_factor_ok": rtf_p10 is None or float(rtf_p10) >= 0.80,
+    }
+    summary["robot_motion"] = {
+        "start": first_robot[0].tolist() if first_robot.size else None,
+        "end": last_robot[0].tolist() if last_robot.size else None,
+        "final_goal": final_goal[0].tolist() if final_goal.size else None,
+        "remaining_distance_m": remaining_distance,
+        "sampled_path_length_m": polyline_length(robot_track),
+        "direct_distance_m": direct_distance,
+        "planned_path_length_m": polyline_length(planned_path),
+        "planned_max_line_deviation_m": planned_deviation,
+        "actual_max_line_deviation_m": actual_deviation,
+    }
+    summary["demo_quality_checks"] = quality_checks
+    summary["demo_quality_pass"] = all(quality_checks.values())
 
     top_k_records = [
         record
@@ -401,6 +603,10 @@ def main() -> None:
 
     print(f"Analyzed {len(records)} predictions")
     print(f"Valid rate: {100 * summary['valid_rate']:.2f}%")
+    print(f"Demo quality pass: {summary['demo_quality_pass']}")
+    print(f"Quality checks: {summary['demo_quality_checks']}")
+    print(f"Human motion: {summary['human_motion']}")
+    print(f"Gazebo RTF: {summary['simulation_real_time_factor']}")
     print(f"Summary: {output_dir / 'summary.json'}")
     print(f"Figures: {output_dir}")
 

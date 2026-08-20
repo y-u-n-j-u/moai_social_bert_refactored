@@ -13,6 +13,8 @@ from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Header
 from visualization_msgs.msg import Marker, MarkerArray
 
+from .human_obstacle_geometry import filled_disc_offsets
+
 
 class HumanObstacleCloudNode(Node):
     """Publish HuNav humans and predicted paths as a PointCloud2 obstacle source."""
@@ -32,6 +34,9 @@ class HumanObstacleCloudNode(Node):
         self.predicted_z = float(self.declare_parameter("predicted_z", 0.25).value)
         self.current_ring_points = int(self.declare_parameter("current_ring_points", 8).value)
         self.human_safety_margin = float(self.declare_parameter("human_safety_margin", 0.15).value)
+        self.obstacle_fill_spacing = float(
+            self.declare_parameter("obstacle_fill_spacing", 0.20).value
+        )
         self.predicted_stride = int(self.declare_parameter("predicted_stride", 2).value)
         self.predicted_horizon_points = int(self.declare_parameter("predicted_horizon_points", 8).value)
         self.predicted_ring_points = int(self.declare_parameter("predicted_ring_points", 6).value)
@@ -61,7 +66,9 @@ class HumanObstacleCloudNode(Node):
         self._timer = self.create_timer(1.0 / max(self.publish_rate, 0.1), self._publish_cloud)
 
         self.get_logger().info(
-            f"Publishing human obstacle cloud on {self.cloud_topic} from {self.human_states_topic}"
+            f"Publishing human obstacle cloud on {self.cloud_topic} from {self.human_states_topic}; "
+            f"safety_margin={self.human_safety_margin:.2f} m, "
+            f"fill_spacing={self.obstacle_fill_spacing:.2f} m"
         )
 
     def _on_humans(self, msg: Agents) -> None:
@@ -107,16 +114,13 @@ class HumanObstacleCloudNode(Node):
                 ax = float(agent.position.position.x)
                 ay = float(agent.position.position.y)
                 radius = max(float(agent.radius), 0.35) + max(self.human_safety_margin, 0.0)
-                local_x, local_y = self._world_to_robot(ax, ay)
-                points.append((local_x, local_y, self.human_z))
-                ring_count = max(self.current_ring_points, 0)
-                for idx in range(ring_count):
-                    angle = 2.0 * pi * idx / max(ring_count, 1)
-                    ring_x, ring_y = self._world_to_robot(
-                        ax + radius * cos(angle),
-                        ay + radius * sin(angle),
-                    )
-                    points.append((ring_x, ring_y, self.human_z))
+                for offset_x, offset_y in filled_disc_offsets(
+                    radius,
+                    self.obstacle_fill_spacing,
+                    self.current_ring_points,
+                ):
+                    local_x, local_y = self._world_to_robot(ax + offset_x, ay + offset_y)
+                    points.append((local_x, local_y, self.human_z))
 
                 path = self._predicted_paths.get(int(agent.id), []) if predictions_are_fresh else []
                 # HuNav scenarios do not publish learned pedestrian paths. In
@@ -136,16 +140,13 @@ class HumanObstacleCloudNode(Node):
                 stride = max(self.predicted_stride, 1)
                 horizon = max(self.predicted_horizon_points, 0)
                 for px, py in path[::stride][:horizon]:
-                    local_x, local_y = self._world_to_robot(px, py)
-                    points.append((local_x, local_y, self.predicted_z))
-                    ring_count = max(self.predicted_ring_points, 0)
-                    for idx in range(ring_count):
-                        angle = 2.0 * pi * idx / max(ring_count, 1)
-                        ring_x, ring_y = self._world_to_robot(
-                            px + radius * cos(angle),
-                            py + radius * sin(angle),
-                        )
-                        points.append((ring_x, ring_y, self.predicted_z))
+                    for offset_x, offset_y in filled_disc_offsets(
+                        radius,
+                        self.obstacle_fill_spacing,
+                        self.predicted_ring_points,
+                    ):
+                        local_x, local_y = self._world_to_robot(px + offset_x, py + offset_y)
+                        points.append((local_x, local_y, self.predicted_z))
         elif (self._last_humans is not None or self._last_robot is not None) and not self._stale_state_warned:
             self.get_logger().warning(
                 "Human/robot state became stale; publishing clearing rays only "

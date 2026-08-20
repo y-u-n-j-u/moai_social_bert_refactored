@@ -29,6 +29,7 @@ def generate_launch_description():
     #environment_name = LaunchConfiguration('environment_name')
     gz_obs = LaunchConfiguration('use_gazebo_obs')
     rate = LaunchConfiguration('update_rate')
+    physics_rate = LaunchConfiguration('physics_update_rate')
     robot_name = LaunchConfiguration('robot_name')
     global_frame = LaunchConfiguration('global_frame_to_publish')
     use_navgoal = LaunchConfiguration('use_navgoal_to_start')
@@ -42,6 +43,19 @@ def generate_launch_description():
     robot_type = LaunchConfiguration('robot_type')
     agent_motion_model = LaunchConfiguration('agent_motion_model')
     pedestrians_avoid_robot = LaunchConfiguration('pedestrians_avoid_robot')
+    human_obstacle_publish_rate = LaunchConfiguration('human_obstacle_publish_rate')
+    human_obstacle_current_ring_points = LaunchConfiguration('human_obstacle_current_ring_points')
+    human_obstacle_safety_margin = LaunchConfiguration('human_obstacle_safety_margin')
+    human_obstacle_fill_spacing = LaunchConfiguration('human_obstacle_fill_spacing')
+    human_obstacle_predicted_ring_points = LaunchConfiguration('human_obstacle_predicted_ring_points')
+    human_obstacle_prediction_horizon = LaunchConfiguration('human_obstacle_prediction_horizon')
+    human_obstacle_prediction_step = LaunchConfiguration('human_obstacle_prediction_step')
+    human_avoidance_mode = LaunchConfiguration('human_avoidance_mode')
+    human_yield_supervisor = LaunchConfiguration('human_yield_supervisor')
+    human_yield_safety_distance = LaunchConfiguration('human_yield_safety_distance')
+    human_yield_release_distance = LaunchConfiguration('human_yield_release_distance')
+    human_yield_prediction_horizon = LaunchConfiguration('human_yield_prediction_horizon')
+    human_yield_prediction_step = LaunchConfiguration('human_yield_prediction_step')
     social_bert_predictor = LaunchConfiguration('social_bert_predictor')
     spubert_model_path = LaunchConfiguration('spubert_model_path')
     spubert_repo_path = LaunchConfiguration('spubert_repo_path')
@@ -106,6 +120,7 @@ def generate_launch_description():
     robot_spubert_checkpoint_path = LaunchConfiguration('robot_spubert_checkpoint_path')
     robot_spubert_cuda = LaunchConfiguration('robot_spubert_cuda')
     robot_spubert_d_sample = LaunchConfiguration('robot_spubert_d_sample')
+    robot_spubert_runtime_seed = LaunchConfiguration('robot_spubert_runtime_seed')
     robot_spubert_tgp_top_k = LaunchConfiguration('robot_spubert_tgp_top_k')
     robot_spubert_rejection_streak_limit = LaunchConfiguration(
         'robot_spubert_rejection_streak_limit'
@@ -180,6 +195,7 @@ def generate_launch_description():
         parameters=[{'base_world': world_file},
         {'use_gazebo_obs': gz_obs},
         {'update_rate': rate},
+        {'physics_update_rate': physics_rate},
         {'robot_name': robot_name},
         {'global_frame_to_publish': global_frame},
         {'use_navgoal_to_start': use_navgoal},
@@ -497,15 +513,16 @@ def generate_launch_description():
             {'human_states_topic': '/human_states'},
             {'predicted_paths_topic': '/moai/social_bert_predicted_paths'},
             {'cloud_topic': '/moai/human_obstacle_cloud'},
-            {'publish_rate': 5.0},
-            {'current_ring_points': 6},
-            # Inflate the body ring slightly and project HuNav's current
-            # velocity for 1.2 s. HuNav does not publish learned future paths,
+            {'publish_rate': ParameterValue(human_obstacle_publish_rate, value_type=float)},
+            {'current_ring_points': ParameterValue(human_obstacle_current_ring_points, value_type=int)},
+            # Inflate the body ring and project HuNav's current velocity.
+            # HuNav does not publish learned future paths,
             # so without this fallback Nav2 reacts too late at crossings.
-            {'human_safety_margin': 0.15},
-            {'predicted_ring_points': 6},
-            {'fallback_prediction_horizon': 1.2},
-            {'fallback_prediction_step': 0.4},
+            {'human_safety_margin': ParameterValue(human_obstacle_safety_margin, value_type=float)},
+            {'obstacle_fill_spacing': ParameterValue(human_obstacle_fill_spacing, value_type=float)},
+            {'predicted_ring_points': ParameterValue(human_obstacle_predicted_ring_points, value_type=int)},
+            {'fallback_prediction_horizon': ParameterValue(human_obstacle_prediction_horizon, value_type=float)},
+            {'fallback_prediction_step': ParameterValue(human_obstacle_prediction_step, value_type=float)},
             # Never keep re-marking an old human position when Gazebo or DDS
             # misses a few updates under load. The node keeps publishing
             # clearing rays while state is stale.
@@ -537,6 +554,35 @@ def generate_launch_description():
             {'use_sim_time': True},
             {'input_topic': '/cmd_vel_nav'},
             {'output_topic': '/cmd_vel'},
+            {'robot_topic': '/robot_states'},
+            {'human_states_topic': '/human_states'},
+            {'global_path_topic': '/plan'},
+            {'avoidance_status_topic': '/moai/human_avoidance_active'},
+            {'human_avoidance_mode': ParameterValue(human_avoidance_mode, value_type=str)},
+            {'human_yield_enabled': ParameterValue(human_yield_supervisor, value_type=bool)},
+            {'human_yield_safety_distance': ParameterValue(human_yield_safety_distance, value_type=float)},
+            {'human_yield_release_distance': ParameterValue(human_yield_release_distance, value_type=float)},
+            {'human_yield_prediction_horizon': ParameterValue(human_yield_prediction_horizon, value_type=float)},
+            {'human_yield_prediction_step': ParameterValue(human_yield_prediction_step, value_type=float)},
+            {'human_yield_path_speed_floor': 0.90},
+            {'human_yield_crossing_horizon': 15.0},
+            {'human_yield_stopping_buffer': 0.60},
+            {'human_yield_velocity_smoothing_alpha': 0.50},
+            {'human_yield_maximum_human_speed': 2.0},
+            {'continuous_avoidance_safety_distance': 1.20},
+            {'continuous_avoidance_trigger_distance': 1.45},
+            {'continuous_avoidance_horizon': 3.5},
+            {'continuous_avoidance_step': 0.10},
+            {'continuous_avoidance_activation_distance': 5.0},
+            {'continuous_avoidance_preferred_speed': 0.70},
+            {'continuous_avoidance_minimum_forward_speed': 0.35},
+            {'continuous_avoidance_maximum_forward_speed': 0.80},
+            {'continuous_avoidance_maximum_angular_speed': 1.0},
+            {'continuous_avoidance_steering_duration': 1.0},
+            {'continuous_avoidance_lateral_offset': 1.50},
+            {'continuous_avoidance_lane_lookahead': 2.50},
+            {'continuous_avoidance_heading_gain': 1.50},
+            {'continuous_avoidance_release_lateral': 0.80},
         ],
         condition=IfCondition(PythonExpression([
             "'", navigation, "' == 'True' and '", robot_type,
@@ -567,6 +613,7 @@ def generate_launch_description():
             {'map_yaml_path': spubert_map_yaml_path},
             {'use_cuda': robot_spubert_cuda},
             {'d_sample': robot_spubert_d_sample},
+            {'runtime_seed': robot_spubert_runtime_seed},
             {'tgp_top_k': robot_spubert_tgp_top_k},
             {'rejection_streak_limit': robot_spubert_rejection_streak_limit},
             {'guidance_radius': spubert_guidance_point_radius},
@@ -626,11 +673,14 @@ def generate_launch_description():
             {'human_states_topic': '/human_states'},
             {'goal_topic': '/goal_pose'},
             {'global_path_topic': '/plan'},
+            {'avoidance_status_topic': '/moai/human_avoidance_active'},
             {'scenario_name': LaunchConfiguration('configuration_file')},
             {'map_yaml_path': spubert_map_yaml_path},
             {'robot_path_planner': robot_path_planner},
             {'agent_motion_model': agent_motion_model},
             {'pedestrians_avoid_robot': pedestrians_avoid_robot},
+            {'human_avoidance_mode': ParameterValue(human_avoidance_mode, value_type=str)},
+            {'human_yield_supervisor': ParameterValue(human_yield_supervisor, value_type=bool)},
             {'agents_wait_for_goal': ParameterValue(use_navgoal, value_type=bool)},
             {'collection_seed': ParameterValue(auto_goal_seed, value_type=int)},
             {'output_path': robot_training_pkl_path},
@@ -762,6 +812,11 @@ def generate_launch_description():
         'update_rate', default_value=EnvironmentVariable('HUNAV_UPDATE_RATE', default_value='30.0'),
         description='Update rate of the plugin'
     )
+    declare_physics_update_rate = DeclareLaunchArgument(
+        'physics_update_rate',
+        default_value=EnvironmentVariable('HUNAV_PHYSICS_UPDATE_RATE', default_value='500.0'),
+        description='Gazebo physics update rate in Hz'
+    )
     declare_robot_name = DeclareLaunchArgument(
         'robot_name', default_value='pmb2',
         description='Specify the name of the robot Gazebo model'
@@ -797,6 +852,71 @@ def generate_launch_description():
             'Whether HuNav pedestrians react to the robot. Set False during '
             'dataset collection so Nav2 yields without reciprocal deadlock.'
         )
+    )
+    declare_human_obstacle_publish_rate = DeclareLaunchArgument(
+        'human_obstacle_publish_rate',
+        default_value=EnvironmentVariable('HUNAV_HUMAN_OBSTACLE_PUBLISH_RATE', default_value='5.0'),
+        description='Human obstacle cloud publication rate in Hz.'
+    )
+    declare_human_obstacle_current_ring_points = DeclareLaunchArgument(
+        'human_obstacle_current_ring_points',
+        default_value=EnvironmentVariable('HUNAV_HUMAN_OBSTACLE_CURRENT_RING_POINTS', default_value='6'),
+        description='Number of points used for each current human body ring.'
+    )
+    declare_human_obstacle_safety_margin = DeclareLaunchArgument(
+        'human_obstacle_safety_margin',
+        default_value=EnvironmentVariable('HUNAV_HUMAN_OBSTACLE_SAFETY_MARGIN', default_value='0.15'),
+        description='Additional radius around each human in the Nav2 local costmap.'
+    )
+    declare_human_obstacle_fill_spacing = DeclareLaunchArgument(
+        'human_obstacle_fill_spacing',
+        default_value=EnvironmentVariable('HUNAV_HUMAN_OBSTACLE_FILL_SPACING', default_value='0.20'),
+        description='Maximum radial spacing between filled human obstacle samples.'
+    )
+    declare_human_obstacle_predicted_ring_points = DeclareLaunchArgument(
+        'human_obstacle_predicted_ring_points',
+        default_value=EnvironmentVariable('HUNAV_HUMAN_OBSTACLE_PREDICTED_RING_POINTS', default_value='6'),
+        description='Number of points used around each predicted human position.'
+    )
+    declare_human_obstacle_prediction_horizon = DeclareLaunchArgument(
+        'human_obstacle_prediction_horizon',
+        default_value=EnvironmentVariable('HUNAV_HUMAN_OBSTACLE_PREDICTION_HORIZON', default_value='1.2'),
+        description='Constant-velocity fallback prediction horizon in seconds.'
+    )
+    declare_human_obstacle_prediction_step = DeclareLaunchArgument(
+        'human_obstacle_prediction_step',
+        default_value=EnvironmentVariable('HUNAV_HUMAN_OBSTACLE_PREDICTION_STEP', default_value='0.4'),
+        description='Constant-velocity fallback prediction step in seconds.'
+    )
+    declare_human_avoidance_mode = DeclareLaunchArgument(
+        'human_avoidance_mode',
+        default_value=EnvironmentVariable('HUNAV_HUMAN_AVOIDANCE_MODE', default_value=''),
+        description='Human response mode: off, yield, or continuous moving avoidance.'
+    )
+    declare_human_yield_supervisor = DeclareLaunchArgument(
+        'human_yield_supervisor',
+        default_value=EnvironmentVariable('HUNAV_HUMAN_YIELD_SUPERVISOR', default_value='False'),
+        description='Stop the teacher before predicted pedestrian conflicts.'
+    )
+    declare_human_yield_safety_distance = DeclareLaunchArgument(
+        'human_yield_safety_distance',
+        default_value=EnvironmentVariable('HUNAV_HUMAN_YIELD_SAFETY_DISTANCE', default_value='1.45'),
+        description='Predicted center-distance threshold that starts teacher yielding.'
+    )
+    declare_human_yield_release_distance = DeclareLaunchArgument(
+        'human_yield_release_distance',
+        default_value=EnvironmentVariable('HUNAV_HUMAN_YIELD_RELEASE_DISTANCE', default_value='1.60'),
+        description='Current center distance required before teacher motion resumes.'
+    )
+    declare_human_yield_prediction_horizon = DeclareLaunchArgument(
+        'human_yield_prediction_horizon',
+        default_value=EnvironmentVariable('HUNAV_HUMAN_YIELD_PREDICTION_HORIZON', default_value='6.0'),
+        description='Constant-velocity conflict prediction horizon in seconds.'
+    )
+    declare_human_yield_prediction_step = DeclareLaunchArgument(
+        'human_yield_prediction_step',
+        default_value=EnvironmentVariable('HUNAV_HUMAN_YIELD_PREDICTION_STEP', default_value='0.10'),
+        description='Time step for teacher conflict prediction.'
     )
     declare_social_bert_predictor = DeclareLaunchArgument(
         'social_bert_predictor',
@@ -1146,6 +1266,13 @@ def generate_launch_description():
         default_value=EnvironmentVariable('HUNAV_ROBOT_SPUBERT_D_SAMPLE', default_value='40'),
         description='MGP latent samples used for each online PMB2 replan.'
     )
+    declare_robot_spubert_runtime_seed = DeclareLaunchArgument(
+        'robot_spubert_runtime_seed',
+        default_value=EnvironmentVariable(
+            'HUNAV_ROBOT_SPUBERT_RUNTIME_SEED', default_value='21'
+        ),
+        description='One-time random seed for reproducible online MGP sampling.'
+    )
     declare_robot_spubert_tgp_top_k = DeclareLaunchArgument(
         'robot_spubert_tgp_top_k',
         default_value=EnvironmentVariable('HUNAV_ROBOT_SPUBERT_TGP_TOP_K', default_value='5'),
@@ -1348,12 +1475,26 @@ def generate_launch_description():
     ld.add_action(declare_arg_environment)
     ld.add_action(declare_gz_obs)
     ld.add_action(declare_update_rate)
+    ld.add_action(declare_physics_update_rate)
     ld.add_action(declare_robot_type)
     ld.add_action(declare_use_gazebo_gui)
     ld.add_action(declare_use_rviz)
     ld.add_action(declare_use_hunav_evaluator)
     ld.add_action(declare_agent_motion_model)
     ld.add_action(declare_pedestrians_avoid_robot)
+    ld.add_action(declare_human_obstacle_publish_rate)
+    ld.add_action(declare_human_obstacle_current_ring_points)
+    ld.add_action(declare_human_obstacle_safety_margin)
+    ld.add_action(declare_human_obstacle_fill_spacing)
+    ld.add_action(declare_human_obstacle_predicted_ring_points)
+    ld.add_action(declare_human_obstacle_prediction_horizon)
+    ld.add_action(declare_human_obstacle_prediction_step)
+    ld.add_action(declare_human_avoidance_mode)
+    ld.add_action(declare_human_yield_supervisor)
+    ld.add_action(declare_human_yield_safety_distance)
+    ld.add_action(declare_human_yield_release_distance)
+    ld.add_action(declare_human_yield_prediction_horizon)
+    ld.add_action(declare_human_yield_prediction_step)
     ld.add_action(declare_social_bert_predictor)
     ld.add_action(declare_spubert_model_path)
     ld.add_action(declare_spubert_repo_path)
@@ -1418,6 +1559,7 @@ def generate_launch_description():
     ld.add_action(declare_robot_spubert_checkpoint_path)
     ld.add_action(declare_robot_spubert_cuda)
     ld.add_action(declare_robot_spubert_d_sample)
+    ld.add_action(declare_robot_spubert_runtime_seed)
     ld.add_action(declare_robot_spubert_tgp_top_k)
     ld.add_action(declare_robot_spubert_rejection_streak_limit)
     ld.add_action(declare_robot_spubert_replan_period)

@@ -29,6 +29,22 @@ def map_data(occupied: np.ndarray, resolution: float = 1.0):
 
 
 class RouteGuidanceTest(unittest.TestCase):
+    @staticmethod
+    def avoidance_args() -> SimpleNamespace:
+        return SimpleNamespace(
+            avoidance_velocity_window=3,
+            avoidance_max_ttc=4.0,
+            avoidance_min_ttc=0.2,
+            avoidance_conflict_distance=1.2,
+            avoidance_min_closing_speed=0.2,
+            avoidance_response_window=3,
+            avoidance_response_extra_time=1.0,
+            avoidance_min_reference_speed=0.25,
+            avoidance_min_slowdown_ratio=0.20,
+            avoidance_min_route_deviation=0.35,
+            min_social_distance=1.2,
+        )
+
     def test_swept_footprint_detects_obstacle_between_recorded_poses(self):
         occupied = np.zeros((15, 15), dtype=np.float32)
         occupied[7, 6] = 1.0
@@ -57,6 +73,77 @@ class RouteGuidanceTest(unittest.TestCase):
 
         self.assertGreater(quality["max_acceleration"], 0.0)
         self.assertGreater(quality["max_yaw_rate"], 1.0)
+
+    def test_reactive_avoidance_requires_predicted_conflict_and_response(self):
+        dt = 0.4
+        trajs = np.zeros((2, 20, 2), dtype=np.float32)
+        trajs[0, :8, 0] = np.arange(-7, 1, dtype=np.float32) * dt
+        trajs[1, :8, 0] = np.arange(14, 6, -1, dtype=np.float32) * dt
+        trajs[0, 8:, 0] = np.arange(1, 13, dtype=np.float32) * 0.08
+        trajs[1, 8:, 0] = 2.8 - np.arange(1, 13, dtype=np.float32) * dt
+        args = self.avoidance_args()
+
+        metrics = POSTPROCESS.avoidance_conflict_metrics(trajs, 8, 12, dt, args)
+        quality = {
+            **metrics,
+            "same_time_min_distance_all": 1.3,
+            "route_future_max_deviation_m": 0.1,
+        }
+        classification = POSTPROCESS.avoidance_classification(quality, args)
+
+        self.assertEqual(metrics["avoidance_conflict"], 1.0)
+        self.assertGreater(metrics["robot_slowdown_ratio"], 0.5)
+        self.assertEqual(classification["avoidance_slowdown"], 1.0)
+        self.assertEqual(classification["avoidance_reactive"], 1.0)
+
+        quality["avoidance_conflict"] = 0.0
+        classification = POSTPROCESS.avoidance_classification(quality, args)
+        self.assertEqual(classification["avoidance_reactive"], 0.0)
+
+    def test_route_response_measures_lateral_departure(self):
+        target = np.zeros((20, 2), dtype=np.float32)
+        target[:, 0] = np.linspace(0.0, 9.5, 20)
+        target[8:, 1] = 0.5
+        route = np.stack(
+            (np.linspace(3.5, 10.0, 20), np.zeros(20)),
+            axis=1,
+        ).astype(np.float32)
+
+        metrics = POSTPROCESS.route_response_metrics(target, 8, 12, route)
+
+        self.assertAlmostEqual(metrics["route_future_max_deviation_m"], 0.5, places=5)
+
+    def test_recorded_continuous_teacher_intervention_verifies_early_avoidance(self):
+        args = self.avoidance_args()
+        quality = {
+            "avoidance_response": 1.0,
+            "avoidance_safe_outcome": 1.0,
+            "avoidance_reactive": 0.0,
+            "avoidance_score": 0.0,
+        }
+
+        classification = POSTPROCESS.teacher_avoidance_classification(
+            {
+                "human_avoidance_mode": "continuous",
+                "human_avoidance_active_any": True,
+            },
+            quality,
+            args,
+        )
+
+        self.assertEqual(classification["avoidance_teacher_verified"], 1.0)
+        self.assertEqual(classification["avoidance_reactive"], 1.0)
+
+        classification = POSTPROCESS.teacher_avoidance_classification(
+            {
+                "human_avoidance_mode": "continuous",
+                "human_avoidance_active_any": False,
+            },
+            quality,
+            args,
+        )
+        self.assertEqual(classification["avoidance_teacher_verified"], 0.0)
+        self.assertEqual(classification["avoidance_reactive"], 0.0)
 
     def test_timing_metrics_use_all_recorded_intervals(self):
         metrics = POSTPROCESS.sample_timing_metrics(

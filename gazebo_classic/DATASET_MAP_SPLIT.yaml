@@ -1,0 +1,43 @@
+version: 3
+policy: map_topology_and_quality_holdout
+
+training_maps:
+  - training_corridor
+  - training_doorway
+  - training_intersection
+  - training_open_plaza
+  - training_slalom
+  - training_route_choice
+  - training_bottleneck_merge
+  - training_outdoor_chicane
+
+held_out_test_maps:
+  - training_dual_route
+
+approved_pilots:
+  - name: intersection_safe_teacher_v3_corridor_safe_20260810
+    map: training_intersection
+    passed_runs: 10
+    clean_social_samples: 36
+  - name: route_choice_safe_teacher_v3_virtual_footprint_20260810
+    map: training_route_choice
+    passed_runs: 10
+    clean_social_samples: 38
+
+candidate_maps_pending_ten_seed_pilot:
+  - training_bottleneck_merge
+  - training_outdoor_chicane
+
+admission_policy:
+  run_qualification_required: true
+  parent_pilot_summary_required: true
+  minimum_required_reported_and_passed_runs: 10
+  failed_qualification_is_always_excluded: true
+
+rules:
+  - training_dual_route recordings must never enter train/validation PKLs.
+  - route-choice training maps use different geometry from the held-out map.
+  - candidate maps need a passed ten-seed pilot before their PKLs are admitted.
+  - train/validation splits are grouped by recording_id plus episode_id.
+  - smoke runs and failed aggregate pilots are not positive training data.
+  - final generalization metrics are measured only on held-out maps and seeds.

@@ -1,0 +1,95 @@
+hunav_loader:
+  ros__parameters:
+    yaml_base_name: agents_training_bottleneck_merge_joint_gate
+    simulator: Gazebo Classic
+    map: training_bottleneck_merge
+    publish_people: true
+    global_goals:
+      1:
+        x: 8.500
+        y: 0.450
+      2:
+        x: -2.100
+        y: 0.450
+      3:
+        x: -2.200
+        y: -6.500
+      4:
+        x: -2.200
+        y: 6.500
+      5:
+        x: 6.300
+        y: 6.500
+      6:
+        x: 6.300
+        y: -6.500
+    agents:
+      - agent1
+      - agent2
+      - agent3
+    agent1:
+      id: 1
+      group_id: -1
+      skin: 0
+      max_vel: 0.72
+      radius: 0.33
+      goal_radius: 0.45
+      cyclic_goals: false
+      init_pose:
+        x: 8.500
+        y: 0.450
+        z: 1.250
+        h: 3.14159
+      behavior:
+        type: Regular
+        configuration: 1
+        goal_force_factor: 2.0
+        obstacle_force_factor: 5.0
+        social_force_factor: 2.2
+        other_force_factor: 6.0
+      goals:
+        - 2
+    agent2:
+      id: 2
+      group_id: -1
+      skin: 1
+      max_vel: 0.62
+      radius: 0.33
+      goal_radius: 0.45
+      cyclic_goals: false
+      init_pose:
+        x: -2.200
+        y: -6.500
+        z: 1.250
+        h: 1.57080
+      behavior:
+        type: Regular
+        configuration: 1
+        goal_force_factor: 2.0
+        obstacle_force_factor: 5.0
+        social_force_factor: 2.2
+        other_force_factor: 6.0
+      goals:
+        - 4
+    agent3:
+      id: 3
+      group_id: -1
+      skin: 2
+      max_vel: 0.58
+      radius: 0.33
+      goal_radius: 0.45
+      cyclic_goals: false
+      init_pose:
+        x: 6.300
+        y: 6.500
+        z: 1.250
+        h: -1.57080
+      behavior:
+        type: Regular
+        configuration: 1
+        goal_force_factor: 2.0
+        obstacle_force_factor: 5.0
+        social_force_factor: 2.2
+        other_force_factor: 6.0
+      goals:
+        - 6

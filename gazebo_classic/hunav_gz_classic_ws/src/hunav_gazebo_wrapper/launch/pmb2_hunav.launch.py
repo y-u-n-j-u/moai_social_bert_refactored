@@ -169,18 +169,22 @@ def declare_actions(
     
     pmb2_2dnav = get_package_share_directory("pmb2_2dnav")
     wrapper = get_package_share_directory("hunav_gazebo_wrapper")
+    default_nav_params_file = os.path.join(
+        wrapper, "launch", "pmb2_params", "pmb2_nav_public_sim.yaml"
+    )
+    nav_params_file = environ.get(
+        "HUNAV_PMB2_NAV_PARAMS_FILE", default_nav_params_file
+    ).strip() or default_nav_params_file
 
     nav_launch = PathJoinSubstitution([
-        FindPackageShare("nav2_bringup"),
+        FindPackageShare("hunav_gazebo_wrapper"),
         "launch",
-        "navigation_launch.py"
+        "navigation_direct_cmd.launch.py"
     ],)
     nav2_bringup_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([nav_launch]),
         launch_arguments={
-            "params_file": os.path.join(
-                wrapper, "launch", "pmb2_params", "pmb2_nav_public_sim.yaml"
-            ),
+            "params_file": nav_params_file,
             "use_sim_time": "True",
         }.items(),
         condition=IfCondition(LaunchConfiguration("navigation"))
@@ -204,9 +208,7 @@ def declare_actions(
     slam_bringup_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([slam_launch]),
         launch_arguments={
-            "params_file": os.path.join(
-                wrapper, "launch", "pmb2_params", "pmb2_nav_public_sim.yaml"
-            ),
+            "params_file": nav_params_file,
             "use_sim_time": "True",
         }.items(),
         condition=IfCondition(LaunchConfiguration("slam")),
@@ -220,9 +222,7 @@ def declare_actions(
     loc_bringup_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([loc_launch]),
         launch_arguments={
-            "params_file": os.path.join(
-                wrapper, "launch", "pmb2_params", "pmb2_nav_public_sim.yaml"
-            ),
+            "params_file": nav_params_file,
             "map": LaunchConfiguration("world_name"),
             "use_sim_time": "True",
         }.items(),
@@ -234,12 +234,15 @@ def declare_actions(
         "launch",
         "rviz_launch.py"
     ],)
+    rviz_config_path = os.environ.get("HUNAV_RVIZ_CONFIG_PATH", "").strip()
+    if not rviz_config_path:
+        rviz_config_path = os.path.join(
+            pmb2_2dnav, "config", "rviz", "navigation.rviz"
+        )
     rviz_bringup_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([rviz_launch]),
         launch_arguments={
-            "rviz_config": os.path.join(
-                pmb2_2dnav, "config", "rviz", "navigation.rviz"
-            ),
+            "rviz_config": rviz_config_path,
             "use_sim_time": "True",
         }.items(),
         condition=IfCondition(PythonExpression([

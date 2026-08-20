@@ -1,0 +1,72 @@
+hunav_loader:
+  ros__parameters:
+    yaml_base_name: agents_training_route_choice_safe_teacher_low
+    simulator: Gazebo Classic
+    map: training_route_choice
+    publish_people: true
+    # Two slow head-on streams occupy different obstacle bypasses. Their
+    # lanes are offset from the shortest-path centreline so a stopped teacher
+    # still preserves the 1.2 m social-clearance gate. Pedestrians deliberately
+    # ignore the robot; the Nav2 teacher owns collision avoidance.
+    global_goals:
+      1:
+        x: 8.000
+        y: 5.100
+      2:
+        x: -8.000
+        y: 5.100
+      3:
+        x: 8.000
+        y: -4.000
+      4:
+        x: -8.000
+        y: -4.000
+    agents:
+      - agent1
+      - agent2
+    agent1:
+      id: 1
+      group_id: -1
+      skin: 0
+      max_vel: 0.80
+      radius: 0.33
+      goal_radius: 0.45
+      cyclic_goals: true
+      init_pose:
+        x: 8.000
+        y: 5.100
+        z: 1.250
+        h: 3.14159
+      behavior:
+        type: Regular
+        configuration: 1
+        goal_force_factor: 2.0
+        obstacle_force_factor: 5.0
+        social_force_factor: 2.2
+        other_force_factor: 6.0
+      goals:
+        - 2
+        - 1
+    agent2:
+      id: 2
+      group_id: -1
+      skin: 1
+      max_vel: 0.85
+      radius: 0.33
+      goal_radius: 0.45
+      cyclic_goals: true
+      init_pose:
+        x: 8.000
+        y: -4.000
+        z: 1.250
+        h: 3.14159
+      behavior:
+        type: Regular
+        configuration: 1
+        goal_force_factor: 2.0
+        obstacle_force_factor: 5.0
+        social_force_factor: 2.2
+        other_force_factor: 6.0
+      goals:
+        - 4
+        - 3

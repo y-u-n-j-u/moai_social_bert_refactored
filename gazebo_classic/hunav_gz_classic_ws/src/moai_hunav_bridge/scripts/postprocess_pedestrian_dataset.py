@@ -580,6 +580,251 @@ def same_time_robot_human_metrics(
     }
 
 
+def _recent_velocity(points: np.ndarray, dt: float, window: int) -> np.ndarray | None:
+    points = np.asarray(points, dtype=np.float32)
+    finite = np.isfinite(points).all(axis=1)
+    valid_indices = np.flatnonzero(finite)
+    if valid_indices.size < 2:
+        return None
+    end = int(valid_indices[-1])
+    start = max(0, end - max(1, int(window)))
+    segment = points[start : end + 1]
+    if len(segment) < 2 or not np.isfinite(segment).all():
+        return None
+    elapsed = max(float(dt) * (len(segment) - 1), 1e-6)
+    return (segment[-1] - segment[0]) / elapsed
+
+
+def avoidance_conflict_metrics(
+    trajs: np.ndarray,
+    obs_len: int,
+    pred_len: int,
+    dt: float,
+    args: argparse.Namespace,
+) -> dict[str, float]:
+    """Estimate a pre-response constant-velocity conflict and robot slowdown."""
+    if trajs.shape[0] <= 1:
+        return {
+            "cv_min_distance_m": math.inf,
+            "cv_time_to_closest_s": math.inf,
+            "cv_closing_speed_mps": 0.0,
+            "cv_conflict_human_index": -1.0,
+            "robot_observed_speed_mps": 0.0,
+            "robot_response_min_speed_mps": 0.0,
+            "robot_slowdown_ratio": 0.0,
+            "avoidance_conflict": 0.0,
+        }
+
+    dt = max(float(dt), 1e-6)
+    target_obs = trajs[0, :obs_len]
+    target_velocity = _recent_velocity(
+        target_obs,
+        dt,
+        args.avoidance_velocity_window,
+    )
+    if target_velocity is None or not np.isfinite(target_obs[-1]).all():
+        target_velocity = np.zeros(2, dtype=np.float32)
+    target_speed = float(np.linalg.norm(target_velocity))
+    horizon = min(
+        float(pred_len) * dt,
+        max(float(args.avoidance_max_ttc), 0.0),
+    )
+
+    best_distance = math.inf
+    best_ttc = math.inf
+    best_closing_speed = 0.0
+    best_human_index = -1
+    for human_index, neighbor in enumerate(trajs[1:, :obs_len]):
+        neighbor_velocity = _recent_velocity(
+            neighbor,
+            dt,
+            args.avoidance_velocity_window,
+        )
+        if neighbor_velocity is None or not np.isfinite(neighbor[-1]).all():
+            continue
+        relative_position = neighbor[-1] - target_obs[-1]
+        relative_velocity = neighbor_velocity - target_velocity
+        relative_speed_sq = float(np.dot(relative_velocity, relative_velocity))
+        if relative_speed_sq <= 1e-8:
+            ttc = 0.0
+        else:
+            ttc = float(
+                np.clip(
+                    -float(np.dot(relative_position, relative_velocity))
+                    / relative_speed_sq,
+                    0.0,
+                    horizon,
+                )
+            )
+        closest_vector = relative_position + relative_velocity * ttc
+        distance = float(np.linalg.norm(closest_vector))
+        current_distance = max(float(np.linalg.norm(relative_position)), 1e-6)
+        closing_speed = max(
+            0.0,
+            -float(np.dot(relative_position, relative_velocity)) / current_distance,
+        )
+        if distance < best_distance:
+            best_distance = distance
+            best_ttc = ttc
+            best_closing_speed = closing_speed
+            best_human_index = human_index
+
+    future = trajs[0, obs_len : obs_len + pred_len]
+    response_points = np.vstack([target_obs[-1], future])
+    finite_response = np.isfinite(response_points).all(axis=1)
+    response_points = response_points[finite_response]
+    response_speeds = (
+        np.linalg.norm(np.diff(response_points, axis=0), axis=1) / dt
+        if len(response_points) >= 2
+        else np.asarray([], dtype=np.float32)
+    )
+    if response_speeds.size:
+        response_steps = max(
+            int(args.avoidance_response_window),
+            int(math.ceil((best_ttc + float(args.avoidance_response_extra_time)) / dt))
+            if math.isfinite(best_ttc)
+            else int(args.avoidance_response_window),
+        )
+        response_speeds = response_speeds[: max(1, response_steps)]
+        window = min(max(1, int(args.avoidance_response_window)), len(response_speeds))
+        rolling = np.convolve(response_speeds, np.ones(window) / window, mode="valid")
+        response_min_speed = float(rolling.min())
+    else:
+        response_min_speed = 0.0
+    slowdown_ratio = (
+        _clip01((target_speed - response_min_speed) / target_speed)
+        if target_speed >= args.avoidance_min_reference_speed
+        else 0.0
+    )
+    conflict = (
+        math.isfinite(best_distance)
+        and best_distance <= args.avoidance_conflict_distance
+        and args.avoidance_min_ttc <= best_ttc <= args.avoidance_max_ttc
+        and best_closing_speed >= args.avoidance_min_closing_speed
+    )
+    return {
+        "cv_min_distance_m": float(best_distance),
+        "cv_time_to_closest_s": float(best_ttc),
+        "cv_closing_speed_mps": float(best_closing_speed),
+        "cv_conflict_human_index": float(best_human_index),
+        "robot_observed_speed_mps": float(target_speed),
+        "robot_response_min_speed_mps": float(response_min_speed),
+        "robot_slowdown_ratio": float(slowdown_ratio),
+        "avoidance_conflict": 1.0 if conflict else 0.0,
+    }
+
+
+def point_to_polyline_distances(points: np.ndarray, route: np.ndarray) -> np.ndarray:
+    points = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+    route = np.asarray(route, dtype=np.float32).reshape(-1, 2)
+    if not len(points):
+        return np.asarray([], dtype=np.float32)
+    if not len(route):
+        return np.full(len(points), math.inf, dtype=np.float32)
+    if len(route) == 1:
+        return np.linalg.norm(points - route[0], axis=1)
+
+    starts = route[:-1]
+    segments = route[1:] - starts
+    segment_norm_sq = np.sum(segments * segments, axis=1)
+    relative = points[:, None, :] - starts[None, :, :]
+    projection = np.divide(
+        np.sum(relative * segments[None, :, :], axis=2),
+        segment_norm_sq[None, :],
+        out=np.zeros((len(points), len(segments)), dtype=np.float32),
+        where=segment_norm_sq[None, :] > 1e-8,
+    )
+    projection = np.clip(projection, 0.0, 1.0)
+    closest = starts[None, :, :] + projection[:, :, None] * segments[None, :, :]
+    return np.linalg.norm(points[:, None, :] - closest, axis=2).min(axis=1)
+
+
+def route_response_metrics(
+    target: np.ndarray,
+    obs_len: int,
+    pred_len: int,
+    route_points: np.ndarray,
+) -> dict[str, float]:
+    future = np.asarray(target[obs_len : obs_len + pred_len], dtype=np.float32)
+    future = future[np.isfinite(future).all(axis=1)]
+    distances = point_to_polyline_distances(future, route_points)
+    return {
+        "route_future_mean_deviation_m": (
+            float(distances.mean()) if distances.size else math.inf
+        ),
+        "route_future_max_deviation_m": (
+            float(distances.max()) if distances.size else math.inf
+        ),
+    }
+
+
+def avoidance_classification(
+    q: dict[str, float],
+    args: argparse.Namespace,
+) -> dict[str, float]:
+    slowdown = q.get("robot_slowdown_ratio", 0.0) >= args.avoidance_min_slowdown_ratio
+    route_deviation = (
+        q.get("route_future_max_deviation_m", -math.inf)
+        >= args.avoidance_min_route_deviation
+    )
+    response = slowdown or route_deviation
+    safe_outcome = q.get("same_time_min_distance_all", -math.inf) >= args.min_social_distance
+    conflict = q.get("avoidance_conflict", 0.0) >= 1.0
+    conflict_score = _clip01(
+        (args.avoidance_conflict_distance - q.get("cv_min_distance_m", math.inf))
+        / max(args.avoidance_conflict_distance, 1e-6)
+    )
+    response_score = max(
+        _clip01(
+            q.get("robot_slowdown_ratio", 0.0)
+            / max(args.avoidance_min_slowdown_ratio, 1e-6)
+        ),
+        _clip01(
+            q.get("route_future_max_deviation_m", 0.0)
+            / max(args.avoidance_min_route_deviation, 1e-6)
+        ),
+    )
+    return {
+        "avoidance_slowdown": 1.0 if slowdown else 0.0,
+        "avoidance_route_deviation": 1.0 if route_deviation else 0.0,
+        "avoidance_response": 1.0 if response else 0.0,
+        "avoidance_safe_outcome": 1.0 if safe_outcome else 0.0,
+        "avoidance_reactive": 1.0 if conflict and response and safe_outcome else 0.0,
+        "avoidance_score": float(min(conflict_score, response_score)) if safe_outcome else 0.0,
+    }
+
+
+def teacher_avoidance_classification(
+    meta: dict[str, Any],
+    q: dict[str, float],
+    args: argparse.Namespace,
+) -> dict[str, float]:
+    """Verify anticipatory teacher avoidance using recorded intervention state."""
+    raw_active = meta.get("human_avoidance_active_any", False)
+    intervention_active = (
+        raw_active
+        if isinstance(raw_active, bool)
+        else str(raw_active).strip().lower() in {"1", "true", "yes", "on"}
+    )
+    continuous_mode = (
+        str(meta.get("human_avoidance_mode", "")).strip().lower()
+        == "continuous"
+    )
+    response = q.get("avoidance_response", 0.0) >= 1.0
+    safe_outcome = q.get("avoidance_safe_outcome", 0.0) >= 1.0
+    verified = intervention_active and continuous_mode and response and safe_outcome
+    existing_reactive = q.get("avoidance_reactive", 0.0) >= 1.0
+    return {
+        "avoidance_teacher_intervention": 1.0 if intervention_active else 0.0,
+        "avoidance_teacher_verified": 1.0 if verified else 0.0,
+        "avoidance_reactive": 1.0 if existing_reactive or verified else 0.0,
+        "avoidance_score": max(
+            float(q.get("avoidance_score", 0.0)),
+            1.0 if verified else 0.0,
+        ),
+    }
+
+
 def sample_quality(trajs: np.ndarray, obs_len: int, pred_len: int, dt: float) -> dict[str, float]:
     target = trajs[0]
     obs = target[:obs_len]
@@ -770,6 +1015,10 @@ def pass_social_filter(q: dict[str, float], args: argparse.Namespace) -> bool:
 
 def pass_between_humans_filter(q: dict[str, float], args: argparse.Namespace) -> bool:
     return pass_social_filter(q, args) and q.get("between_humans", 0.0) >= 1.0
+
+
+def pass_avoidance_filter(q: dict[str, float], args: argparse.Namespace) -> bool:
+    return pass_basic_filter(q, args) and q.get("avoidance_reactive", 0.0) >= 1.0
 
 
 def guidance_point_from_goal(current_xy: np.ndarray, final_goal: np.ndarray, radius: float) -> np.ndarray:
@@ -1002,7 +1251,12 @@ def _write_quality_onepage(
     plt: Any,
 ) -> None:
     total = len(rows)
-    social_count = split_counts.get("clean_social", 0) + split_counts.get("clean_between_humans", 0)
+    avoidance_count = split_counts.get("clean_avoidance", 0)
+    social_count = (
+        split_counts.get("clean_social", 0)
+        + split_counts.get("clean_between_humans", 0)
+        + avoidance_count
+    )
     between_count = split_counts.get("clean_between_humans", 0)
     rejected_count = split_counts.get("rejected", 0)
     q70_count = _count_where(rows, "quality_score", ">=", 0.7)
@@ -1010,12 +1264,14 @@ def _write_quality_onepage(
     clean_rows = [
         row
         for row in rows
-        if str(row.get("split")) in {"clean_all", "clean_social", "clean_between_humans"}
+        if str(row.get("split"))
+        in {"clean_all", "clean_social", "clean_avoidance", "clean_between_humans"}
     ]
     social_rows = [
         row
         for row in rows
-        if str(row.get("split")) in {"clean_social", "clean_between_humans"}
+        if str(row.get("split"))
+        in {"clean_social", "clean_avoidance", "clean_between_humans"}
     ]
 
     fig = plt.figure(figsize=(17, 8.9), facecolor="white")
@@ -1057,15 +1313,16 @@ def _write_quality_onepage(
     kpis = [
         ("Total", str(total), "raw windows", "#0f172a"),
         ("Clean Social", f"{social_count}", f"{_rate(social_count, total):.1f}% kept", "#2563eb"),
+        ("Reactive Avoidance", f"{avoidance_count}", f"{_rate(avoidance_count, total):.1f}% verified", "#0f766e"),
         ("Between Humans", f"{between_count}", f"{_rate(between_count, total):.1f}% focused", "#16a34a"),
         ("Rejected", f"{rejected_count}", f"{_rate(rejected_count, total):.1f}% removed", "#dc2626"),
         ("Median Quality", _format_kpi(_median_or_none(rows, "quality_score"), decimals=2), "all samples", "#7c3aed"),
-        ("Median Future", _format_kpi(_median_or_none(clean_rows, "future_disp"), "m", 2), "clean robot motion", "#0891b2"),
     ]
     for i, (title, value, subtitle, color) in enumerate(kpis):
         _draw_kpi_card(fig.add_subplot(gs[1, i]), title, value, subtitle, color)
 
     color_map = {
+        "clean_avoidance": "#0f766e",
         "clean_between_humans": "#16a34a",
         "clean_social": "#2563eb",
         "clean_all": "#64748b",
@@ -1074,7 +1331,13 @@ def _write_quality_onepage(
     }
 
     ax = fig.add_subplot(gs[2, 0:2])
-    split_order = ["clean_between_humans", "clean_social", "clean_all", "rejected"]
+    split_order = [
+        "clean_avoidance",
+        "clean_between_humans",
+        "clean_social",
+        "clean_all",
+        "rejected",
+    ]
     labels = [split for split in split_order if split_counts.get(split, 0) > 0]
     counts = [split_counts[split] for split in labels]
     bars = ax.bar(range(len(labels)), counts, color=[color_map.get(label, "#475569") for label in labels])
@@ -1151,7 +1414,7 @@ def _write_quality_onepage(
     fig.text(
         0.01,
         0.01,
-        "Recommended use: train with clean_social; analyze high-pressure cases with clean_between_humans.",
+        "Recommended use: train with clean_social; oversample clean_avoidance for reactive behavior.",
         fontsize=9,
         color="#475569",
     )
@@ -1169,7 +1432,14 @@ def maybe_write_quality_report(out_dir: Path, name: str, rows: list[dict[str, An
 
     report_dir = out_dir / "quality_report"
     report_dir.mkdir(parents=True, exist_ok=True)
-    split_order = ["clean_between_humans", "clean_social", "clean_all", "not_between_humans", "rejected"]
+    split_order = [
+        "clean_avoidance",
+        "clean_between_humans",
+        "clean_social",
+        "clean_all",
+        "not_between_humans",
+        "rejected",
+    ]
     split_counts = {split: 0 for split in split_order}
     for row in rows:
         split = str(row.get("split", "unknown"))
@@ -1243,6 +1513,19 @@ def maybe_write_quality_report(out_dir: Path, name: str, rows: list[dict[str, An
         _hist(ax, rows, key, title)
     fig.tight_layout()
     fig.savefig(report_dir / f"{name}_interaction_metrics.png", dpi=170)
+    plt.close(fig)
+
+    avoidance_metrics = [
+        ("cv_min_distance_m", "constant-velocity closest distance [m]"),
+        ("cv_time_to_closest_s", "constant-velocity time to closest [s]"),
+        ("robot_slowdown_ratio", "robot slowdown ratio"),
+        ("route_future_max_deviation_m", "max deviation from static route [m]"),
+    ]
+    fig, axes = plt.subplots(2, 2, figsize=(11, 7))
+    for ax, (key, title) in zip(axes.flat, avoidance_metrics):
+        _hist(ax, rows, key, title)
+    fig.tight_layout()
+    fig.savefig(report_dir / f"{name}_avoidance_metrics.png", dpi=170)
     plt.close(fig)
 
 
@@ -1359,6 +1642,16 @@ def main() -> None:
     parser.add_argument("--max-yaw-rate", type=float, default=1.5)
     parser.add_argument("--max-frame-interval-error", type=float, default=0.15)
     parser.add_argument("--collision-distance", type=float, default=0.65)
+    parser.add_argument("--avoidance-conflict-distance", type=float, default=1.2)
+    parser.add_argument("--avoidance-min-ttc", type=float, default=0.2)
+    parser.add_argument("--avoidance-max-ttc", type=float, default=4.0)
+    parser.add_argument("--avoidance-min-closing-speed", type=float, default=0.2)
+    parser.add_argument("--avoidance-velocity-window", type=int, default=3)
+    parser.add_argument("--avoidance-min-reference-speed", type=float, default=0.25)
+    parser.add_argument("--avoidance-response-window", type=int, default=3)
+    parser.add_argument("--avoidance-response-extra-time", type=float, default=1.0)
+    parser.add_argument("--avoidance-min-slowdown-ratio", type=float, default=0.20)
+    parser.add_argument("--avoidance-min-route-deviation", type=float, default=0.35)
     parser.add_argument("--map-size-m", type=float, default=8.0)
     parser.add_argument("--map-grid-size", type=int, default=32)
     parser.add_argument("--guidance-radius", type=float, default=8.0)
@@ -1417,12 +1710,15 @@ def main() -> None:
     quality_rows: list[dict[str, Any]] = []
     all_clean_samples: list[dict[str, Any]] = []
     social_clean_samples: list[dict[str, Any]] = []
+    avoidance_clean_samples: list[dict[str, Any]] = []
     between_humans_samples: list[dict[str, Any]] = []
     all_clean_trajs: list[np.ndarray] = []
     social_clean_trajs: list[np.ndarray] = []
+    avoidance_clean_trajs: list[np.ndarray] = []
     between_humans_trajs: list[np.ndarray] = []
     all_clean_meta: list[dict[str, Any]] = []
     social_clean_meta: list[dict[str, Any]] = []
+    avoidance_clean_meta: list[dict[str, Any]] = []
     between_humans_meta: list[dict[str, Any]] = []
 
     rejection_counts: dict[str, int] = {
@@ -1430,6 +1726,7 @@ def main() -> None:
         "basic_filter": 0,
         "route_guidance_failed": 0,
         "not_social_window": 0,
+        "not_avoidance_window": 0,
         "not_between_humans": 0,
     }
     basic_failure_reasons: dict[str, int] = {}
@@ -1445,10 +1742,16 @@ def main() -> None:
         q = sample_quality(trajs, obs_len, pred_len, dt)
         q.update(sample_timing_metrics(meta, obs_len + pred_len, dt))
         q.update(same_time_robot_human_metrics(trajs, obs_len, pred_len, args))
+        q.update(avoidance_conflict_metrics(trajs, obs_len, pred_len, dt, args))
         q.update(between_humans_metrics(trajs, obs_len, pred_len, args))
         q.update(local_map_metrics(target[obs_len - 1], map_data, args))
         q.update(trajectory_footprint_metrics(target, footprint_planner))
         q.update(heuristic_quality_scores(q, args))
+        q.update({
+            "route_future_mean_deviation_m": math.nan,
+            "route_future_max_deviation_m": math.nan,
+        })
+        q.update(avoidance_classification(q, args))
         route_metrics = {
             "route_guidance_valid": 0.0,
             "route_start_snap_m": math.nan,
@@ -1495,6 +1798,17 @@ def main() -> None:
                 )
                 q.update(route_metrics)
                 row.update(route_metrics)
+                response_metrics = route_response_metrics(
+                    target,
+                    obs_len,
+                    pred_len,
+                    np.asarray(route_points, dtype=np.float32),
+                )
+                q.update(response_metrics)
+                response_classification = avoidance_classification(q, args)
+                q.update(response_classification)
+                row.update(response_metrics)
+                row.update(response_classification)
                 guidance_metadata = {
                     "guidance_policy": "inflated_occupancy_grid_route_lookahead",
                     "guidance_radius": float(args.guidance_radius),
@@ -1502,6 +1816,14 @@ def main() -> None:
                     "route_clearance_m": float(route_clearance_m),
                     **computed_route_metrics,
                 }
+
+            teacher_classification = teacher_avoidance_classification(
+                meta,
+                q,
+                args,
+            )
+            q.update(teacher_classification)
+            row.update(teacher_classification)
 
             sample = make_model_sample(
                 trajs,
@@ -1520,7 +1842,8 @@ def main() -> None:
             all_clean_trajs.append(trajs)
             all_clean_meta.append(processed_meta)
             row["split"] = "clean_all"
-            if pass_social_filter(q, args):
+            is_avoidance = pass_avoidance_filter(q, args)
+            if pass_social_filter(q, args) or is_avoidance:
                 if pass_between_humans_filter(q, args):
                     between_humans_samples.append(sample)
                     between_humans_trajs.append(trajs)
@@ -1533,7 +1856,18 @@ def main() -> None:
                 social_clean_samples.append(sample)
                 social_clean_trajs.append(trajs)
                 social_clean_meta.append(processed_meta)
-                row["split"] = "clean_between_humans" if q["between_humans"] >= 1.0 else "clean_social"
+                if is_avoidance:
+                    avoidance_clean_samples.append(sample)
+                    avoidance_clean_trajs.append(trajs)
+                    avoidance_clean_meta.append(processed_meta)
+                    row["split"] = "clean_avoidance"
+                else:
+                    rejection_counts["not_avoidance_window"] += 1
+                    row["split"] = (
+                        "clean_between_humans"
+                        if q["between_humans"] >= 1.0
+                        else "clean_social"
+                    )
             else:
                 rejection_counts["not_social_window"] += 1
         else:
@@ -1598,6 +1932,16 @@ def main() -> None:
             "max_yaw_rate": args.max_yaw_rate,
             "max_frame_interval_error": args.max_frame_interval_error,
             "collision_distance": args.collision_distance,
+            "avoidance_conflict_distance": args.avoidance_conflict_distance,
+            "avoidance_min_ttc": args.avoidance_min_ttc,
+            "avoidance_max_ttc": args.avoidance_max_ttc,
+            "avoidance_min_closing_speed": args.avoidance_min_closing_speed,
+            "avoidance_velocity_window": args.avoidance_velocity_window,
+            "avoidance_min_reference_speed": args.avoidance_min_reference_speed,
+            "avoidance_response_window": args.avoidance_response_window,
+            "avoidance_response_extra_time": args.avoidance_response_extra_time,
+            "avoidance_min_slowdown_ratio": args.avoidance_min_slowdown_ratio,
+            "avoidance_min_route_deviation": args.avoidance_min_route_deviation,
             "guidance_policy": args.guidance_policy,
             "between_humans_only": args.between_humans_only,
             "between_min_path_length": args.between_min_path_length,
@@ -1614,6 +1958,11 @@ def main() -> None:
     outputs = {
         "clean_all": (all_clean_samples, all_clean_trajs, all_clean_meta),
         "clean_social": (social_clean_samples, social_clean_trajs, social_clean_meta),
+        "clean_avoidance": (
+            avoidance_clean_samples,
+            avoidance_clean_trajs,
+            avoidance_clean_meta,
+        ),
         "clean_between_humans": (between_humans_samples, between_humans_trajs, between_humans_meta),
     }
     for split, (samples, trajs, metas) in outputs.items():
@@ -1642,16 +1991,19 @@ def main() -> None:
         "input_samples": len(all_trajs),
         "clean_all_samples": len(all_clean_samples),
         "clean_social_samples": len(social_clean_samples),
+        "clean_avoidance_samples": len(avoidance_clean_samples),
         "clean_between_humans_samples": len(between_humans_samples),
         "rejection_counts": rejection_counts,
         "basic_failure_reasons": dict(sorted(basic_failure_reasons.items())),
         "route_failure_reasons": dict(sorted(route_failure_reasons.items())),
         "clean_all_summary": summarize([s["quality"] for s in all_clean_samples]),
         "clean_social_summary": summarize([s["quality"] for s in social_clean_samples]),
+        "clean_avoidance_summary": summarize([s["quality"] for s in avoidance_clean_samples]),
         "clean_between_humans_summary": summarize([s["quality"] for s in between_humans_samples]),
         "outputs": {
             "clean_all": str(args.out_dir / f"{name}_clean_all.pkl"),
             "clean_social": str(args.out_dir / f"{name}_clean_social.pkl"),
+            "clean_avoidance": str(args.out_dir / f"{name}_clean_avoidance.pkl"),
             "clean_between_humans": str(args.out_dir / f"{name}_clean_between_humans.pkl"),
             "quality_csv": str(args.out_dir / f"{name}_quality.csv"),
             "quality_report": str(args.out_dir / "quality_report"),

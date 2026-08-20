@@ -1,0 +1,143 @@
+{
+  "agents_training_open_plaza_forced_crossing.yaml": {
+    "agent_count": 1,
+    "map": "training_open_plaza",
+    "robot_goal": [
+      8.5,
+      0.0
+    ],
+    "robot_start": [
+      -8.5,
+      0.0
+    ],
+    "tags": [
+      "forced_crossing",
+      "one_way",
+      "moving_avoidance"
+    ]
+  },
+  "agents_training_bottleneck_merge_joint_gate.yaml": {
+    "agent_count": 3,
+    "map": "training_bottleneck_merge",
+    "robot_goal": [
+      9.0,
+      0.0
+    ],
+    "robot_start": [
+      -9.0,
+      0.0
+    ],
+    "tags": [
+      "bottleneck",
+      "merge",
+      "oncoming",
+      "crossing"
+    ]
+  },
+  "agents_training_outdoor_chicane_joint_crossing.yaml": {
+    "agent_count": 3,
+    "map": "training_outdoor_chicane",
+    "robot_goal": [
+      11.0,
+      0.0
+    ],
+    "robot_start": [
+      -11.0,
+      0.0
+    ],
+    "tags": [
+      "outdoor",
+      "chicane",
+      "crossing",
+      "static_detour"
+    ]
+  },
+  "agents_training_route_choice_joint_lower_crossing.yaml": {
+    "agent_count": 2,
+    "map": "training_route_choice",
+    "robot_goal": [
+      9.0,
+      -1.4
+    ],
+    "robot_start": [
+      -8.2,
+      -1.4
+    ],
+    "tags": [
+      "lower_bypass",
+      "crossing",
+      "static_detour"
+    ]
+  },
+  "agents_training_route_choice_joint_lower_oncoming.yaml": {
+    "agent_count": 2,
+    "map": "training_route_choice",
+    "robot_goal": [
+      9.0,
+      -1.4
+    ],
+    "robot_start": [
+      -8.2,
+      -1.4
+    ],
+    "tags": [
+      "lower_bypass",
+      "oncoming",
+      "crossing",
+      "static_detour"
+    ]
+  },
+  "agents_training_route_choice_joint_lower_yield.yaml": {
+    "agent_count": 2,
+    "map": "training_route_choice",
+    "robot_goal": [
+      9.0,
+      -1.4
+    ],
+    "robot_start": [
+      -8.2,
+      -1.4
+    ],
+    "tags": [
+      "lower_bypass",
+      "crossing",
+      "yield",
+      "static_detour"
+    ]
+  },
+  "agents_training_route_choice_joint_upper_crossing.yaml": {
+    "agent_count": 2,
+    "map": "training_route_choice",
+    "robot_goal": [
+      9.0,
+      1.4
+    ],
+    "robot_start": [
+      -8.2,
+      1.4
+    ],
+    "tags": [
+      "upper_bypass",
+      "crossing",
+      "static_detour"
+    ]
+  },
+  "agents_training_route_choice_joint_upper_oncoming.yaml": {
+    "agent_count": 2,
+    "map": "training_route_choice",
+    "robot_goal": [
+      9.0,
+      1.4
+    ],
+    "robot_start": [
+      -8.2,
+      1.4
+    ],
+    "tags": [
+      "upper_bypass",
+      "oncoming",
+      "crossing",
+      "static_detour"
+    ]
+  }
+}

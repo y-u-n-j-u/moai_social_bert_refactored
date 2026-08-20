@@ -1,0 +1,41 @@
+hunav_loader:
+  ros__parameters:
+    yaml_base_name: agents_training_intersection_safe_teacher_low
+    simulator: Gazebo Classic
+    map: training_intersection
+    publish_people: true
+    # V1 starts the robot in the junction between two opposing pedestrian
+    # streams. This V2 pilot uses one reproducible perpendicular crossing so
+    # Nav2 can demonstrate an unambiguous yield-before-crossing behavior.
+    global_goals:
+      1:
+        x: -0.850
+        y: -7.000
+      2:
+        x: -0.850
+        y: 7.000
+    agents:
+      - agent1
+    agent1:
+      id: 1
+      group_id: -1
+      skin: 0
+      max_vel: 0.90
+      radius: 0.33
+      goal_radius: 0.45
+      cyclic_goals: true
+      init_pose:
+        x: -0.850
+        y: -7.000
+        z: 1.250
+        h: 1.57080
+      behavior:
+        type: Regular
+        configuration: 1
+        goal_force_factor: 2.0
+        obstacle_force_factor: 5.0
+        social_force_factor: 2.2
+        other_force_factor: 6.0
+      goals:
+        - 2
+        - 1

@@ -92,6 +92,7 @@ private:
   bool plug_use_collision_;
   std::string plug_navgoal_topic_;
   double plug_update_rate_;
+  double physics_update_rate_;
   std::string plug_robot_name_;
   std::string plug_global_frame_;
   std::vector<std::string> plug_ignore_models_;

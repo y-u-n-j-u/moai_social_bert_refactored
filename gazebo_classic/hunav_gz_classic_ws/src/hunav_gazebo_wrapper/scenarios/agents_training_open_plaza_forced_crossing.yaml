@@ -1,0 +1,35 @@
+hunav_loader:
+  ros__parameters:
+    yaml_base_name: agents_training_open_plaza_forced_crossing
+    simulator: Gazebo Classic
+    map: training_open_plaza
+    publish_people: true
+
+    # The robot travels from (-8.5, 0) to (8.5, 0). Starting this pedestrian
+    # with the navigation goal makes both reach the origin at nearly the same
+    # time, so a straight robot trajectory would collide.
+    global_goals:
+      1: {x: 0.0, y: -8.5}
+      2: {x: 0.0, y: 8.5}
+
+    agents:
+      - agent1
+
+    agent1:
+      id: 1
+      group_id: -1
+      skin: 0
+      max_vel: 0.80
+      radius: 0.33
+      goal_radius: 0.40
+      cyclic_goals: false
+      init_pose: {x: 0.0, y: -8.5, z: 1.25, h: 1.5708}
+      behavior:
+        type: Regular
+        configuration: 1
+        goal_force_factor: 2.0
+        obstacle_force_factor: 5.0
+        social_force_factor: 2.2
+        other_force_factor: 6.0
+      goals:
+        - 2

@@ -1,0 +1,66 @@
+hunav_loader:
+  ros__parameters:
+    yaml_base_name: agents_training_route_choice_joint_lower_oncoming
+    simulator: Gazebo Classic
+    map: training_route_choice
+    publish_people: true
+    global_goals:
+      1:
+        x: 8.700
+        y: -2.550
+      2:
+        x: -7.500
+        y: -2.550
+      3:
+        x: 5.800
+        y: -6.400
+      4:
+        x: 5.800
+        y: -0.300
+    agents:
+      - agent1
+      - agent2
+    agent1:
+      id: 1
+      group_id: -1
+      skin: 1
+      max_vel: 0.75
+      radius: 0.33
+      goal_radius: 0.45
+      cyclic_goals: false
+      init_pose:
+        x: 8.700
+        y: -2.550
+        z: 1.250
+        h: 3.14159
+      behavior:
+        type: Regular
+        configuration: 1
+        goal_force_factor: 2.0
+        obstacle_force_factor: 5.0
+        social_force_factor: 2.2
+        other_force_factor: 6.0
+      goals:
+        - 2
+    agent2:
+      id: 2
+      group_id: -1
+      skin: 4
+      max_vel: 0.50
+      radius: 0.33
+      goal_radius: 0.45
+      cyclic_goals: false
+      init_pose:
+        x: 5.800
+        y: -6.400
+        z: 1.250
+        h: 1.57080
+      behavior:
+        type: Regular
+        configuration: 1
+        goal_force_factor: 2.0
+        obstacle_force_factor: 5.0
+        social_force_factor: 2.2
+        other_force_factor: 6.0
+      goals:
+        - 4

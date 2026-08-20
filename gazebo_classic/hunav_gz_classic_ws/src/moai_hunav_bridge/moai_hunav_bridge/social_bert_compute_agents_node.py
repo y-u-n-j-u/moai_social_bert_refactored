@@ -95,6 +95,9 @@ class OccupancyMapProvider:
         occ_prob = (255.0 - image.astype(np.float32)) / 255.0
         self.occupied = occ_prob >= self.occupied_thresh
         self.height, self.width = self.occupied.shape
+        self._inflated_occupancy_cache: Dict[int, np.ndarray] = {
+            0: self.occupied,
+        }
         logger.info(
             f"Loaded local occupancy map from {yaml_path}: {self.width}x{self.height}, "
             f"resolution={self.resolution:.3f}, origin=({self.origin_x:.2f}, {self.origin_y:.2f})"
@@ -176,18 +179,76 @@ class OccupancyMapProvider:
     def point_occupied(self, x: float, y: float) -> bool:
         return bool(self.occupancy_at_world(np.asarray([x]), np.asarray([y]))[0] > 0.5)
 
+    def _inflated_occupancy(self, radius: float) -> np.ndarray:
+        radius = max(float(radius), 0.0)
+        if radius <= 0.0:
+            return self.occupied
+        cache_key = int(round(radius * 1_000_000.0))
+        cached = self._inflated_occupancy_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        # Mark a target cell blocked whenever its square can come within the
+        # circular footprint radius of an occupied source cell. This catches
+        # diagonal corner contact that the old four-offset probe missed.
+        limit = int(np.ceil(radius / self.resolution)) + 1
+        inflated = np.zeros_like(self.occupied, dtype=bool)
+        for row_offset in range(-limit, limit + 1):
+            for col_offset in range(-limit, limit + 1):
+                separation_x = max(abs(col_offset) - 1, 0) * self.resolution
+                separation_y = max(abs(row_offset) - 1, 0) * self.resolution
+                if hypot(separation_x, separation_y) > radius + 1e-9:
+                    continue
+
+                source_row_start = max(0, -row_offset)
+                source_row_end = min(self.height, self.height - row_offset)
+                source_col_start = max(0, -col_offset)
+                source_col_end = min(self.width, self.width - col_offset)
+                target_row_start = source_row_start + row_offset
+                target_row_end = source_row_end + row_offset
+                target_col_start = source_col_start + col_offset
+                target_col_end = source_col_end + col_offset
+                inflated[
+                    target_row_start:target_row_end,
+                    target_col_start:target_col_end,
+                ] |= self.occupied[
+                    source_row_start:source_row_end,
+                    source_col_start:source_col_end,
+                ]
+
+        self._inflated_occupancy_cache[cache_key] = inflated
+        return inflated
+
+    def point_occupied_with_radius(self, x: float, y: float, radius: float) -> bool:
+        radius = max(float(radius), 0.0)
+        if radius <= 0.0:
+            return self.point_occupied(x, y)
+
+        map_max_x = self.origin_x + self.width * self.resolution
+        map_max_y = self.origin_y + self.height * self.resolution
+        if (
+            x - radius < self.origin_x
+            or x + radius > map_max_x
+            or y - radius < self.origin_y
+            or y + radius > map_max_y
+        ):
+            return True
+        cols, rows, valid = self._world_to_pixel(
+            np.asarray([x], dtype=np.float32),
+            np.asarray([y], dtype=np.float32),
+        )
+        if not bool(valid[0]):
+            return True
+        inflated = self._inflated_occupancy(radius)
+        return bool(inflated[rows[0], cols[0]])
+
     def path_collision_cost(self, path: List[Tuple[float, float]], radius: float, weight: float) -> float:
         if not path:
             return 0.0
-        offsets = [(0.0, 0.0)]
-        if radius > self.resolution:
-            offsets.extend([(radius, 0.0), (-radius, 0.0), (0.0, radius), (0.0, -radius)])
         cost = 0.0
         for px, py in path:
-            for ox, oy in offsets:
-                if self.point_occupied(float(px) + ox, float(py) + oy):
-                    cost += weight
-                    break
+            if self.point_occupied_with_radius(float(px), float(py), radius):
+                cost += weight
         return cost
 
     def scene_patches(
