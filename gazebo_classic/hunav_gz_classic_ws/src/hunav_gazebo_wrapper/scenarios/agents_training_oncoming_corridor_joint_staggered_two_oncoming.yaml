@@ -1,0 +1,66 @@
+hunav_loader:
+  ros__parameters:
+    yaml_base_name: agents_training_oncoming_corridor_joint_staggered_two_oncoming
+    simulator: Gazebo Classic
+    map: training_oncoming_corridor
+    publish_people: true
+    global_goals:
+      1:
+        x: -1.000
+        y: 0.000
+      2:
+        x: -8.000
+        y: 0.000
+      3:
+        x: 8.000
+        y: 0.000
+      4:
+        x: -8.000
+        y: 0.000
+    agents:
+      - agent1
+      - agent2
+    agent1:
+      id: 1
+      group_id: -1
+      skin: 3
+      max_vel: 0.65
+      radius: 0.33
+      goal_radius: 0.45
+      cyclic_goals: false
+      init_pose:
+        x: -1.000
+        y: 0.000
+        z: 1.250
+        h: 3.14159
+      behavior:
+        type: Regular
+        configuration: 1
+        goal_force_factor: 2.0
+        obstacle_force_factor: 5.0
+        social_force_factor: 2.2
+        other_force_factor: 6.0
+      goals:
+        - 2
+    agent2:
+      id: 2
+      group_id: -1
+      skin: 4
+      max_vel: 0.50
+      radius: 0.33
+      goal_radius: 0.45
+      cyclic_goals: false
+      init_pose:
+        x: 8.000
+        y: 0.000
+        z: 1.250
+        h: 3.14159
+      behavior:
+        type: Regular
+        configuration: 1
+        goal_force_factor: 2.0
+        obstacle_force_factor: 5.0
+        social_force_factor: 2.2
+        other_force_factor: 6.0
+      goals:
+        - 4

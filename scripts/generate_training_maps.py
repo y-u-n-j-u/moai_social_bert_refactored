@@ -82,6 +82,7 @@ class ScenarioAgent:
     skin: int = 0
     radius: float = 0.33
     goal_radius: float = 0.45
+    waypoints: tuple[tuple[float, float], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -94,10 +95,17 @@ class JointScenarioSpec:
     robot_goal: tuple[float, float]
     agents: Sequence[ScenarioAgent]
     tags: Sequence[str]
+    write_scenario: bool = True
 
 
-def agent(start, end, speed, skin=0) -> ScenarioAgent:
-    return ScenarioAgent(start=start, end=end, speed=speed, skin=skin)
+def agent(start, end, speed, skin=0, waypoints=()) -> ScenarioAgent:
+    return ScenarioAgent(
+        start=start,
+        end=end,
+        speed=speed,
+        skin=skin,
+        waypoints=tuple(waypoints),
+    )
 
 
 def outer_walls(width: float, height: float, thickness: float = 0.25) -> list[Rect]:
@@ -110,6 +118,51 @@ def outer_walls(width: float, height: float, thickness: float = 0.25) -> list[Re
 
 
 SPECS = [
+    MapSpec(
+        name="training_oncoming_corridor",
+        width_m=20.0,
+        height_m=8.0,
+        # A dedicated obstacle-free encounter zone isolates robot response to
+        # oncoming pedestrians.  The 6 m inner width leaves room for the
+        # 1.6 m teacher lane offset plus footprint and costmap clearance.
+        free_regions=[(-9.75, 9.75, -3.00, 3.00)],
+        occupied=[
+            Rect("oncoming_wall_north", 0.0, 3.125, 20.0, 0.25),
+            Rect("oncoming_wall_south", 0.0, -3.125, 20.0, 0.25),
+            Rect("oncoming_end_west", -9.875, 0.0, 0.25, 6.50),
+            Rect("oncoming_end_east", 9.875, 0.0, 0.25, 6.50),
+        ],
+        start_occupied=True,
+        tracks=[((8.0, 0.0), (-8.0, 0.0))],
+        densities=[("low", 1)],
+        robot_waypoints=[(-8.0, 0.0), (8.0, 0.0)],
+        agent_speed_base=0.70,
+        agent_speed_step=0.0,
+    ),
+    MapSpec(
+        name="training_detour_oncoming",
+        width_m=24.0,
+        height_m=14.0,
+        free_regions=[],
+        occupied=[
+            *outer_walls(24.0, 14.0),
+            # The obstacle is close to the robot start, leaving a long open
+            # segment for a distinct oncoming encounter after the detour.
+            Rect("detour_entry_block", -5.5, 0.0, 3.0, 4.0),
+        ],
+        start_occupied=False,
+        tracks=[((9.0, 2.0), (-2.5, 2.0))],
+        densities=[("low", 1)],
+        robot_waypoints=[(-10.0, 1.0), (10.0, 0.0)],
+        agent_radius=0.33,
+        agent_goal_radius=0.45,
+        agent_speed_base=0.75,
+        agent_speed_step=0.0,
+        goal_force_factor=2.0,
+        obstacle_force_factor=5.0,
+        social_force_factor=2.2,
+        other_force_factor=6.0,
+    ),
     MapSpec(
         name="training_corridor",
         width_m=20.0,
@@ -413,6 +466,95 @@ SPECS = [
 
 JOINT_SCENARIOS = [
     JointScenarioSpec(
+        name="agents_training_oncoming_corridor_joint_head_on",
+        map_name="training_oncoming_corridor",
+        robot_start=(-8.0, 0.0),
+        robot_goal=(8.0, 0.0),
+        agents=[
+            # Matching nominal speeds and symmetric starts force an encounter
+            # near the map center.  With one-way coupling only the robot can
+            # resolve the conflict, making avoidance causality observable.
+            agent((8.0, 0.0), (-8.0, 0.0), 0.70, 1),
+        ],
+        tags=("oncoming", "head_on", "one_way", "moving_avoidance"),
+    ),
+    JointScenarioSpec(
+        name="agents_training_oncoming_corridor_joint_overtaking",
+        map_name="training_oncoming_corridor",
+        robot_start=(-8.0, 0.0),
+        robot_goal=(8.0, 0.0),
+        agents=[
+            # The slower pedestrian starts five metres ahead.  The robot must
+            # leave the centerline, pass without stopping, then merge back.
+            agent((-3.0, 0.0), (7.0, 0.0), 0.40, 2),
+        ],
+        tags=("overtaking", "same_direction", "one_way", "moving_avoidance"),
+    ),
+    JointScenarioSpec(
+        name="agents_training_oncoming_corridor_joint_cut_in",
+        map_name="training_oncoming_corridor",
+        robot_start=(-8.0, 0.0),
+        robot_goal=(8.0, 0.0),
+        agents=[
+            # Merge diagonally, then continue along the robot route. This
+            # distinguishes a true cut-in from a momentary path crossing.
+            agent(
+                (-5.0, -2.2),
+                (8.5, 0.0),
+                0.40,
+                0,
+                waypoints=((-2.0, 0.0),),
+            ),
+        ],
+        tags=(
+            "cut_in",
+            "diagonal_merge",
+            "one_way",
+            "moving_avoidance",
+            "route_recovery",
+        ),
+    ),
+    JointScenarioSpec(
+        name="agents_training_oncoming_corridor_joint_staggered_two_oncoming",
+        map_name="training_oncoming_corridor",
+        robot_start=(-8.0, 0.0),
+        robot_goal=(8.0, 0.0),
+        agents=[
+            # The farther pedestrian moves more slowly so the robot can finish
+            # its first avoidance and recover before the second encounter.
+            agent((-1.0, 0.0), (-8.0, 0.0), 0.65, 3),
+            agent((8.0, 0.0), (-8.0, 0.0), 0.50, 4),
+        ],
+        tags=(
+            "oncoming",
+            "staggered",
+            "two_human",
+            "one_way",
+            "moving_avoidance",
+        ),
+    ),
+    JointScenarioSpec(
+        name="agents_training_open_plaza_forced_crossing",
+        map_name="training_open_plaza",
+        robot_start=(-8.5, 0.0),
+        robot_goal=(8.5, 0.0),
+        agents=[
+            ScenarioAgent(
+                start=(0.0, -8.5),
+                end=(0.0, 8.5),
+                speed=0.80,
+                skin=0,
+                radius=0.33,
+                goal_radius=0.40,
+            ),
+        ],
+        tags=("forced_crossing", "one_way", "moving_avoidance"),
+        # This scenario contains explanatory comments useful during manual
+        # tuning; include it in validation/catalog generation without
+        # replacing the hand-authored YAML.
+        write_scenario=False,
+    ),
+    JointScenarioSpec(
         name="agents_training_route_choice_joint_lower_yield",
         map_name="training_route_choice",
         robot_start=(-8.2, -1.4),
@@ -471,6 +613,25 @@ JOINT_SCENARIOS = [
             agent((0.0, 7.0), (0.0, 1.0), 0.45, 0),
         ],
         tags=("upper_bypass", "oncoming", "crossing", "static_detour"),
+    ),
+    JointScenarioSpec(
+        name="agents_training_detour_oncoming_joint_recovery",
+        map_name="training_detour_oncoming",
+        robot_start=(-10.0, 1.0),
+        robot_goal=(10.0, 0.0),
+        agents=[
+            # The robot clears the entry obstacle before meeting this human in
+            # the broad central segment, separating static and social actions.
+            agent((9.0, 2.0), (-2.5, 2.0), 0.75, 2),
+        ],
+        tags=(
+            "entry_detour",
+            "oncoming",
+            "one_way",
+            "moving_avoidance",
+            "route_recovery",
+            "static_detour",
+        ),
     ),
     JointScenarioSpec(
         name="agents_training_bottleneck_merge_joint_gate",
@@ -604,21 +765,28 @@ def validate_joint_scenario(
     starts: list[tuple[float, float]] = []
     for index, profile in enumerate(scenario.agents, start=1):
         starts.append(profile.start)
-        length = float(np.hypot(
-            profile.end[0] - profile.start[0],
-            profile.end[1] - profile.start[1],
-        ))
-        sample_count = max(int(np.ceil(length / 0.10)), 1)
-        for alpha in np.linspace(0.0, 1.0, sample_count + 1):
-            point = (
-                profile.start[0] + alpha * (profile.end[0] - profile.start[0]),
-                profile.start[1] + alpha * (profile.end[1] - profile.start[1]),
-            )
-            if not point_has_clearance(spec, grid, point, profile.radius + 0.25):
-                raise ValueError(
-                    f"{scenario.name}: agent {index} track approaches an obstacle "
-                    f"near ({point[0]:.2f}, {point[1]:.2f})"
+        route_points = (profile.start, *profile.waypoints, profile.end)
+        for segment_start, segment_end in zip(route_points, route_points[1:]):
+            length = float(np.hypot(
+                segment_end[0] - segment_start[0],
+                segment_end[1] - segment_start[1],
+            ))
+            sample_count = max(int(np.ceil(length / 0.10)), 1)
+            for alpha in np.linspace(0.0, 1.0, sample_count + 1):
+                point = (
+                    segment_start[0] + alpha * (segment_end[0] - segment_start[0]),
+                    segment_start[1] + alpha * (segment_end[1] - segment_start[1]),
                 )
+                if not point_has_clearance(
+                    spec,
+                    grid,
+                    point,
+                    profile.radius + 0.25,
+                ):
+                    raise ValueError(
+                        f"{scenario.name}: agent {index} track approaches an "
+                        f"obstacle near ({point[0]:.2f}, {point[1]:.2f})"
+                    )
 
     for first in range(len(starts)):
         for second in range(first + 1, len(starts)):
@@ -641,24 +809,30 @@ def joint_scenario_text(
     goal_lines: list[str] = []
     agent_names: list[str] = []
     agent_blocks: list[str] = []
+    next_goal_id = 1
     for index, profile in enumerate(scenario.agents, start=1):
-        start_goal = 2 * index - 1
-        end_goal = 2 * index
-        goal_lines.extend(
-            [
-                f"      {start_goal}:",
-                f"        x: {profile.start[0]:.3f}",
-                f"        y: {profile.start[1]:.3f}",
-                f"      {end_goal}:",
-                f"        x: {profile.end[0]:.3f}",
-                f"        y: {profile.end[1]:.3f}",
-            ]
-        )
+        route_points = (profile.start, *profile.waypoints, profile.end)
+        route_goal_ids: list[int] = []
+        for point in route_points:
+            goal_id = next_goal_id
+            next_goal_id += 1
+            route_goal_ids.append(goal_id)
+            goal_lines.extend(
+                [
+                    f"      {goal_id}:",
+                    f"        x: {point[0]:.3f}",
+                    f"        y: {point[1]:.3f}",
+                ]
+            )
         agent_names.append(f"      - agent{index}")
+        first_target = route_points[1]
         heading = float(np.arctan2(
-            profile.end[1] - profile.start[1],
-            profile.end[0] - profile.start[0],
+            first_target[1] - profile.start[1],
+            first_target[0] - profile.start[0],
         ))
+        agent_goal_lines = "\n".join(
+            f"        - {goal_id}" for goal_id in route_goal_ids[1:]
+        )
         agent_blocks.append(
             f"""    agent{index}:
       id: {index}
@@ -681,7 +855,7 @@ def joint_scenario_text(
         social_force_factor: {map_spec.social_force_factor:.1f}
         other_force_factor: {map_spec.other_force_factor:.1f}
       goals:
-        - {end_goal}"""
+{agent_goal_lines}"""
         )
     return (
         "hunav_loader:\n"
@@ -876,10 +1050,16 @@ def main() -> None:
     for scenario in JOINT_SCENARIOS:
         validate_joint_scenario(scenario, specs_by_name)
         scenario_file = f"{scenario.name}.yaml"
-        (SCENARIO_DIR / scenario_file).write_text(
-            joint_scenario_text(scenario, specs_by_name[scenario.map_name]),
-            encoding="utf-8",
-        )
+        scenario_path = SCENARIO_DIR / scenario_file
+        if scenario.write_scenario:
+            scenario_path.write_text(
+                joint_scenario_text(scenario, specs_by_name[scenario.map_name]),
+                encoding="utf-8",
+            )
+        elif not scenario_path.exists():
+            raise FileNotFoundError(
+                f"manually authored joint scenario is missing: {scenario_path}"
+            )
         catalog[scenario_file] = {
             "map": scenario.map_name,
             "robot_start": list(scenario.robot_start),

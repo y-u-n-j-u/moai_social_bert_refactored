@@ -12,7 +12,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.loss import goal_collision_loss, pos_collision_loss
+from src.loss import (
+    dynamic_social_collision_loss,
+    goal_collision_loss,
+    pos_collision_loss,
+)
 from src.model import GoalPooler
 from src.utils import bootstrap_paths
 
@@ -20,6 +24,7 @@ bootstrap_paths()
 
 from spubert.datasets.moai_social_nav_extended_goal import (
     _SpatialTokens,
+    build_human_future_labels,
     build_local_map_streams,
     build_mgp_tgp_streams,
 )
@@ -415,6 +420,70 @@ class GuidedMapContractTest(unittest.TestCase):
         loss.backward()
 
         self.assertGreater(float(trajectory.grad.abs().sum()), 0.0)
+
+    def test_dynamic_social_loss_matches_synchronized_future_steps(self):
+        robot = torch.tensor([[[0.0, 0.0], [1.0, 0.0]]])
+        humans = torch.tensor([[[[0.5, 0.0], [2.0, 0.0]]]])
+        mask = torch.ones(1, 1, 2)
+
+        loss = dynamic_social_collision_loss(
+            robot,
+            humans,
+            mask,
+            safe_distance=1.0,
+        )
+
+        self.assertAlmostEqual(float(loss), 0.25, places=6)
+
+    def test_dynamic_social_loss_pushes_trajectory_away_from_human(self):
+        robot = torch.tensor([[[0.0, 0.0]]], requires_grad=True)
+        humans = torch.tensor([[[[0.5, 0.0]]]])
+        mask = torch.ones(1, 1, 1)
+
+        loss = dynamic_social_collision_loss(
+            robot,
+            humans,
+            mask,
+            safe_distance=1.0,
+        )
+        loss.backward()
+
+        self.assertGreater(float(loss), 0.0)
+        self.assertGreater(float(robot.grad[0, 0, 0]), 0.0)
+
+    def test_dynamic_social_loss_ignores_masked_and_nan_steps(self):
+        robot = torch.zeros(1, 2, 2, requires_grad=True)
+        humans = torch.tensor([[[[0.1, 0.0], [float("nan"), 0.0]]]])
+        mask = torch.zeros(1, 1, 2)
+
+        loss = dynamic_social_collision_loss(
+            robot,
+            humans,
+            mask,
+            safe_distance=1.0,
+        )
+        loss.backward()
+
+        self.assertEqual(float(loss), 0.0)
+        self.assertEqual(float(robot.grad.abs().sum()), 0.0)
+
+    def test_human_future_labels_pad_neighbors_and_mask_nan_steps(self):
+        trajs = np.zeros((3, 20, 2), dtype=np.float32)
+        trajs[2, 14:, :] = np.nan
+
+        labels, mask = build_human_future_labels(
+            trajs,
+            obs_len=8,
+            pred_len=12,
+            num_nbr=4,
+        )
+
+        self.assertEqual(labels.shape, (4, 12, 2))
+        self.assertEqual(mask.shape, (4, 12))
+        self.assertEqual(float(mask[0].sum()), 12.0)
+        self.assertEqual(float(mask[1].sum()), 6.0)
+        self.assertEqual(float(mask[2:].sum()), 0.0)
+        self.assertTrue(np.isfinite(labels).all())
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 from .guided_spubert_runtime import (
     GuidedInferenceResult,
     GuidedSpubertRuntime,
+    adaptive_guidance_point_along_path,
     guidance_point_along_path,
     sample_polyline,
 )
@@ -146,6 +147,17 @@ class SpubertNav2BridgeNode(Node):
         self.guidance_radius = float(
             self.declare_parameter("guidance_radius", 8.0).value
         )
+        self.adaptive_guidance = self._as_bool(
+            self.declare_parameter("adaptive_guidance", False).value
+        )
+        self.adaptive_guidance_min_distance = float(
+            self.declare_parameter("adaptive_guidance_min_distance", 2.0).value
+        )
+        self.adaptive_guidance_probe_step = float(
+            self.declare_parameter("adaptive_guidance_probe_step", 0.5).value
+        )
+        if self.adaptive_guidance_probe_step <= 0.0:
+            raise ValueError("adaptive_guidance_probe_step must be positive")
         self.obs_len = int(self.declare_parameter("obs_len", 8).value)
         self.pred_len = int(self.declare_parameter("pred_len", 12).value)
         self.prediction_dt = float(
@@ -288,6 +300,9 @@ class SpubertNav2BridgeNode(Node):
             "runtime_seed": int(self.runtime_seed),
             "tgp_top_k": int(self.tgp_top_k),
             "guidance_radius_m": float(self.guidance_radius),
+            "adaptive_guidance": bool(self.adaptive_guidance),
+            "adaptive_guidance_min_distance_m": float(self.adaptive_guidance_min_distance),
+            "adaptive_guidance_probe_step_m": float(self.adaptive_guidance_probe_step),
             "replan_period_s": float(self.replan_period),
             "rejection_streak_limit": int(self.rejection_streak_limit),
             "robot_radius_m": float(self.robot_radius),
@@ -454,11 +469,8 @@ class SpubertNav2BridgeNode(Node):
             float(goal.pose.position.y),
         )
         try:
-            route_guidance = guidance_point_along_path(
-                self._route_path,
-                current=current,
-                final_goal=final_goal,
-                radius=self.guidance_radius,
+            route_guidance, guidance_policy = self._route_guidance_point(
+                current, final_goal
             )
         except ValueError as exc:
             self.get_logger().warning(f"Route guidance point failed: {exc}")
@@ -528,6 +540,7 @@ class SpubertNav2BridgeNode(Node):
             reason,
             diagnostics,
             candidate_attempts,
+            guidance_policy,
         )
         self._publish_debug(result, valid=valid, reason=reason)
         if not valid:
@@ -551,6 +564,44 @@ class SpubertNav2BridgeNode(Node):
                 self._last_follow_send = now
             else:
                 self._handle_invalid_path("follow_path_server_unavailable")
+
+    def _route_guidance_point(self, current: XY, final_goal: XY) -> Tuple[XY, str]:
+        if not self.adaptive_guidance:
+            return (
+                guidance_point_along_path(
+                    self._route_path,
+                    current=current,
+                    final_goal=final_goal,
+                    radius=self.guidance_radius,
+                ),
+                "nav2_global_path_fixed_lookahead",
+            )
+        if self._map_provider is None:
+            raise ValueError("adaptive guidance requires an occupancy map")
+
+        footprint_radius = self.robot_radius + self.static_safety_margin
+        sample_spacing = max(float(self._map_provider.resolution) * 0.5, 0.01)
+
+        def is_direct_path_safe(points: Sequence[XY]) -> bool:
+            swept_path = sample_polyline(points, max_spacing=sample_spacing)
+            return self._map_provider.path_collision_cost(
+                swept_path,
+                radius=footprint_radius,
+                weight=1.0,
+            ) <= 0.0
+
+        return (
+            adaptive_guidance_point_along_path(
+                self._route_path,
+                current=current,
+                final_goal=final_goal,
+                max_radius=self.guidance_radius,
+                min_radius=self.adaptive_guidance_min_distance,
+                probe_step=self.adaptive_guidance_probe_step,
+                is_direct_path_safe=is_direct_path_safe,
+            ),
+            "nav2_global_path_adaptive_footprint_visible",
+        )
 
     def _request_route_path(self) -> bool:
         goal = self._goal
@@ -842,6 +893,7 @@ class SpubertNav2BridgeNode(Node):
         reason: str,
         diagnostics: Dict[str, Any],
         candidate_attempts: Sequence[Dict[str, Any]],
+        guidance_policy: str,
     ) -> None:
         robot = self._robot
         goal = self._goal
@@ -898,7 +950,11 @@ class SpubertNav2BridgeNode(Node):
                 float(goal.pose.position.y),
             ],
             "guidance_point": list(result.guidance_point_world),
-            "guidance_policy": "nav2_global_path_lookahead",
+            "guidance_policy": str(guidance_policy),
+            "guidance_distance_from_robot_m": float(math.hypot(
+                result.guidance_point_world[0] - float(robot.position.position.x),
+                result.guidance_point_world[1] - float(robot.position.position.y),
+            )),
             "compute_path_success": (
                 self._route_path_generation == self._goal_generation
             ),

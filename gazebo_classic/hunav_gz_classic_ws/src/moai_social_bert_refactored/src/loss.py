@@ -120,6 +120,62 @@ def pos_collision_loss(pred_trajs, envs, envs_params):
     return _differentiable_collision_loss(pred_trajs, envs, envs_params)
 
 
+def dynamic_social_collision_loss(
+    pred_trajs,
+    human_futures,
+    human_future_mask,
+    safe_distance,
+):
+    """Penalize synchronized robot-human future positions inside a safety margin.
+
+    ``pred_trajs`` and ``human_futures`` must already use the same local frame
+    and timestep convention. Missing human future steps are ignored by the
+    mask, so legacy or partially observed tracks do not create false losses.
+    """
+    if pred_trajs.ndim != 3 or pred_trajs.shape[-1] < 2:
+        raise ValueError(
+            f"pred_trajs must have shape [B,T,2], got {pred_trajs.shape}"
+        )
+    if human_futures.ndim != 4 or human_futures.shape[-1] < 2:
+        raise ValueError(
+            "human_futures must have shape [B,N,T,2], "
+            f"got {human_futures.shape}"
+        )
+    if human_future_mask.ndim != 3:
+        raise ValueError(
+            "human_future_mask must have shape [B,N,T], "
+            f"got {human_future_mask.shape}"
+        )
+    if pred_trajs.shape[0] != human_futures.shape[0]:
+        raise ValueError("robot and human future batch sizes must match")
+    if pred_trajs.shape[1] != human_futures.shape[2]:
+        raise ValueError("robot and human future lengths must match")
+    if human_future_mask.shape != human_futures.shape[:3]:
+        raise ValueError("human_future_mask shape must match [B,N,T]")
+    if safe_distance <= 0:
+        raise ValueError("safe_distance must be positive")
+
+    humans = human_futures[..., :2].to(
+        device=pred_trajs.device,
+        dtype=pred_trajs.dtype,
+    )
+    finite = torch.isfinite(humans).all(dim=-1)
+    valid = human_future_mask.to(device=pred_trajs.device) > 0
+    valid = valid & finite
+    humans = torch.nan_to_num(humans)
+
+    distances = torch.linalg.vector_norm(
+        pred_trajs[:, None, :, :2] - humans,
+        dim=-1,
+    )
+    intrusion = F.relu(float(safe_distance) - distances).square()
+    # A single dangerous synchronized step matters. Averaging over all 12
+    # steps would dilute a brief collision with eleven otherwise-safe steps.
+    pair_penalty = intrusion.masked_fill(~valid, 0.0).max(dim=-1).values
+    valid_pairs = valid.any(dim=-1).to(dtype=pred_trajs.dtype)
+    return (pair_penalty * valid_pairs).sum() / valid_pairs.sum().clamp_min(1.0)
+
+
 def bom_loss_3(pred_goals, pred_trajs, gt_goals, gt_trajs, k_sample, output_dim=2):
     gt_trajs = gt_trajs.unsqueeze(1).repeat(1, k_sample, 1, 1)
     gt_goals = gt_goals.unsqueeze(1).repeat(1, k_sample, 1)

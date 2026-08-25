@@ -81,6 +81,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         'goal_weight': 1.0,
         'kld_weight': 1.0,
         'col_weight': 0.0,
+        'social_col_weight': 0.0,
+        'social_safe_distance': 0.9,
         'cvae_sigma': 1.0,
         'kld_clamp': None,
     },
@@ -228,6 +230,21 @@ def _validate_config(cfg: dict[str, Any], config_path: str) -> None:
         raise SystemExit(
             f'loss.col_weight requires scene.enabled=true: {config_path}'
         )
+    social_col_weight = float(cfg['loss']['social_col_weight'])
+    social_safe_distance = float(cfg['loss']['social_safe_distance'])
+    if social_col_weight < 0.0:
+        raise SystemExit(
+            f'loss.social_col_weight must be non-negative: {config_path}'
+        )
+    if social_safe_distance <= 0.0:
+        raise SystemExit(
+            f'loss.social_safe_distance must be positive: {config_path}'
+        )
+    if social_col_weight > 0.0 and cfg['data']['dataset_name'] != 'moai_social_nav_ext':
+        raise SystemExit(
+            'loss.social_col_weight currently requires '
+            f'data.dataset_name=moai_social_nav_ext: {config_path}'
+        )
     if cfg['train']['guided_inference'] and cfg['train']['use_gt_goal']:
         raise SystemExit(
             f'train.guided_inference and train.use_gt_goal cannot both be true: {config_path}'
@@ -324,6 +341,8 @@ def _to_namespace(cfg: dict[str, Any], config_path: str, cli_dry_run: bool) -> a
         goal_weight=loss['goal_weight'],
         kld_weight=loss['kld_weight'],
         col_weight=loss['col_weight'],
+        social_col_weight=loss['social_col_weight'],
+        social_safe_distance=loss['social_safe_distance'],
         cvae_sigma=loss['cvae_sigma'],
         kld_clamp=loss['kld_clamp'],
         train_mode=train['train_mode'],

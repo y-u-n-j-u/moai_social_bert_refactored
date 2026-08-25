@@ -12,10 +12,15 @@ from rclpy.node import Node
 from std_msgs.msg import Bool
 
 from .continuous_avoidance_teacher import (
+    AvoidanceCommand,
     MovingHuman,
     choose_avoidance_side,
+    filter_suppressed_humans,
     lane_tracking_command,
+    path_frame_from_points,
+    route_outward_side,
     select_continuous_avoidance_command,
+    temporary_lane_is_clear,
 )
 from .human_yield_safety import (
     filtered_velocity_from_positions,
@@ -99,18 +104,23 @@ class CmdVelPassthroughNode(Node):
         )
         self.continuous_trigger_distance = float(
             self.declare_parameter(
-                "continuous_avoidance_trigger_distance", 1.45
+                "continuous_avoidance_trigger_distance", 1.60
             ).value
         )
         self.continuous_horizon = float(
             self.declare_parameter("continuous_avoidance_horizon", 3.5).value
+        )
+        self.continuous_static_route_horizon = float(
+            self.declare_parameter(
+                "continuous_avoidance_static_route_horizon", 5.0
+            ).value
         )
         self.continuous_step = float(
             self.declare_parameter("continuous_avoidance_step", 0.10).value
         )
         self.continuous_activation_distance = float(
             self.declare_parameter(
-                "continuous_avoidance_activation_distance", 5.0
+                "continuous_avoidance_activation_distance", 6.8
             ).value
         )
         self.continuous_preferred_speed = float(
@@ -140,12 +150,22 @@ class CmdVelPassthroughNode(Node):
         )
         self.continuous_lateral_offset = float(
             self.declare_parameter(
-                "continuous_avoidance_lateral_offset", 1.50
+                "continuous_avoidance_lateral_offset", 1.60
+            ).value
+        )
+        self.continuous_static_route_lateral_offset = float(
+            self.declare_parameter(
+                "continuous_avoidance_static_route_lateral_offset", 2.00
             ).value
         )
         self.continuous_lane_lookahead = float(
             self.declare_parameter(
-                "continuous_avoidance_lane_lookahead", 2.50
+                "continuous_avoidance_lane_lookahead", 2.00
+            ).value
+        )
+        self.continuous_static_route_lane_lookahead = float(
+            self.declare_parameter(
+                "continuous_avoidance_static_route_lane_lookahead", 1.20
             ).value
         )
         self.continuous_heading_gain = float(
@@ -156,6 +176,16 @@ class CmdVelPassthroughNode(Node):
         self.continuous_release_lateral = float(
             self.declare_parameter(
                 "continuous_avoidance_release_lateral", 0.80
+            ).value
+        )
+        self.continuous_center_tolerance = float(
+            self.declare_parameter(
+                "continuous_avoidance_center_tolerance", 0.30
+            ).value
+        )
+        self.continuous_recovery_lookahead = float(
+            self.declare_parameter(
+                "continuous_avoidance_recovery_lookahead", 1.50
             ).value
         )
 
@@ -172,8 +202,13 @@ class CmdVelPassthroughNode(Node):
         self._continuous_agent_id: int | None = None
         self._continuous_avoidance_side = 0
         self._continuous_started_at: float | None = None
-        self._continuous_path_direction: tuple[float, float] | None = None
-        self._continuous_path_reference: tuple[float, float] | None = None
+        self._continuous_reference_path: list[tuple[float, float]] = []
+        self._continuous_reference_goal: tuple[float, float] | None = None
+        self._continuous_recovering = False
+        self._continuous_recovery_started_at: float | None = None
+        self._continuous_recovery_agent_id: int | None = None
+        self._continuous_recovery_side = 0
+        self._continuous_suppressed_agent_ids: set[int] = set()
         self._stale_warning_emitted = False
         self._publisher = self.create_publisher(Twist, output_topic, 10)
         self._avoidance_status_publisher = self.create_publisher(
@@ -243,10 +278,32 @@ class CmdVelPassthroughNode(Node):
         self._humans_at = now
 
     def _on_path(self, msg: Path) -> None:
-        self._global_path = [
+        new_path = [
             (float(pose.pose.position.x), float(pose.pose.position.y))
             for pose in msg.poses
         ]
+        self._global_path = new_path
+        if self.human_avoidance_mode != "continuous" or len(new_path) < 2:
+            return
+
+        new_goal = new_path[-1]
+        goal_changed = (
+            self._continuous_reference_goal is None
+            or hypot(
+                new_goal[0] - self._continuous_reference_goal[0],
+                new_goal[1] - self._continuous_reference_goal[1],
+            )
+            >= 0.75
+        )
+        if not self._continuous_reference_path or goal_changed:
+            # Freeze the first route for this goal. Later Nav2 replans can bend
+            # around a person or the robot's current offset; using them again
+            # would stack another avoidance offset on top of the first one.
+            self._continuous_reference_path = list(new_path)
+            self._continuous_reference_goal = new_goal
+            self._continuous_recovery_agent_id = None
+            self._continuous_recovery_side = 0
+            self._continuous_suppressed_agent_ids.clear()
 
     def _on_command(self, msg: Twist) -> None:
         if self.human_avoidance_mode == "off":
@@ -307,7 +364,7 @@ class CmdVelPassthroughNode(Node):
             float(self._robot.position.position.x),
             float(self._robot.position.position.y),
         )
-        humans = [
+        all_humans = [
             MovingHuman(
                 agent_id=int(human.id),
                 x=float(human.position.position.x),
@@ -317,72 +374,20 @@ class CmdVelPassthroughNode(Node):
             )
             for human in self._humans.agents
         ]
+        humans, self._continuous_suppressed_agent_ids = filter_suppressed_humans(
+            robot_position=robot_position,
+            humans=all_humans,
+            suppressed_agent_ids=self._continuous_suppressed_agent_ids,
+            rearm_distance=self.continuous_activation_distance,
+        )
         current_path_direction, current_path_reference = self._path_frame(
             robot_position
         )
-        path_direction = (
-            self._continuous_path_direction
-            if self._continuous_path_direction is not None
-            else current_path_direction
-        )
-        path_reference = (
-            self._continuous_path_reference
-            if self._continuous_path_reference is not None
-            else current_path_reference
-        )
-        probe = select_continuous_avoidance_command(
-            robot_position=robot_position,
-            robot_yaw=float(self._robot.yaw),
-            nominal_linear_speed=float(nominal_command.linear.x),
-            nominal_angular_speed=float(nominal_command.angular.z),
-            humans=humans,
-            path_direction=path_direction,
-            safety_distance=self.continuous_safety_distance,
-            trigger_distance=self.continuous_trigger_distance,
-            horizon=self.continuous_horizon,
-            step=self.continuous_step,
-            activation_distance=self.continuous_activation_distance,
-            preferred_speed=self.continuous_preferred_speed,
-            minimum_forward_speed=self.continuous_minimum_forward_speed,
-            maximum_forward_speed=self.continuous_maximum_forward_speed,
-            maximum_angular_speed=self.continuous_maximum_angular_speed,
-            steering_duration=self.continuous_steering_duration,
-        )
-        humans_by_id = {human.agent_id: human for human in humans}
-        just_started = False
-        if (
-            not self._continuous_avoiding
-            and probe.intervention
-            and probe.agent_id in humans_by_id
-        ):
-            tracked_human = humans_by_id[probe.agent_id]
-            self._continuous_avoiding = True
-            self._continuous_agent_id = probe.agent_id
-            self._continuous_avoidance_side = choose_avoidance_side(
-                path_direction=path_direction,
-                robot_yaw=float(self._robot.yaw),
-                human_position=(tracked_human.x, tracked_human.y),
-                human_velocity=(tracked_human.vx, tracked_human.vy),
-                path_reference=path_reference,
-            )
-            self._continuous_started_at = self._now()
-            self._continuous_path_direction = current_path_direction
-            self._continuous_path_reference = current_path_reference
-            path_direction = current_path_direction
-            path_reference = current_path_reference
-            self._publish_avoidance_status(True)
-            just_started = True
-
-        tracked_human = humans_by_id.get(self._continuous_agent_id)
-        if self._continuous_avoiding and tracked_human is None:
-            self._release_continuous_avoidance("tracked human state disappeared")
-            self._publisher.publish(nominal_command)
-            return
-
-        if not self._continuous_avoiding or tracked_human is None:
-            self._publisher.publish(nominal_command)
-            return
-
+        # The route is frozen per goal, but its local tangent must advance with
+        # the robot. Holding the tangent from avoidance start makes a curved
+        # bypass appear straight and can steer back toward the pedestrian.
+        path_direction = current_path_direction
+        path_reference = current_path_reference
         direction_length = max(hypot(*path_direction), 1e-6)
         direction = (
             path_direction[0] / direction_length,
@@ -393,30 +398,143 @@ class CmdVelPassthroughNode(Node):
             (robot_position[0] - path_reference[0]) * normal[0]
             + (robot_position[1] - path_reference[1]) * normal[1]
         )
-        human_lateral_offset = (
-            (tracked_human.x - path_reference[0]) * normal[0]
-            + (tracked_human.y - path_reference[1]) * normal[1]
+        static_route_side = route_outward_side(self._continuous_reference_path)
+        prediction_horizon = (
+            self.continuous_static_route_horizon
+            if static_route_side != 0
+            else self.continuous_horizon
         )
-        human_distance = hypot(
-            tracked_human.x - robot_position[0],
-            tracked_human.y - robot_position[1],
+        probe = select_continuous_avoidance_command(
+            robot_position=robot_position,
+            robot_yaw=float(self._robot.yaw),
+            nominal_linear_speed=float(nominal_command.linear.x),
+            nominal_angular_speed=float(nominal_command.angular.z),
+            humans=humans,
+            path_direction=path_direction,
+            safety_distance=self.continuous_safety_distance,
+            trigger_distance=self.continuous_trigger_distance,
+            horizon=prediction_horizon,
+            step=self.continuous_step,
+            activation_distance=self.continuous_activation_distance,
+            preferred_speed=self.continuous_preferred_speed,
+            minimum_forward_speed=self.continuous_minimum_forward_speed,
+            maximum_forward_speed=self.continuous_maximum_forward_speed,
+            maximum_angular_speed=self.continuous_maximum_angular_speed,
+            steering_duration=self.continuous_steering_duration,
         )
+        if static_route_side != 0:
+            path_probe = self._static_route_conflict_probe(
+                robot_position=robot_position,
+                nominal_command=nominal_command,
+                humans=humans,
+            )
+            if path_probe is not None and (
+                not probe.intervention
+                or path_probe.predicted_clearance < probe.predicted_clearance
+            ):
+                probe = path_probe
+        humans_by_id = {human.agent_id: human for human in humans}
+        recovery_resume_side = 0
+        if self._continuous_recovering:
+            if abs(current_lateral_offset) <= self.continuous_center_tolerance:
+                self._complete_continuous_recovery(current_lateral_offset)
+                self._publisher.publish(nominal_command)
+                return
+
+            recovery_interrupted = (
+                probe.intervention and probe.agent_id in humans_by_id
+            )
+            if not recovery_interrupted:
+                linear_speed, angular_speed = lane_tracking_command(
+                    robot_yaw=float(self._robot.yaw),
+                    path_direction=path_direction,
+                    current_lateral_offset=current_lateral_offset,
+                    avoidance_side=1,
+                    lateral_offset=0.0,
+                    lane_lookahead=self.continuous_recovery_lookahead,
+                    preferred_speed=self.continuous_preferred_speed,
+                    minimum_forward_speed=self.continuous_minimum_forward_speed,
+                    maximum_forward_speed=self.continuous_maximum_forward_speed,
+                    maximum_angular_speed=self.continuous_maximum_angular_speed,
+                    heading_gain=self.continuous_heading_gain,
+                )
+                self._publish_continuous_twist(
+                    nominal_command,
+                    linear_speed,
+                    angular_speed,
+                )
+                return
+
+            self.get_logger().warning(
+                "continuous_human_avoidance_recovery_interrupted: "
+                f"agent={probe.agent_id}, "
+                f"lateral_offset={current_lateral_offset:.2f} m"
+            )
+            recovery_resume_side = self._continuous_recovery_side
+            self._continuous_recovering = False
+            self._continuous_recovery_started_at = None
+            self._continuous_recovery_agent_id = None
+            self._continuous_recovery_side = 0
+
+        just_started = False
+        if (
+            not self._continuous_avoiding
+            and probe.intervention
+            and probe.agent_id in humans_by_id
+        ):
+            tracked_human = humans_by_id[probe.agent_id]
+            self._continuous_avoiding = True
+            self._continuous_agent_id = probe.agent_id
+            human_avoidance_side = choose_avoidance_side(
+                path_direction=path_direction,
+                robot_yaw=float(self._robot.yaw),
+                human_position=(tracked_human.x, tracked_human.y),
+                human_velocity=(tracked_human.vx, tracked_human.vy),
+                path_reference=path_reference,
+            )
+            self._continuous_avoidance_side = recovery_resume_side or (
+                static_route_side
+                if static_route_side != 0
+                else human_avoidance_side
+            )
+            self._continuous_started_at = self._now()
+            self._publish_avoidance_status(True)
+            just_started = True
+
+        tracked_human = humans_by_id.get(self._continuous_agent_id)
+        if self._continuous_avoiding and tracked_human is None:
+            self._release_continuous_avoidance(
+                "tracked human state disappeared",
+                current_lateral_offset,
+            )
+            self._publisher.publish(nominal_command)
+            return
+
+        if not self._continuous_avoiding or tracked_human is None:
+            self._publisher.publish(nominal_command)
+            return
+
         elapsed = (
             self._now() - self._continuous_started_at
             if self._continuous_started_at is not None
             else 0.0
         )
-        human_has_crossed = (
-            self._continuous_avoidance_side * human_lateral_offset
-            <= -self.continuous_release_lateral
-        )
         if (
             not just_started
             and elapsed >= 1.0
-            and human_has_crossed
-            and human_distance >= self.release_distance
+            and temporary_lane_is_clear(
+                robot_position=robot_position,
+                human=tracked_human,
+                path_direction=path_direction,
+                avoidance_side=self._continuous_avoidance_side,
+                release_lateral=self.continuous_release_lateral,
+                release_distance=self.release_distance,
+            )
         ):
-            self._release_continuous_avoidance("human cleared the crossing")
+            self._release_continuous_avoidance(
+                "human cleared the temporary lane",
+                current_lateral_offset,
+            )
             self._publisher.publish(nominal_command)
             return
 
@@ -425,8 +543,16 @@ class CmdVelPassthroughNode(Node):
             path_direction=path_direction,
             current_lateral_offset=current_lateral_offset,
             avoidance_side=self._continuous_avoidance_side,
-            lateral_offset=self.continuous_lateral_offset,
-            lane_lookahead=self.continuous_lane_lookahead,
+            lateral_offset=(
+                self.continuous_static_route_lateral_offset
+                if static_route_side != 0
+                else self.continuous_lateral_offset
+            ),
+            lane_lookahead=(
+                self.continuous_static_route_lane_lookahead
+                if static_route_side != 0
+                else self.continuous_lane_lookahead
+            ),
             preferred_speed=self.continuous_preferred_speed,
             minimum_forward_speed=self.continuous_minimum_forward_speed,
             maximum_forward_speed=self.continuous_maximum_forward_speed,
@@ -439,12 +565,25 @@ class CmdVelPassthroughNode(Node):
                 "continuous_human_avoidance_started: "
                 f"agent={self._continuous_agent_id}, "
                 f"side={self._continuous_avoidance_side:+d}, "
+                f"route_bias={static_route_side:+d}, "
                 f"predicted_clearance={probe.predicted_clearance:.2f} m, "
                 f"human_velocity=({tracked_human.vx:.2f},"
                 f"{tracked_human.vy:.2f}) m/s, "
                 f"command=({linear_speed:.2f} m/s, {angular_speed:.2f} rad/s)"
             )
 
+        self._publish_continuous_twist(
+            nominal_command,
+            linear_speed,
+            angular_speed,
+        )
+
+    def _publish_continuous_twist(
+        self,
+        nominal_command: Twist,
+        linear_speed: float,
+        angular_speed: float,
+    ) -> None:
         output = Twist()
         output.linear.x = linear_speed
         output.linear.y = nominal_command.linear.y
@@ -454,17 +593,96 @@ class CmdVelPassthroughNode(Node):
         output.angular.z = angular_speed
         self._publisher.publish(output)
 
-    def _release_continuous_avoidance(self, reason: str) -> None:
+    def _static_route_conflict_probe(
+        self,
+        *,
+        robot_position: tuple[float, float],
+        nominal_command: Twist,
+        humans: tuple[MovingHuman, ...],
+    ) -> AvoidanceCommand | None:
+        best_clearance = float("inf")
+        best_agent_id: int | None = None
+        path_speed = max(
+            abs(float(nominal_command.linear.x)),
+            self.continuous_preferred_speed,
+        )
+        for human in humans:
+            if hypot(
+                human.x - robot_position[0],
+                human.y - robot_position[1],
+            ) > self.continuous_activation_distance:
+                continue
+            clearance, _ = minimum_path_predicted_clearance(
+                path_points=self._continuous_reference_path,
+                robot_position=robot_position,
+                path_speed=path_speed,
+                human_position=(human.x, human.y),
+                human_velocity=(human.vx, human.vy),
+                horizon=self.continuous_static_route_horizon,
+                step=self.continuous_step,
+            )
+            if clearance < best_clearance:
+                best_clearance = clearance
+                best_agent_id = human.agent_id
+
+        if (
+            best_agent_id is None
+            or best_clearance >= self.continuous_trigger_distance
+        ):
+            return None
+        return AvoidanceCommand(
+            linear_speed=float(nominal_command.linear.x),
+            angular_speed=float(nominal_command.angular.z),
+            intervention=True,
+            predicted_clearance=best_clearance,
+            agent_id=best_agent_id,
+        )
+
+    def _release_continuous_avoidance(
+        self,
+        reason: str,
+        current_lateral_offset: float,
+    ) -> None:
         self.get_logger().info(
             f"continuous_human_avoidance_released: reason={reason}"
         )
+        self._continuous_recovery_agent_id = self._continuous_agent_id
+        self._continuous_recovery_side = self._continuous_avoidance_side
         self._continuous_avoiding = False
         self._continuous_agent_id = None
         self._continuous_avoidance_side = 0
         self._continuous_started_at = None
-        self._continuous_path_direction = None
-        self._continuous_path_reference = None
+        self._continuous_recovering = True
+        self._continuous_recovery_started_at = self._now()
+        self._publish_avoidance_status(True)
+        self.get_logger().info(
+            "continuous_human_avoidance_recovery_started: "
+            f"lateral_offset={current_lateral_offset:.2f} m"
+        )
+
+    def _complete_continuous_recovery(
+        self,
+        current_lateral_offset: float,
+    ) -> None:
+        elapsed = (
+            self._now() - self._continuous_recovery_started_at
+            if self._continuous_recovery_started_at is not None
+            else 0.0
+        )
+        self._continuous_recovering = False
+        self._continuous_recovery_started_at = None
+        if self._continuous_recovery_agent_id is not None:
+            self._continuous_suppressed_agent_ids.add(
+                self._continuous_recovery_agent_id
+            )
+        self._continuous_recovery_agent_id = None
+        self._continuous_recovery_side = 0
         self._publish_avoidance_status(False)
+        self.get_logger().info(
+            "continuous_human_avoidance_recovery_completed: "
+            f"lateral_offset={current_lateral_offset:.2f} m, "
+            f"elapsed={elapsed:.2f} s"
+        )
 
     def _publish_avoidance_status(self, active: bool) -> None:
         message = Bool()
@@ -474,34 +692,13 @@ class CmdVelPassthroughNode(Node):
     def _path_frame(
         self, robot_position: tuple[float, float]
     ) -> tuple[tuple[float, float], tuple[float, float]]:
-        if not self._global_path:
-            assert self._robot is not None
-            direction = cos(float(self._robot.yaw)), sin(float(self._robot.yaw))
-            return direction, robot_position
-
-        robot_x, robot_y = robot_position
-        nearest_index = min(
-            range(len(self._global_path)),
-            key=lambda index: (
-                (self._global_path[index][0] - robot_x) ** 2
-                + (self._global_path[index][1] - robot_y) ** 2
-            ),
+        assert self._robot is not None
+        reference_path = self._continuous_reference_path or self._global_path
+        return path_frame_from_points(
+            path_points=reference_path,
+            robot_position=robot_position,
+            fallback_yaw=float(self._robot.yaw),
         )
-        reference = self._global_path[nearest_index]
-        target = self._global_path[-1]
-        previous = reference
-        accumulated = 0.0
-
-        for point in self._global_path[nearest_index + 1 :]:
-            accumulated += hypot(point[0] - previous[0], point[1] - previous[1])
-            previous = point
-            if accumulated >= 2.0:
-                target = point
-                break
-        direction = target[0] - reference[0], target[1] - reference[1]
-        if hypot(*direction) <= 1e-6:
-            direction = cos(float(self._robot.yaw)), sin(float(self._robot.yaw))
-        return direction, reference
 
     def _first_conflict(self, command: Twist) -> tuple[int, float, float, str] | None:
         assert self._robot is not None

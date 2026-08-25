@@ -15,8 +15,8 @@ export HUNAV_AUTO_GOAL_WAYPOINTS='-9.0,0.0;9.0,0.0'
 export HUNAV_AUTO_GOAL_MAX_GOALS="${HUNAV_EVAL_GOALS:-2}"
 
 export HUNAV_ROBOT_PATH_PLANNER=spubert
-export HUNAV_ROBOT_SPUBERT_CONFIG_PATH=/home/hunav_gz_classic_ws/src/moai_social_bert_refactored/configs/spubert/moai_social_nav_ext_scene_guided_gazebo5952_continue_b21.yaml
-export HUNAV_ROBOT_SPUBERT_CHECKPOINT=/home/hunav_gz_classic_ws/src/moai_social_bert_refactored/output/spubert_gazebo_5952_continue_b21/model_best.pth
+export HUNAV_ROBOT_SPUBERT_CONFIG_PATH="${HUNAV_ROBOT_SPUBERT_CONFIG_PATH:-/home/hunav_gz_classic_ws/src/moai_social_bert_refactored/configs/spubert/moai_social_nav_ext_scene_guided_gazebo5952_continue_b21.yaml}"
+export HUNAV_ROBOT_SPUBERT_CHECKPOINT="${HUNAV_ROBOT_SPUBERT_CHECKPOINT:-/home/hunav_gz_classic_ws/src/moai_social_bert_refactored/output/spubert_gazebo_5952_continue_b21/model_best.pth}"
 export HUNAV_ROBOT_SPUBERT_TGP_TOP_K=5
 export HUNAV_ROBOT_SPUBERT_FALLBACK_NAV2=True
 

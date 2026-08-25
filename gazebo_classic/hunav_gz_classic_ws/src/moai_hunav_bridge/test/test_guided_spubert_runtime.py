@@ -7,6 +7,7 @@ import torch
 
 from moai_hunav_bridge.guided_spubert_runtime import (
     GuidedSpubertRuntime,
+    adaptive_guidance_point_along_path,
     guidance_point,
     guidance_point_along_path,
     heading_from_history,
@@ -67,6 +68,58 @@ class GuidedSpubertGeometryTest(unittest.TestCase):
     def test_route_guidance_rejects_empty_path(self):
         with self.assertRaises(ValueError):
             guidance_point_along_path([], (0.0, 0.0), (1.0, 0.0), 8.0)
+
+    def test_adaptive_route_guidance_keeps_eight_metres_in_free_space(self):
+        point = adaptive_guidance_point_along_path(
+            [(0.0, 0.0), (10.0, 0.0)],
+            current=(0.0, 0.0),
+            final_goal=(10.0, 0.0),
+            max_radius=8.0,
+            is_direct_path_safe=lambda _: True,
+        )
+        self.assertEqual(point, (8.0, 0.0))
+
+    def test_adaptive_route_guidance_shortens_before_occluded_turn(self):
+        def avoids_corner(points):
+            endpoint = points[-1]
+            return not (endpoint[0] > 0.0 and endpoint[1] >= 4.0)
+
+        point = adaptive_guidance_point_along_path(
+            [(0.0, 0.0), (0.0, 5.0), (10.0, 5.0)],
+            current=(0.0, 0.0),
+            final_goal=(10.0, 5.0),
+            max_radius=8.0,
+            min_radius=2.0,
+            probe_step=0.5,
+            is_direct_path_safe=avoids_corner,
+        )
+        self.assertEqual(point, (0.0, 5.0))
+
+    def test_adaptive_route_guidance_uses_short_safe_recovery(self):
+        def only_nearby_is_safe(points):
+            endpoint = points[-1]
+            return math.hypot(endpoint[0], endpoint[1]) <= 1.0
+
+        point = adaptive_guidance_point_along_path(
+            [(0.0, 0.0), (10.0, 0.0)],
+            current=(0.0, 0.0),
+            final_goal=(10.0, 0.0),
+            max_radius=8.0,
+            min_radius=2.0,
+            probe_step=0.5,
+            is_direct_path_safe=only_nearby_is_safe,
+        )
+        self.assertEqual(point, (1.0, 0.0))
+
+    def test_adaptive_route_guidance_rejects_when_no_probe_is_safe(self):
+        with self.assertRaises(ValueError):
+            adaptive_guidance_point_along_path(
+                [(0.0, 0.0), (10.0, 0.0)],
+                current=(0.0, 0.0),
+                final_goal=(10.0, 0.0),
+                max_radius=8.0,
+                is_direct_path_safe=lambda _: False,
+            )
 
     def test_polyline_sampling_checks_between_sparse_tgp_points(self):
         points = sample_polyline([(0.0, 0.0), (1.0, 0.0)], max_spacing=0.3)

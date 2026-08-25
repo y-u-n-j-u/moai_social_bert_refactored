@@ -107,6 +107,12 @@ class MoAISocialNavExtendedGoalDataset(Dataset):
 
         traj_lbl = trajs[0, self.obs_len : self.seq_len].astype(np.float32)
         goal_lbl = traj_lbl[-1].copy()
+        human_future_lbl, human_future_mask = build_human_future_labels(
+            trajs,
+            obs_len=self.obs_len,
+            pred_len=self.pred_len,
+            num_nbr=self.num_nbr,
+        )
         guidance_world = xy(sample, "guidance_point", "final_goal").reshape(-1, 2)[0]
         guidance_lbl = transform_point(guidance_world, center, theta).astype(np.float32)
 
@@ -134,6 +140,8 @@ class MoAISocialNavExtendedGoalDataset(Dataset):
                 ("traj_lbl", traj_lbl, torch.float),
                 ("goal_lbl", goal_lbl, torch.float),
                 ("guidance_lbl", guidance_lbl, torch.float),
+                ("human_future_lbl", human_future_lbl, torch.float),
+                ("human_future_mask", human_future_mask, torch.float),
             ]
         }
         if self.scene:
@@ -225,6 +233,26 @@ def build_all_trajs(sample: dict[str, Any], obs_len: int, pred_len: int) -> np.n
         future = neighbor_future[idx, :pred_len] if idx < neighbor_future.shape[0] else np.full((pred_len, 2), np.nan)
         rows.append(np.concatenate([neighbor_past[idx, :obs_len], future], axis=0).astype(np.float32))
     return np.stack(rows, axis=0)
+
+
+def build_human_future_labels(
+    trajs: np.ndarray,
+    obs_len: int,
+    pred_len: int,
+    num_nbr: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Pad filtered human futures and mark only finite synchronized steps."""
+    labels = np.zeros((num_nbr, pred_len, 2), dtype=np.float32)
+    mask = np.zeros((num_nbr, pred_len), dtype=np.float32)
+    for nbr_idx, nbr_traj in enumerate(trajs[1 : num_nbr + 1]):
+        future = np.asarray(
+            nbr_traj[obs_len : obs_len + pred_len, :2],
+            dtype=np.float32,
+        )
+        valid = np.isfinite(future).all(axis=-1)
+        labels[nbr_idx, valid] = future[valid]
+        mask[nbr_idx, valid] = 1.0
+    return labels, mask
 
 
 def rotate_xy(xy_value: np.ndarray, theta: float) -> np.ndarray:

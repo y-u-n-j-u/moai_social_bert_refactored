@@ -21,6 +21,7 @@ from src.model import (
 )
 from src.loss import (
     ADELoss,
+    dynamic_social_collision_loss,
     FDELoss,
     MGPCVAELoss,
     MaskedADELoss,
@@ -357,6 +358,8 @@ class SBertPlusTGPConfig:
         num_patch=32,
         patch_size=32,
         col_weight=10,
+        social_col_weight=0.0,
+        social_safe_distance=0.9,
         traj_weight=1.0,
         pad_token_id=0,
         layer_norm_eps=1e-12,
@@ -381,6 +384,8 @@ class SBertPlusTGPConfig:
         self.pred_len = pred_len
         self.num_nbr = num_nbr
         self.col_weight = col_weight
+        self.social_col_weight = social_col_weight
+        self.social_safe_distance = social_safe_distance
         self.traj_weight = traj_weight
         self.scene = scene
         self.num_patch = num_patch
@@ -487,6 +492,8 @@ class SBertPlusFTConfig:
         self.chunk_size_feed_forward = traj_cfgs.chunk_size_feed_forward
         self.initializer_range = traj_cfgs.initializer_range
         self.col_weight = traj_cfgs.col_weight
+        self.social_col_weight = traj_cfgs.social_col_weight
+        self.social_safe_distance = traj_cfgs.social_safe_distance
         self.k_sample = goal_cfgs.k_sample
         self.goal_hidden_size = goal_cfgs.goal_hidden_size
         self.goal_latent_size = goal_cfgs.goal_latent_size
@@ -677,6 +684,8 @@ class SBertPlusTGPModel(SBertModelBase):
         env_attn_mask=None,
         envs=None,
         envs_params=None,
+        human_future_lbl=None,
+        human_future_mask=None,
         output_attentions=False,
     ):
         outputs = self.inference(
@@ -700,12 +709,27 @@ class SBertPlusTGPModel(SBertModelBase):
             total_loss = total_loss + col_loss
         else:
             col_loss = None
+        if self.cfgs.social_col_weight > 0:
+            if human_future_lbl is None or human_future_mask is None:
+                raise ValueError(
+                    "dynamic social loss requires human future labels and mask"
+                )
+            social_col_loss = self.cfgs.social_col_weight * dynamic_social_collision_loss(
+                pred_trajs,
+                human_future_lbl,
+                human_future_mask,
+                self.cfgs.social_safe_distance,
+            )
+            total_loss = total_loss + social_col_loss
+        else:
+            social_col_loss = None
 
         return {
             "total_loss": total_loss,
             "ade_loss": ade_loss,
             "fde_loss": fde_loss,
             "col_loss": col_loss,
+            "social_col_loss": social_col_loss,
             "pred_trajs": pred_trajs,
             "attentions": outputs["attentions"],
         }
@@ -1339,6 +1363,8 @@ class SBertPlusFTModel(SBertModelBase):
         env_attn_mask=None,
         envs=None,
         envs_params=None,
+        human_future_lbl=None,
+        human_future_mask=None,
         output_attentions=False,
         kld_weight=1.0,
         traj_weight=1.0,
@@ -1373,6 +1399,8 @@ class SBertPlusFTModel(SBertModelBase):
             envs_params=envs_params,
             traj_lbl=traj_lbl,
             goal_lbl=goal_lbl,
+            human_future_lbl=human_future_lbl,
+            human_future_mask=human_future_mask,
             output_attentions=output_attentions,
         )
         return {
@@ -1382,6 +1410,7 @@ class SBertPlusFTModel(SBertModelBase):
             "fde_loss": tgp_out["fde_loss"],
             "gde_loss": mgp_out["gde_loss"],
             "tgp_col_loss": tgp_out["col_loss"],
+            "tgp_social_col_loss": tgp_out["social_col_loss"],
             "mgp_col_loss": mgp_out["col_loss"],
             "kld_loss": mgp_out["kld_loss"],
             "pred_trajs": tgp_out["pred_trajs"],

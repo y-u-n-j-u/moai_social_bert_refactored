@@ -1,21 +1,4 @@
 {
-  "agents_training_open_plaza_forced_crossing.yaml": {
-    "agent_count": 1,
-    "map": "training_open_plaza",
-    "robot_goal": [
-      8.5,
-      0.0
-    ],
-    "robot_start": [
-      -8.5,
-      0.0
-    ],
-    "tags": [
-      "forced_crossing",
-      "one_way",
-      "moving_avoidance"
-    ]
-  },
   "agents_training_bottleneck_merge_joint_gate.yaml": {
     "agent_count": 3,
     "map": "training_bottleneck_merge",
@@ -32,6 +15,117 @@
       "merge",
       "oncoming",
       "crossing"
+    ]
+  },
+  "agents_training_detour_oncoming_joint_recovery.yaml": {
+    "agent_count": 1,
+    "map": "training_detour_oncoming",
+    "robot_goal": [
+      10.0,
+      0.0
+    ],
+    "robot_start": [
+      -10.0,
+      1.0
+    ],
+    "tags": [
+      "entry_detour",
+      "oncoming",
+      "one_way",
+      "moving_avoidance",
+      "route_recovery",
+      "static_detour"
+    ]
+  },
+  "agents_training_oncoming_corridor_joint_cut_in.yaml": {
+    "agent_count": 1,
+    "map": "training_oncoming_corridor",
+    "robot_goal": [
+      8.0,
+      0.0
+    ],
+    "robot_start": [
+      -8.0,
+      0.0
+    ],
+    "tags": [
+      "cut_in",
+      "diagonal_merge",
+      "one_way",
+      "moving_avoidance",
+      "route_recovery"
+    ]
+  },
+  "agents_training_oncoming_corridor_joint_head_on.yaml": {
+    "agent_count": 1,
+    "map": "training_oncoming_corridor",
+    "robot_goal": [
+      8.0,
+      0.0
+    ],
+    "robot_start": [
+      -8.0,
+      0.0
+    ],
+    "tags": [
+      "oncoming",
+      "head_on",
+      "one_way",
+      "moving_avoidance"
+    ]
+  },
+  "agents_training_oncoming_corridor_joint_overtaking.yaml": {
+    "agent_count": 1,
+    "map": "training_oncoming_corridor",
+    "robot_goal": [
+      8.0,
+      0.0
+    ],
+    "robot_start": [
+      -8.0,
+      0.0
+    ],
+    "tags": [
+      "overtaking",
+      "same_direction",
+      "one_way",
+      "moving_avoidance"
+    ]
+  },
+  "agents_training_oncoming_corridor_joint_staggered_two_oncoming.yaml": {
+    "agent_count": 2,
+    "map": "training_oncoming_corridor",
+    "robot_goal": [
+      8.0,
+      0.0
+    ],
+    "robot_start": [
+      -8.0,
+      0.0
+    ],
+    "tags": [
+      "oncoming",
+      "staggered",
+      "two_human",
+      "one_way",
+      "moving_avoidance"
+    ]
+  },
+  "agents_training_open_plaza_forced_crossing.yaml": {
+    "agent_count": 1,
+    "map": "training_open_plaza",
+    "robot_goal": [
+      8.5,
+      0.0
+    ],
+    "robot_start": [
+      -8.5,
+      0.0
+    ],
+    "tags": [
+      "forced_crossing",
+      "one_way",
+      "moving_avoidance"
     ]
   },
   "agents_training_outdoor_chicane_joint_crossing.yaml": {

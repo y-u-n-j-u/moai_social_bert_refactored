@@ -122,6 +122,11 @@ def generate_launch_description():
     robot_spubert_d_sample = LaunchConfiguration('robot_spubert_d_sample')
     robot_spubert_runtime_seed = LaunchConfiguration('robot_spubert_runtime_seed')
     robot_spubert_tgp_top_k = LaunchConfiguration('robot_spubert_tgp_top_k')
+    robot_spubert_adaptive_guidance = LaunchConfiguration('robot_spubert_adaptive_guidance')
+    robot_spubert_adaptive_guidance_min_distance = LaunchConfiguration(
+        'robot_spubert_adaptive_guidance_min_distance'
+    )
+    robot_spubert_adaptive_guidance_probe_step = LaunchConfiguration('robot_spubert_adaptive_guidance_probe_step')
     robot_spubert_rejection_streak_limit = LaunchConfiguration(
         'robot_spubert_rejection_streak_limit'
     )
@@ -570,23 +575,28 @@ def generate_launch_description():
             {'human_yield_velocity_smoothing_alpha': 0.50},
             {'human_yield_maximum_human_speed': 2.0},
             {'continuous_avoidance_safety_distance': 1.20},
-            {'continuous_avoidance_trigger_distance': 1.45},
+            {'continuous_avoidance_trigger_distance': 1.60},
             {'continuous_avoidance_horizon': 3.5},
+            {'continuous_avoidance_static_route_horizon': 5.0},
             {'continuous_avoidance_step': 0.10},
-            {'continuous_avoidance_activation_distance': 5.0},
+            {'continuous_avoidance_activation_distance': 6.8},
             {'continuous_avoidance_preferred_speed': 0.70},
             {'continuous_avoidance_minimum_forward_speed': 0.35},
             {'continuous_avoidance_maximum_forward_speed': 0.80},
             {'continuous_avoidance_maximum_angular_speed': 1.0},
             {'continuous_avoidance_steering_duration': 1.0},
-            {'continuous_avoidance_lateral_offset': 1.50},
-            {'continuous_avoidance_lane_lookahead': 2.50},
+            {'continuous_avoidance_lateral_offset': 1.60},
+            {'continuous_avoidance_static_route_lateral_offset': 2.00},
+            {'continuous_avoidance_lane_lookahead': 2.00},
+            {'continuous_avoidance_static_route_lane_lookahead': 1.20},
             {'continuous_avoidance_heading_gain': 1.50},
             {'continuous_avoidance_release_lateral': 0.80},
+            {'continuous_avoidance_center_tolerance': 0.30},
+            {'continuous_avoidance_recovery_lookahead': 1.50},
         ],
         condition=IfCondition(PythonExpression([
             "'", navigation, "' == 'True' and '", robot_type,
-            "' == 'pmb2' and '", robot_path_planner, "' == 'nav2'"
+            "' == 'pmb2'"
         ]))
     )
 
@@ -617,6 +627,9 @@ def generate_launch_description():
             {'tgp_top_k': robot_spubert_tgp_top_k},
             {'rejection_streak_limit': robot_spubert_rejection_streak_limit},
             {'guidance_radius': spubert_guidance_point_radius},
+            {'adaptive_guidance': robot_spubert_adaptive_guidance},
+            {'adaptive_guidance_min_distance': robot_spubert_adaptive_guidance_min_distance},
+            {'adaptive_guidance_probe_step': robot_spubert_adaptive_guidance_probe_step},
             {'obs_len': 8},
             {'pred_len': 12},
             {'prediction_dt': 0.4},
@@ -1278,6 +1291,25 @@ def generate_launch_description():
         default_value=EnvironmentVariable('HUNAV_ROBOT_SPUBERT_TGP_TOP_K', default_value='5'),
         description='Closest map-safe MGP goals that receive TGP safety evaluation.'
     )
+    declare_robot_spubert_adaptive_guidance = DeclareLaunchArgument(
+        'robot_spubert_adaptive_guidance',
+        default_value=EnvironmentVariable('HUNAV_ROBOT_SPUBERT_ADAPTIVE_GUIDANCE', default_value='False'),
+        description='Shorten route GP until the direct footprint corridor is map-safe.'
+    )
+    declare_robot_spubert_adaptive_guidance_min_distance = DeclareLaunchArgument(
+        'robot_spubert_adaptive_guidance_min_distance',
+        default_value=EnvironmentVariable(
+            'HUNAV_ROBOT_SPUBERT_ADAPTIVE_GUIDANCE_MIN_DISTANCE', default_value='2.0'
+        ),
+        description='Preferred minimum adaptive GP route lookahead in metres.'
+    )
+    declare_robot_spubert_adaptive_guidance_probe_step = DeclareLaunchArgument(
+        'robot_spubert_adaptive_guidance_probe_step',
+        default_value=EnvironmentVariable(
+            'HUNAV_ROBOT_SPUBERT_ADAPTIVE_GUIDANCE_PROBE_STEP', default_value='0.5'
+        ),
+        description='Route distance between adaptive GP safety probes in metres.'
+    )
     declare_robot_spubert_rejection_streak_limit = DeclareLaunchArgument(
         'robot_spubert_rejection_streak_limit',
         default_value=EnvironmentVariable(
@@ -1561,6 +1593,9 @@ def generate_launch_description():
     ld.add_action(declare_robot_spubert_d_sample)
     ld.add_action(declare_robot_spubert_runtime_seed)
     ld.add_action(declare_robot_spubert_tgp_top_k)
+    ld.add_action(declare_robot_spubert_adaptive_guidance)
+    ld.add_action(declare_robot_spubert_adaptive_guidance_min_distance)
+    ld.add_action(declare_robot_spubert_adaptive_guidance_probe_step)
     ld.add_action(declare_robot_spubert_rejection_streak_limit)
     ld.add_action(declare_robot_spubert_replan_period)
     ld.add_action(declare_robot_spubert_fallback_to_nav2)

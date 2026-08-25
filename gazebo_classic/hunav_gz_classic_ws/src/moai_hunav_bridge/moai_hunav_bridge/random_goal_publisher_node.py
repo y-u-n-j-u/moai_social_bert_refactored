@@ -22,6 +22,7 @@ from std_srvs.srv import Trigger
 XY = Tuple[float, float]
 
 DEFAULT_WAYPOINT_ROUTES = {
+    "training_oncoming_corridor": ((-8.0, 0.0), (8.0, 0.0)),
     # Keep robot waiting endpoints away from pedestrian cyclic goals.  The
     # previous centerline endpoints were only 0.55--0.67 m from a human goal,
     # less than the 0.70 m combined radii, so pedestrians correctly stopped

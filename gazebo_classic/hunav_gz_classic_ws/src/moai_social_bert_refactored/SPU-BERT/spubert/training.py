@@ -90,6 +90,8 @@ def _build_spubert_tgp_config(args):
     kwargs.update(
         {
             "col_weight": args.col_weight,
+            "social_col_weight": args.social_col_weight,
+            "social_safe_distance": args.social_safe_distance,
             "traj_weight": args.traj_weight,
         }
     )
@@ -177,6 +179,9 @@ def _spubert_finetune_batch_kwargs(data, *, scene: bool, kld_weight=None, traj_w
         "traj_lbl": data["traj_lbl"],
         "goal_lbl": data["goal_lbl"],
     }
+    if "human_future_lbl" in data and "human_future_mask" in data:
+        kwargs["human_future_lbl"] = data["human_future_lbl"]
+        kwargs["human_future_mask"] = data["human_future_mask"]
     if kld_weight is not None:
         kwargs["kld_weight"] = kld_weight
     if traj_weight is not None:
@@ -465,6 +470,7 @@ class SBertPlusFTTrainer(SimpleTrainerBase):
         total_tgp_loss = 0.0
         total_tgp_col_loss = 0.0
         total_mgp_col_loss = 0.0
+        total_tgp_social_col_loss = 0.0
         total_kld_loss = 0.0
         total_gde_loss = 0.0
         total_ade_loss = 0.0
@@ -487,6 +493,8 @@ class SBertPlusFTTrainer(SimpleTrainerBase):
             if self.args.scene and self.args.col_weight > 0:
                 total_mgp_col_loss += outputs["mgp_col_loss"].mean().item()
                 total_tgp_col_loss += outputs["tgp_col_loss"].mean().item()
+            if self.args.social_col_weight > 0:
+                total_tgp_social_col_loss += outputs["tgp_social_col_loss"].mean().item()
 
             total_kld_loss += outputs["kld_loss"].mean().item()
             total_ade_loss += outputs["ade_loss"].mean().item()
@@ -505,9 +513,15 @@ class SBertPlusFTTrainer(SimpleTrainerBase):
         if self.args.scene and self.args.col_weight > 0:
             total_mgp_col_loss /= n
             total_tgp_col_loss /= n
+        if self.args.social_col_weight > 0:
+            total_tgp_social_col_loss /= n
         total_loss = total_mgp_loss + total_tgp_loss
         print(f"[MGP] total_mgp={total_mgp_loss:.6f}, kld={total_kld_loss:.6f}, gde={total_gde_loss:.6f}, col={total_mgp_col_loss:.6f}")
-        print(f"[TGP] total_tgp={total_tgp_loss:.6f}, ade={total_ade_loss:.6f}, fde={total_fde_loss:.6f}, col={total_tgp_col_loss:.6f}")
+        print(
+            f"[TGP] total_tgp={total_tgp_loss:.6f}, ade={total_ade_loss:.6f}, "
+            f"fde={total_fde_loss:.6f}, col={total_tgp_col_loss:.6f}, "
+            f"social_col={total_tgp_social_col_loss:.6f}"
+        )
         return total_loss, {
             "total_loss": total_loss,
             "traj_weight": traj_weight,
@@ -519,6 +533,7 @@ class SBertPlusFTTrainer(SimpleTrainerBase):
             "ade_loss": total_ade_loss,
             "fde_loss": total_fde_loss,
             "tgp_col_loss": total_tgp_col_loss,
+            "tgp_social_col_loss": total_tgp_social_col_loss,
         }
 
 
@@ -565,6 +580,7 @@ def _train_spubert_finetune(trainer, args, epoch: int):
     total_gde_loss = 0.0
     total_ade_loss = 0.0
     total_fde_loss = 0.0
+    total_tgp_social_col_loss = 0.0
 
     pbar = _make_pbar(trainer.train_dataloader, epoch, args.epoch)
     for step, it_data in pbar:
@@ -616,6 +632,10 @@ def _train_spubert_finetune(trainer, args, epoch: int):
         total_gde_loss += float(outputs["gde_loss"].mean().item())
         total_ade_loss += float(outputs["ade_loss"].mean().item())
         total_fde_loss += float(outputs["fde_loss"].mean().item())
+        if args.social_col_weight > 0:
+            total_tgp_social_col_loss += float(
+                outputs["tgp_social_col_loss"].mean().item()
+            )
         _postfix(pbar, step=step, total_loss=total_loss, total_mse=total_mse, loss=loss_val, mse=mse_val)
 
     if "ep_" in trainer.args.lr_scheduler or _scheduler_steps_per_epoch(trainer.args.lr_scheduler):
@@ -634,6 +654,7 @@ def _train_spubert_finetune(trainer, args, epoch: int):
         "gde_loss": _safe_avg(total_gde_loss, n),
         "ade_loss": _safe_avg(total_ade_loss, n),
         "fde_loss": _safe_avg(total_fde_loss, n),
+        "tgp_social_col_loss": _safe_avg(total_tgp_social_col_loss, n),
         "mgp_lr": trainer.mgp_optim.param_groups[0]["lr"],
         "tgp_lr": trainer.tgp_optim.param_groups[0]["lr"],
     }

@@ -6,7 +6,7 @@ import os
 import random
 import sys
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -153,6 +153,53 @@ def sample_polyline(points: Sequence[XY], max_spacing: float) -> List[XY]:
             for step in range(1, steps + 1)
         )
     return sampled
+
+
+def adaptive_guidance_point_along_path(
+    path: Sequence[XY],
+    current: XY,
+    final_goal: XY,
+    max_radius: float,
+    is_direct_path_safe: Callable[[Sequence[XY]], bool],
+    min_radius: float = 2.0,
+    probe_step: float = 0.5,
+) -> XY:
+    """Choose the farthest directly footprint-safe route point within a limit."""
+    maximum = max(float(max_radius), 0.0)
+    step = float(probe_step)
+    if not math.isfinite(step) or step <= 0.0:
+        raise ValueError("probe_step must be a positive finite value")
+    if maximum <= 1e-8:
+        return float(current[0]), float(current[1])
+
+    preferred_minimum = min(max(float(min_radius), 0.0), maximum)
+    probe_distances: List[float] = []
+    distance = min(step, maximum)
+    while distance < maximum - 1e-8:
+        probe_distances.append(distance)
+        distance += step
+    probe_distances.append(maximum)
+
+    best_safe: Optional[XY] = None
+    best_preferred: Optional[XY] = None
+    for lookahead in probe_distances:
+        candidate = guidance_point_along_path(
+            path,
+            current=current,
+            final_goal=final_goal,
+            radius=lookahead,
+        )
+        if not is_direct_path_safe([current, candidate]):
+            continue
+        best_safe = candidate
+        if lookahead + 1e-8 >= preferred_minimum:
+            best_preferred = candidate
+
+    if best_preferred is not None:
+        return best_preferred
+    if best_safe is not None:
+        return best_safe
+    raise ValueError("no directly footprint-safe guidance point on global path")
 
 
 def pad_history(points: Sequence[XY], length: int) -> List[XY]:
