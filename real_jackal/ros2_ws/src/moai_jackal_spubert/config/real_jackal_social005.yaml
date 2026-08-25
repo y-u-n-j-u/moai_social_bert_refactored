@@ -1,0 +1,83 @@
+real_jackal_spubert_bridge:
+  ros__parameters:
+    model_repo_path: /root/moai_social_bert_refactored
+    model_config_path: /root/moai_social_bert_refactored/configs/spubert/moai_social_nav_route_gp_continue_b21_col01_social005.yaml
+    model_checkpoint_path: /root/moai_social_bert_refactored/output/spubert_route_gp_continue_b21_col01_social005/model_best.pth
+    use_cuda: true
+    runtime_seed: 21
+    d_sample: 40
+    tgp_top_k: 5
+
+    odom_topic: /aft_mapped_to_init
+    tracks_topic: /ped_tracking
+    scan_topic: /scan
+    goal_topic: /goal_pose
+    path_topic: /spu_bert/predicted_path
+    final_goal_topic: /spu_bert/final_goal_odom
+    global_path_topic: /spu_bert/global_path_odom
+    compute_path_action: /compute_path_to_pose
+    base_frame: base_link
+    tracks_are_robot_relative: true
+    require_global_path: true
+
+    obs_len: 8
+    pred_len: 12
+    prediction_dt: 0.4
+    replan_period: 0.8
+    route_refresh_period_sec: 2.0
+    guidance_radius: 8.0
+    adaptive_guidance: true
+    adaptive_guidance_min_distance: 2.0
+    adaptive_guidance_probe_step: 0.5
+
+    robot_radius: 0.34
+    static_safety_margin: 0.16
+    minimum_human_center_distance: 1.20
+    human_radius: 0.35
+    human_safety_margin: 0.20
+    maximum_model_speed: 1.50
+    maximum_step_ratio: 1.50
+    minimum_goal_progress: 0.10
+    goal_tolerance: 0.50
+
+    rolling_map_size_m: 24.0
+    rolling_map_resolution: 0.10
+    free_gap_fill_m: 0.20
+    free_ray_limit_m: 11.5
+    odom_timeout_sec: 0.60
+    scan_timeout_sec: 0.60
+    tracks_timeout_sec: 1.00
+    minimum_track_score: 0.30
+    diagnostics_path: /root/jackal_logs/spubert_real_jackal_diagnostics.jsonl
+
+safe_path_tracker:
+  ros__parameters:
+    odom_topic: /aft_mapped_to_init
+    path_topic: /spu_bert/predicted_path
+    goal_topic: /spu_bert/final_goal_odom
+    scan_topic: /scan
+    tracks_topic: /ped_tracking
+    cmd_vel_topic: /spu_bert/cmd_vel_dryrun
+    base_frame: base_link
+    emergency_stop_topic: /spu_bert/emergency_stop
+    enable_service: /spu_bert/enable_motion
+
+    motion_enabled: false
+    require_tracks_heartbeat: true
+    control_rate_hz: 10.0
+    lookahead_distance: 0.70
+    goal_tolerance: 0.50
+    maximum_linear_speed: 0.25
+    maximum_angular_speed: 0.55
+    maximum_linear_acceleration: 0.35
+    maximum_angular_acceleration: 1.20
+    path_timeout_sec: 1.20
+    odom_timeout_sec: 0.50
+    scan_timeout_sec: 0.50
+    tracks_timeout_sec: 1.00
+    obstacle_stop_distance: 0.75
+    obstacle_slow_distance: 1.40
+    forward_scan_half_angle: 0.70
+    human_stop_distance: 0.90
+    rotate_in_place_angle: 0.95
+    angular_gain: 1.60

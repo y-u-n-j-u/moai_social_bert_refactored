@@ -1,0 +1,6 @@
+.build_context/
+*.bag
+*.db3
+*.mcap
+jackal_logs/
+jackal_maps/
