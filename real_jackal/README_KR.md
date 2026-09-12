@@ -32,6 +32,8 @@ MID-360 + RealSense
   `CustomMsg`를 발행하지만 현재 perception/filter 스택은 `PointCloud2`를 요구한다.
 - `full_stack.launch.py`의 identity odom fallback은 실차에서 끈다.
 - 소프트웨어 정지는 물리 E-stop을 대체하지 않는다.
+- 공유 노트북의 `~/.bashrc`에는 ROS 배포판, domain, RMW 또는 DDS profile을
+  추가하지 않는다. 아래 전용 스크립트가 컨테이너 프로세스에만 적용한다.
 
 ## 1. 저장소와 모델 준비
 
@@ -140,6 +142,28 @@ ping -c 3 192.168.1.130
 
 `CAPSTONE_LIVOX_IF=enp3s0`은 예시이므로 실제 인터페이스 이름으로 바꾼다.
 
+실제 Jackal까지 연결하는 경우에는 위 명령 대신 프로젝트 전용 스크립트를 사용한다.
+이 스크립트는 기존 주소, NetworkManager, route, gateway 및 DNS를 변경하거나
+삭제하지 않고 누락된 Capstone 주소만 추가한다.
+
+```bash
+cd /home/moai/capstone_navi
+
+JACKAL_INTERFACE=enp131s0 \
+./real_jackal/scripts/configure_jackal_network.bash up
+```
+
+다음 세 조건을 모두 통과해야 한다.
+
+```text
+Ethernet carrier is up
+192.168.1.50, 192.168.131.50, 192.168.50.1 configured
+Jackal DDS peer 192.168.50.2 reachable
+```
+
+Jackal 또는 Ethernet 케이블이 연결되지 않은 상태에서 carrier/ping 검사가 실패하는
+것은 정상이다. 그 상태에서는 실제 주행 컨테이너를 시작하지 않는다.
+
 ## 4. 컨테이너 실행
 
 Jackal의 실제 ROS domain을 확인한 뒤 `CAPSTONE_DOMAIN`에 지정한다.
@@ -148,7 +172,7 @@ Jackal의 실제 ROS domain을 확인한 뒤 `CAPSTONE_DOMAIN`에 지정한다.
 cd /home/moai/capstone_navi
 
 CAPSTONE_DOMAIN=1
-CAPSTONE_CALIB=/home/moai/capstone_navi/spu_deploy_docker/context/calib
+export CAPSTONE_CALIB=/home/moai/capstone_navi/spu_deploy_docker/context/calib
 
 test -s "$CAPSTONE_CALIB/extrinsic.txt"
 test -s "$CAPSTONE_CALIB/intrinsic.txt"
@@ -162,8 +186,36 @@ LOG_DIR=/home/moai/jackal_logs \
 ./real_jackal/docker/run_real_jackal_container.bash
 ```
 
-현재 이미지가 calibration을 포함하지 않는 경우에도 항상 안전하게 덮어쓴다.
-컨테이너가 `--rm`이므로 컨테이너를 새로 만들 때마다 반복한다.
+위 명령은 Jackal 없이 센서만 점검하는 일반 실행이다. 실제 Jackal 주행에서는 기존
+컨테이너를 종료한 뒤 정적 unicast DDS profile을 주입하는 전용 실행을 사용한다.
+
+```bash
+docker stop moai_jackal_spubert
+
+cd /home/moai/capstone_navi
+MOAI_ENABLE_GUI=1 \
+ROS_DOMAIN_ID=1 \
+MAP_DIR=/home/moai/jackal_maps \
+LOG_DIR=/home/moai/jackal_logs \
+./real_jackal/docker/run_real_jackal_with_dds.bash
+```
+
+전용 실행은 이 저장소의 `fastdds_laptop_udp_discovery.xml`을 컨테이너에 read-only로 mount하고
+다음 환경을 컨테이너에만 지정한다.
+
+```text
+ROS_DOMAIN_ID=1
+ROS_LOCALHOST_ONLY=0
+RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+FASTRTPS_DEFAULT_PROFILES_FILE=/root/jackal_runtime/fastdds_laptop.xml
+FASTDDS_DEFAULT_PROFILES_FILE=/root/jackal_runtime/fastdds_laptop.xml
+```
+
+따라서 호스트 또는 다른 팀의 `~/.bashrc`에는 아무 설정도 추가하지 않는다.
+
+`CAPSTONE_CALIB`을 지정한 실행은 calibration 디렉터리를 `/root/data/calib`에
+read-only로 mount한다. 일반 실행에서 이 변수를 지정하지 않은 경우에만 다음 복사를
+컨테이너를 새로 만들 때마다 반복한다.
 
 ```bash
 docker exec moai_jackal_spubert mkdir -p /root/data/calib
@@ -181,6 +233,13 @@ docker exec moai_jackal_spubert ls -lh /root/data/calib
 
 ```bash
 docker exec -it moai_jackal_spubert bash
+```
+
+실제 Jackal DDS 실행에서는 `.bashrc`를 전혀 읽지 않는 전용 shell을 연다.
+
+```bash
+cd /home/moai/capstone_navi
+./real_jackal/scripts/open_jackal_shell.bash
 ```
 
 ## 5. Jackal 없이 센서 스택 점검
@@ -401,6 +460,29 @@ ros2 bag record -o /root/jackal_logs/monitor_$(date +%Y%m%d_%H%M%S) \
 
 dry-run launch를 `Ctrl-C`로 완전히 종료한 후 실제 cmd_vel 토픽을 확인한다.
 
+먼저 Jackal 컴퓨터에서 `clearpath-platform.service`와
+`platform_velocity_controller`가 실제로 실행 중이어야 한다. 노트북의 전용
+컨테이너 shell에서 다음 read-only preflight를 통과시킨다.
+
+```bash
+/root/jackal_runtime/scripts/verify_jackal_link.bash preflight
+```
+
+이 검사는 DDS peer와 다음 실제 Clearpath 명령 체인을 확인한다.
+
+```text
+/j100_0519/cmd_vel
+  -> twist_mux
+  -> /j100_0519/platform/cmd_vel_unstamped
+  -> platform_velocity_controller
+  -> j100_hardware_interface
+  -> MCU
+```
+
+MCU motor feedback/command endpoint와 E-stop 토픽도 확인한다. `preflight` 중에는
+E-stop이 눌린 상태여도 통과하며, 실제 launch 후 실행하는 `ready`에서는 해제 상태를
+요구한다. 그 외 항목이 하나라도 실패하면 arm하지 않는다.
+
 ```bash
 ros2 topic list -t | grep cmd_vel
 
@@ -412,7 +494,7 @@ ros2 topic info "$CAPSTONE_CMD_TOPIC" --verbose
 `/j100_0519/cmd_vel`은 후보값이다. 실제 장비에서 다음을 모두 확인해야 한다.
 
 - 타입이 `geometry_msgs/msg/Twist`
-- 실제 Jackal base subscriber 존재
+- 실제 Jackal `twist_mux` subscriber와 downstream platform controller/MCU 존재
 - 경쟁 publisher 없음
 
 실제 출력 launch도 항상 disarm으로 시작한다.
@@ -422,11 +504,17 @@ ros2 launch moai_jackal_spubert real_jackal_spubert.launch.py \
   cmd_vel_topic:="$CAPSTONE_CMD_TOPIC" \
   use_cuda:=true \
   require_global_path:=true \
-  launch_rviz:=true
+  launch_rviz:=false
 ```
 
 RViz에서 goal을 다시 지정하고 `path_valid` 및 경로 안전성을 확인한다. 물리 E-stop
 담당자와 바퀴를 띄운 상태에서만 arm한다.
+
+launch가 disarm 상태로 뜬 뒤 publisher/subscriber가 정확히 하나씩인지 다시 확인한다.
+
+```bash
+/root/jackal_runtime/scripts/verify_jackal_link.bash ready
+```
 
 ```bash
 ros2 service call /spu_bert/enable_motion \

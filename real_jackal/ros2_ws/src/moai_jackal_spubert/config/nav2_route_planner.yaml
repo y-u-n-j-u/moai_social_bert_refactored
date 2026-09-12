@@ -52,10 +52,10 @@ global_costmap:
       transform_tolerance: 0.50
       plugins: [static_layer, obstacle_layer, inflation_layer]
       static_layer:
-        plugin: nav2_costmap_2d/StaticLayer
+        plugin: nav2_costmap_2d::StaticLayer
         map_subscribe_transient_local: true
       obstacle_layer:
-        plugin: nav2_costmap_2d/ObstacleLayer
+        plugin: nav2_costmap_2d::ObstacleLayer
         enabled: true
         observation_sources: scan
         scan:
@@ -68,7 +68,7 @@ global_costmap:
           obstacle_min_range: 0.35
           raytrace_min_range: 0.35
       inflation_layer:
-        plugin: nav2_costmap_2d/InflationLayer
+        plugin: nav2_costmap_2d::InflationLayer
         inflation_radius: 0.55
         cost_scaling_factor: 3.0
       always_send_full_costmap: true
