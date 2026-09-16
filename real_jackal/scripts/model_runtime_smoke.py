@@ -6,15 +6,43 @@ import math
 import os
 
 from moai_jackal_spubert.guided_spubert_runtime import GuidedSpubertRuntime
+from moai_jackal_spubert.heading_stability import HeadingSelector
 from moai_jackal_spubert.rolling_laser_map import RollingLaserMapProvider
 
 
 MODEL_ROOT = os.environ.get("MOAI_MODEL_ROOT", "/root/moai_social_bert_refactored")
 
 
+def check_default_heading_selector():
+    """Exercise the deployed default at rest and at reliable moving speed."""
+    selector = HeadingSelector()
+    if selector.config.mode != "motion_guarded":
+        raise RuntimeError("runtime smoke expects the motion_guarded deployment default")
+    stationary = selector.select(
+        history_xy=[(0.0, 0.0), (0.0, 0.0009), (0.0, 0.0020)],
+        sample_times_s=[0.0, 0.4, 0.8],
+        odom_yaw_rad=0.3,
+    )
+    if not stationary.source.startswith("odom_yaw") or not math.isclose(stationary.theta_rad, 0.3):
+        raise RuntimeError("millimetre noise did not fall back to odometry yaw")
+    selector.reset()
+    angle = math.radians(10.0)
+    history = [((index - 7) * 0.08 * math.cos(angle),
+                (index - 7) * 0.08 * math.sin(angle)) for index in range(8)]
+    moving = selector.select(
+        history_xy=history,
+        sample_times_s=[0.4 * index for index in range(8)],
+        odom_yaw_rad=0.0,
+    )
+    if moving.source != "guarded_recent_motion" or not math.isclose(moving.theta_rad, angle):
+        raise RuntimeError("reliable 0.2 m/s motion did not preserve the last-segment heading")
+    return history, moving
+
+
 def main() -> None:
     logger = logging.getLogger("model_runtime_smoke")
     logging.basicConfig(level=logging.INFO)
+    robot_history, heading = check_default_heading_selector()
 
     map_provider = RollingLaserMapProvider(
         size_m=24.0,
@@ -55,12 +83,17 @@ def main() -> None:
         logger=logger,
     )
     candidates = runtime.predict_candidates(
-        robot_history=[(-1.4 + 0.2 * index, 0.0) for index in range(8)],
+        robot_history=robot_history,
         robot_yaw=0.0,
         human_histories={},
-        final_goal=(8.0, 0.0),
-        guidance_point_world=(8.0, 0.0),
+        final_goal=(8.0 * math.cos(heading.theta_rad), 8.0 * math.sin(heading.theta_rad)),
+        guidance_point_world=(8.0 * math.cos(heading.theta_rad), 8.0 * math.sin(heading.theta_rad)),
+        heading_override_rad=heading.theta_rad,
+        heading_source=heading.source,
     )
+    diagnostics = runtime.last_input_diagnostics
+    if not diagnostics.get("heading_override_used") or diagnostics.get("heading_source") != heading.source:
+        raise RuntimeError("runtime smoke did not exercise the motion_guarded heading override")
     valid_count = sum(
         candidate.selected_goal_valid
         and candidate.trajectory_map_safe

@@ -14,9 +14,13 @@ CAPSTONE_CALIB="${CAPSTONE_CALIB:-}"
 
 runtime_args=(
   --env "ROS_DOMAIN_ID=$ROS_DOMAIN_ID"
-  --volume "$REAL_JACKAL_DIR/scripts:/root/jackal_runtime/scripts:ro"
-  --volume "$REAL_JACKAL_DIR/ros2_ws/src/moai_jackal_spubert/config/nav2_route_planner.yaml:/root/robot_ws/install/moai_jackal_spubert/share/moai_jackal_spubert/config/nav2_route_planner.yaml:ro"
 )
+if [[ "${MOAI_RUNTIME_FROM_IMAGE:-0}" != "1" ]]; then
+  runtime_args+=(
+    --volume "$REAL_JACKAL_DIR/scripts:/root/jackal_runtime/scripts:ro"
+    --volume "$REAL_JACKAL_DIR/ros2_ws/src/moai_jackal_spubert/config/nav2_route_planner.yaml:/root/robot_ws/install/moai_jackal_spubert/share/moai_jackal_spubert/config/nav2_route_planner.yaml:ro"
+  )
+fi
 
 if [[ -n "$JACKAL_DDS_PROFILE" ]]; then
   if [[ ! -r "$JACKAL_DDS_PROFILE" ]]; then

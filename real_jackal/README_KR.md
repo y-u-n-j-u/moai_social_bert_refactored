@@ -1,6 +1,13 @@
 # 실제 Jackal SPU-BERT 실행 가이드
 
-이 문서는 `/home/moai/capstone_navi`의 최신 guided SPU-BERT 모델과
+기존 연구실 환경에 안정화 수정본을 적용할 때는
+[Git clone부터 실차 적용까지](STABILITY_FIXES_KR.md)를 따른다.
+`jackal-stability-20260916` 브랜치를 `$HOME/capstone_navi_stability`에 LFS 다운로드 없이
+clone한 뒤 기존 센서/모델 이미지를 재사용해 ROS 패키지만 빌드한다.
+기존 `/home/capstone_navi`를 덮어쓰지 않으며 아래 최초 설치 절차를 반복할 필요가 없다.
+clone/pull만으로 이미 실행 중인 컨테이너의 Python 코드가 교체되지는 않는다.
+
+이 문서는 `/home/capstone_navi`의 최신 guided SPU-BERT 모델과
 MID-360/RealSense 센서 스택을 실제 Jackal에 연결하는 명령을 정리한다.
 
 전체 흐름은 다음과 같다.
@@ -12,7 +19,7 @@ MID-360 + RealSense
   -> pointcloud_to_laserscan /scan
   -> Nav2 ComputePathToPose global path
   -> Adaptive GP + SPU-BERT
-  -> /spu_bert/predicted_path
+  -> /spu_bert/plan_context (goal + path; predicted_path는 RViz 표시용)
   -> disarmed safety tracker
   -> 명시적으로 arm한 경우에만 Jackal cmd_vel
 ```
@@ -37,11 +44,13 @@ MID-360 + RealSense
 
 ## 1. 저장소와 모델 준비
 
+이 절은 최초 설치용이다. 기존 `/home/capstone_navi`를 덮어쓰지 않는다.
+
 메인 저장소:
 
 ```bash
-cd /home/moai
-git clone -b junwoo \
+cd /home
+git clone -b jackal-stability-20260916 \
   https://github.com/y-u-n-j-u/moai_social_bert_refactored.git \
   capstone_navi
 ```
@@ -49,7 +58,7 @@ git clone -b junwoo \
 센서/캘리브레이션 저장소:
 
 ```bash
-cd /home/moai/capstone_navi
+cd /home/capstone_navi
 git clone \
   https://github.com/y-u-n-j-u/spu_deploy_docker.git \
   spu_deploy_docker
@@ -60,7 +69,7 @@ git clone \
 ```bash
 sudo apt-get install -y git-lfs
 
-cd /home/moai/capstone_navi
+cd /home/capstone_navi
 git lfs install
 git lfs pull --include="gazebo_classic/hunav_gz_classic_ws/src/moai_social_bert_refactored/output/spubert_route_gp_continue_b21_col01_social005/model_best.pth,gazebo_classic/hunav_gz_classic_ws/src/moai_social_bert_refactored/output/spubert_ethucy_all_scene_pretrain/pretrain_model_best.pth"
 ```
@@ -89,9 +98,9 @@ pretrain_model_best.pth  44991593 bytes
 입력 검증:
 
 ```bash
-cd /home/moai/capstone_navi
+cd /home/capstone_navi
 
-COLLEAGUE_REPO=/home/moai/capstone_navi/spu_deploy_docker \
+COLLEAGUE_REPO=/home/capstone_navi/spu_deploy_docker \
 VALIDATE_ONLY=1 \
 ./real_jackal/docker/build_real_jackal_image.bash
 ```
@@ -105,7 +114,7 @@ docker image inspect spubert_deploy:latest
 base image가 있으면 재사용한다.
 
 ```bash
-COLLEAGUE_REPO=/home/moai/capstone_navi/spu_deploy_docker \
+COLLEAGUE_REPO=/home/capstone_navi/spu_deploy_docker \
 SKIP_BASE_BUILD=1 \
 ./real_jackal/docker/build_real_jackal_image.bash
 ```
@@ -113,7 +122,7 @@ SKIP_BASE_BUILD=1 \
 base image가 없을 때만 전체 빌드를 실행한다.
 
 ```bash
-COLLEAGUE_REPO=/home/moai/capstone_navi/spu_deploy_docker \
+COLLEAGUE_REPO=/home/capstone_navi/spu_deploy_docker \
 ./real_jackal/docker/build_real_jackal_image.bash
 ```
 
@@ -147,7 +156,7 @@ ping -c 3 192.168.1.130
 삭제하지 않고 누락된 Capstone 주소만 추가한다.
 
 ```bash
-cd /home/moai/capstone_navi
+cd /home/capstone_navi
 
 JACKAL_INTERFACE=enp131s0 \
 ./real_jackal/scripts/configure_jackal_network.bash up
@@ -169,10 +178,10 @@ Jackal 또는 Ethernet 케이블이 연결되지 않은 상태에서 carrier/pin
 Jackal의 실제 ROS domain을 확인한 뒤 `CAPSTONE_DOMAIN`에 지정한다.
 
 ```bash
-cd /home/moai/capstone_navi
+cd /home/capstone_navi
 
 CAPSTONE_DOMAIN=1
-export CAPSTONE_CALIB=/home/moai/capstone_navi/spu_deploy_docker/context/calib
+export CAPSTONE_CALIB=/home/capstone_navi/spu_deploy_docker/context/calib
 
 test -s "$CAPSTONE_CALIB/extrinsic.txt"
 test -s "$CAPSTONE_CALIB/intrinsic.txt"
@@ -192,7 +201,7 @@ LOG_DIR=/home/moai/jackal_logs \
 ```bash
 docker stop moai_jackal_spubert
 
-cd /home/moai/capstone_navi
+cd /home/capstone_navi
 MOAI_ENABLE_GUI=1 \
 ROS_DOMAIN_ID=1 \
 MAP_DIR=/home/moai/jackal_maps \
@@ -238,7 +247,7 @@ docker exec -it moai_jackal_spubert bash
 실제 Jackal DDS 실행에서는 `.bashrc`를 전혀 읽지 않는 전용 shell을 연다.
 
 ```bash
-cd /home/moai/capstone_navi
+cd /home/capstone_navi
 ./real_jackal/scripts/open_jackal_shell.bash
 ```
 

@@ -28,7 +28,7 @@ _capstone_jackal_env_main() {
     return 1
   fi
 
-  export ROS_DOMAIN_ID=1
+  export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-1}"
   export ROS_LOCALHOST_ONLY=0
   export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
   export FASTRTPS_DEFAULT_PROFILES_FILE="$profile"
@@ -37,6 +37,13 @@ _capstone_jackal_env_main() {
 
   source /opt/ros/humble/setup.bash
   source /root/robot_ws/install/setup.bash
+  if [[ -n "${MOAI_STABILITY_OVERLAY:-}" ]]; then
+    if [[ ! -r "$MOAI_STABILITY_OVERLAY" ]]; then
+      printf 'Deployment overlay is missing: %s\n' "$MOAI_STABILITY_OVERLAY" >&2
+      return 1
+    fi
+    source "$MOAI_STABILITY_OVERLAY"
+  fi
 
   printf 'Jackal ROS environment ready: domain=%s rmw=%s profile=%s\n' \
     "$ROS_DOMAIN_ID" "$RMW_IMPLEMENTATION" "$profile"

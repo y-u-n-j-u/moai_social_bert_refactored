@@ -238,7 +238,7 @@ def local_to_world(point: XY, origin: XY, theta: float) -> XY:
 
 
 class GuidedSpubertRuntime:
-    """Load the guidance-conditioned SPU-BERT and build live Gazebo inputs."""
+    """Load the guidance-conditioned SPU-BERT and build live robot inputs."""
 
     def __init__(
         self,
@@ -264,6 +264,7 @@ class GuidedSpubertRuntime:
         self.tgp_top_k = max(int(tgp_top_k), 1)
         self.footprint_radius = max(float(footprint_radius), 0.0)
         self.logger = logger
+        self.last_input_diagnostics: Dict[str, Any] = {}
 
         for label, path, predicate in (
             ("model repository", self.repo_path, os.path.isdir),
@@ -414,6 +415,8 @@ class GuidedSpubertRuntime:
         human_histories: Mapping[int, Sequence[XY]],
         final_goal: XY,
         guidance_point_world: Optional[XY] = None,
+        heading_override_rad: Optional[float] = None,
+        heading_source: Optional[str] = None,
     ) -> GuidedInferenceResult:
         return self.predict_candidates(
             robot_history=robot_history,
@@ -421,6 +424,8 @@ class GuidedSpubertRuntime:
             human_histories=human_histories,
             final_goal=final_goal,
             guidance_point_world=guidance_point_world,
+            heading_override_rad=heading_override_rad,
+            heading_source=heading_source,
         )[0]
 
     def predict_candidates(
@@ -431,14 +436,68 @@ class GuidedSpubertRuntime:
         human_histories: Mapping[int, Sequence[XY]],
         final_goal: XY,
         guidance_point_world: Optional[XY] = None,
+        heading_override_rad: Optional[float] = None,
+        heading_source: Optional[str] = None,
     ) -> List[GuidedInferenceResult]:
-        robot_world = pad_history(robot_history, self.obs_len)
+        """Predict using one frame for all inputs, map crops and world outputs.
+
+        With no override, preserve legacy displacement normalization exactly.
+        A bridge can supply a stable heading; this changes normalization versus
+        training, so diagnostics expose the actual theta and legacy comparator.
+        """
+        self.last_input_diagnostics = {"input_valid": False, "status": "validating"}
+        try:
+            robot_points = [(float(x), float(y)) for x, y in robot_history]
+            if not robot_points:
+                raise ValueError("robot_history must not be empty")
+            human_points = {
+                human_id: [(float(x), float(y)) for x, y in points]
+                for human_id, points in human_histories.items()
+            }
+            robot_yaw = float(robot_yaw)
+            if not math.isfinite(robot_yaw):
+                raise ValueError("robot_yaw must be finite")
+            if heading_override_rad is not None:
+                heading_override_rad = float(heading_override_rad)
+                if not math.isfinite(heading_override_rad):
+                    raise ValueError("heading_override_rad must be finite")
+            final_goal = (float(final_goal[0]), float(final_goal[1]))
+            checked_points = robot_points + [final_goal]
+            checked_points.extend(point for points in human_points.values() for point in points)
+            if guidance_point_world is not None:
+                guidance_point_world = (float(guidance_point_world[0]), float(guidance_point_world[1]))
+                checked_points.append(guidance_point_world)
+            if not all(math.isfinite(x) and math.isfinite(y) for x, y in checked_points):
+                raise ValueError("model world coordinates must be finite")
+        except (TypeError, ValueError, IndexError) as exc:
+            self.last_input_diagnostics.update({"status": "invalid_input", "error": str(exc)})
+            raise ValueError(f"invalid guided model input: {exc}") from exc
+
+        robot_world = pad_history(robot_points, self.obs_len)
         origin = robot_world[-1]
-        theta = heading_from_history(robot_world, robot_yaw)
+        legacy_theta = heading_from_history(robot_world, robot_yaw)
+        theta = legacy_theta if heading_override_rad is None else heading_override_rad
         target_local = [world_to_local(point, origin, theta) for point in robot_world]
+        self.last_input_diagnostics = {
+            "input_valid": True,
+            "status": "building_model_input",
+            "theta_rad": theta,
+            "heading_source": (
+                "legacy_history" if heading_override_rad is None else str(heading_source or "override")
+            ),
+            "heading_override_used": heading_override_rad is not None,
+            "odom_yaw_rad": robot_yaw,
+            "legacy_heading_rad": legacy_theta,
+            "theta_minus_odom_yaw_rad": math.atan2(math.sin(theta - robot_yaw), math.cos(theta - robot_yaw)),
+            "origin_world": list(origin),
+            "robot_history_input_count": len(robot_points),
+            "robot_history_model_count": len(robot_world),
+            "robot_history_world": [list(point) for point in robot_world],
+            "robot_history_local": [list(point) for point in target_local],
+        }
 
         neighbors: List[Tuple[float, List[XY]]] = []
-        for points in human_histories.values():
+        for points in human_points.values():
             history = pad_history(points, self.obs_len)
             local = [world_to_local(point, origin, theta) for point in history]
             distance = math.hypot(local[-1][0], local[-1][1])
@@ -476,6 +535,12 @@ class GuidedSpubertRuntime:
         )
         scene = self._build_scene(origin=origin, theta=theta)
         batch = self._tensor_batch(streams, scene, gp_local)
+        self.last_input_diagnostics.update({
+            "status": "model_input_ready",
+            "guidance_point_world": list(gp_world),
+            "guidance_point_local": gp_local.tolist(),
+            "selected_neighbor_count": rows - 1,
+        })
 
         with self.torch.no_grad():
             output = self.model.inference_guided_candidates(
@@ -502,6 +567,7 @@ class GuidedSpubertRuntime:
                     theta=theta,
                 ),
             )
+        self.last_input_diagnostics["status"] = "model_returned"
 
         paths_local = output["guided_pred_trajs"][0].detach().cpu().numpy()
         candidates_local = output["candidate_goals"][0].detach().cpu().numpy()

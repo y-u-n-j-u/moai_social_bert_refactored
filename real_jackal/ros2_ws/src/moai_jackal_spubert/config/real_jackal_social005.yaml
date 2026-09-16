@@ -8,6 +8,21 @@ real_jackal_spubert_bridge:
     d_sample: 40
     tgp_top_k: 5
 
+    # Preserve the training heading during reliable motion; use yaw at low speed.
+    model_heading_mode: motion_guarded
+    # Bounded worker result age; sensor timeouts and safety distances stay strict.
+    inference_max_age_sec: 1.20
+    # Only freshly safety-validated candidates enter this ranking.
+    candidate_selection_mode: continuous
+    selection_lookahead_m: 0.70
+    selection_guidance_weight: 0.20
+    selection_heading_weight: 0.50
+    selection_turning_weight: 0.15
+    selection_continuity_weight: 2.00
+    continuity_reference_timeout_sec: 1.20
+    plan_context_topic: /spu_bert/plan_context
+    goal_completion_topic: /spu_bert/goal_completion
+
     odom_topic: /aft_mapped_to_init
     tracks_topic: /ped_tracking
     scan_topic: /scan
@@ -47,6 +62,8 @@ real_jackal_spubert_bridge:
     odom_timeout_sec: 0.60
     scan_timeout_sec: 0.60
     tracks_timeout_sec: 1.00
+    check_sensor_header_stamps: true
+    sensor_stamp_future_tolerance_sec: 0.10
     minimum_track_score: 0.30
     diagnostics_path: /root/jackal_logs/spubert_real_jackal_diagnostics.jsonl
 
@@ -61,12 +78,22 @@ safe_path_tracker:
     base_frame: base_link
     emergency_stop_topic: /spu_bert/emergency_stop
     enable_service: /spu_bert/enable_motion
+    plan_context_topic: /spu_bert/plan_context
+    goal_completion_topic: /spu_bert/goal_completion
+    require_plan_context: true
+    check_sensor_header_stamps: true
+    sensor_stamp_future_tolerance_sec: 0.10
+    plan_stamp_future_tolerance_sec: 0.10
+    diagnostics_topic: /spu_bert/tracker_diagnostics
+    diagnostics_path: /root/jackal_logs/tracker_stability.jsonl
 
     motion_enabled: false
     require_tracks_heartbeat: true
     control_rate_hz: 10.0
     lookahead_distance: 0.70
     goal_tolerance: 0.50
+    goal_slow_distance: 1.50
+    goal_approach_minimum_speed: 0.05
     maximum_linear_speed: 0.25
     maximum_angular_speed: 0.55
     maximum_linear_acceleration: 0.35

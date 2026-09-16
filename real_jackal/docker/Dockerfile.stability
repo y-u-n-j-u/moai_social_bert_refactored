@@ -1,0 +1,32 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+ARG SOURCE_SHA
+ARG SOURCE_REVISION
+ARG BASE_IMAGE_ID
+LABEL org.moai.stability.overlay="true" \
+      org.moai.stability.source_sha256="${SOURCE_SHA}" \
+      org.moai.stability.source_revision="${SOURCE_REVISION}" \
+      org.moai.stability.base_image_id="${BASE_IMAGE_ID}"
+SHELL ["/bin/bash", "-c"]
+ENV MOAI_STABILITY_OVERLAY=/root/moai_stability_ws/install/setup.bash \
+    MOAI_DEPLOYMENT_MANIFEST=/root/jackal_deployment/source_manifest.json
+
+# Reuse the audited image's model, sensor drivers, perception and dependencies.
+# A separate workspace avoids changing its /root/robot_ws source/install tree.
+RUN rm -rf /root/moai_stability_ws
+COPY package /root/moai_stability_ws/src/moai_jackal_spubert
+COPY scripts /root/jackal_runtime/scripts
+COPY source_manifest.json /root/jackal_deployment/source_manifest.json
+COPY docker_entrypoint.sh /real_jackal_stability_entrypoint.sh
+WORKDIR /root/moai_stability_ws
+RUN source /opt/ros/humble/setup.bash \
+    && source /root/robot_ws/install/setup.bash \
+    && colcon build --symlink-install --packages-select moai_jackal_spubert \
+    && source /root/moai_stability_ws/install/setup.bash \
+    && /usr/bin/python3 /root/jackal_runtime/scripts/deployment_manifest.py verify \
+    && /usr/bin/python3 /root/jackal_runtime/scripts/model_runtime_smoke.py \
+    && chmod +x /root/jackal_runtime/scripts/*.bash /real_jackal_stability_entrypoint.sh \
+    && printf '\nsource /root/moai_stability_ws/install/setup.bash\n' >> /root/.bashrc
+WORKDIR /root
+ENTRYPOINT ["/real_jackal_stability_entrypoint.sh"]
+CMD ["sleep", "infinity"]

@@ -170,23 +170,59 @@ class RollingLaserMapProvider:
         return values
 
     def point_occupied_with_radius(self, x: float, y: float, radius: float) -> bool:
+        return self._first_footprint_blocker(x, y, radius) is not None
+
+    def _first_footprint_blocker(self, x: float, y: float, radius: float):
+        """Keep the existing raster collision policy, including its edge rule."""
         center = self._world_to_cell(float(x), float(y))
         if center is None:
-            return True
+            return "outside_map", None
         radius_cells = int(math.ceil(max(float(radius), 0.0) / self.resolution))
         center_col, center_row = center
         for row in range(center_row - radius_cells, center_row + radius_cells + 1):
             for col in range(center_col - radius_cells, center_col + radius_cells + 1):
                 if not (0 <= col < self.width and 0 <= row < self.height):
-                    return True
+                    return "outside_map", (col, row)
                 dx = (col - center_col) * self.resolution
                 dy = (row - center_row) * self.resolution
                 if math.hypot(dx, dy) > float(radius) + 0.5 * self.resolution:
                     continue
                 value = int(self.grid[row, col])
-                if value == 2 or (value == 0 and self.unknown_is_occupied):
-                    return True
-        return False
+                if value == 2:
+                    return "occupied", (col, row)
+                if value == 0 and self.unknown_is_occupied:
+                    return "unknown", (col, row)
+        return None
+
+    def first_path_collision(self, path, radius: float):
+        """Describe the first blocking sample/cell without changing the verdict.
+
+        The caller supplies the same densely sampled path used for validation.
+        This reports one representative blocker, not every cause along the path.
+        Cell quantization and unknown-space policy are intentionally unchanged.
+        """
+        for index, point in enumerate(path):
+            x, y = float(point[0]), float(point[1])
+            if not math.isfinite(x) or not math.isfinite(y):
+                return {"sample_index": index, "kind": "nonfinite_path"}
+            blocker = self._first_footprint_blocker(x, y, radius)
+            if blocker is None:
+                continue
+            kind, cell = blocker
+            return {
+                "sample_index": index,
+                "path_point": [x, y],
+                "kind": kind,
+                "cell": list(cell) if cell is not None else None,
+                "cell_center_world": [
+                    self.origin_x + (cell[0] + 0.5) * self.resolution,
+                    self.origin_y + (cell[1] + 0.5) * self.resolution,
+                ] if cell is not None else None,
+                "footprint_radius_m": float(radius),
+                "resolution_m": self.resolution,
+                "unknown_is_occupied": self.unknown_is_occupied,
+            }
+        return None
 
     def path_collision_cost(self, path, radius: float, weight: float) -> float:
         return sum(

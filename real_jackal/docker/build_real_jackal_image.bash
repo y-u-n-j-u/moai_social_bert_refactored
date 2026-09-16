@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
-COLLEAGUE_REPO="${COLLEAGUE_REPO:-/home/junwoo/capstone/spu_deploy_docker_colleague}"
+COLLEAGUE_REPO="${COLLEAGUE_REPO:-$PROJECT_ROOT/spu_deploy_docker}"
 BASE_IMAGE="${BASE_IMAGE:-spubert_deploy:latest}"
 OUTPUT_IMAGE="${OUTPUT_IMAGE:-moai-jackal-spubert:social005}"
 MODEL_REPO="$PROJECT_ROOT/gazebo_classic/hunav_gz_classic_ws/src/moai_social_bert_refactored"

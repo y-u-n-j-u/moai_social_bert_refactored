@@ -1,1 +1,6 @@
 *.pth filter=lfs diff=lfs merge=lfs -text
+*.bash text eol=lf
+*.sh text eol=lf
+real_jackal/**/*.py text eol=lf
+real_jackal/**/*.yaml text eol=lf
+real_jackal/docker/Dockerfile* text eol=lf
