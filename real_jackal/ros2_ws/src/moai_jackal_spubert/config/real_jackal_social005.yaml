@@ -14,6 +14,10 @@ real_jackal_spubert_bridge:
     inference_max_age_sec: 1.20
     # Only freshly safety-validated candidates enter this ranking.
     candidate_selection_mode: continuous
+    # Follow progress along the ordered Nav2 route, including necessary detours.
+    candidate_progress_mode: route
+    # Route association bound, not a collision radius or obstacle clearance.
+    route_progress_max_distance: 1.50
     selection_lookahead_m: 0.70
     selection_guidance_weight: 0.20
     selection_heading_weight: 0.50

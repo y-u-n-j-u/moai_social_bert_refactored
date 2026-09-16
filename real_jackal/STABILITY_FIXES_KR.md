@@ -22,6 +22,9 @@ clone은 소스를 받는 단계이며, 아래 overlay 이미지 빌드와 새 �
   경로 끝점을 이미 지난 경우 뒤로 돌아서지 않고 새 유효 경로를 기다린다.
 - goal, path, goal ID를 한 `plan_context` 메시지로 전달한다. 별도 `/spu_bert/predicted_path`는
   기본 설정에서 RViz 표시용이다. 메시지 도착 순서 때문에 매 재계획마다 잠깐 멈추는 것을 피한다.
+- L자 복도 코너에 맞춰 후보 진행량을 전역 경로 기준으로 검사한다. 최종 목표 방향만
+  보고 정상 코너 접근을 탈락시키는 경우를 보완하고, 단계별 계산 지연을 기록한다.
+  [추가 수정 설명](ROUTE_PROGRESS_FOLLOWUP_KR.md)을 참고한다. 이전 `88f6123`에는 없는 변경이다.
 - 기존 AMCL/LIVO를 끄거나 TF를 고정하지 않는다. 실제 정지 중 TF/scan이 흔들리는
   원인을 해결했다는 뜻도 아니다. 아래 bag으로 그 문제를 별도로 확인한다.
 
@@ -290,6 +293,8 @@ bash /root/jackal_runtime/scripts/capture_stability_state.bash
 | `model_heading_mode` | `motion_guarded` |
 | `inference_max_age_sec` | `1.20` (추론 결과 최대 나이; 기존 센서 timeout과 별개) |
 | `candidate_selection_mode` | `continuous` |
+| `candidate_progress_mode` | `route` (전역 경로 기준 진행량) |
+| `route_progress_max_distance` | `1.50` (경로 연결 범위, 충돌 반경과 별개) |
 | `goal_slow_distance` | `1.5` |
 | `goal_approach_minimum_speed` | `0.05` |
 | tracker `diagnostics_topic` | `/spu_bert/tracker_diagnostics` |
@@ -309,6 +314,10 @@ ROS 시계를 확인한다. 0/누락 stamp도 거부한다. bridge의 `inputs_st
 `inputs_stale_after_validation`은 추론·검사가 끝날 때 입력이 오래됐다는 뜻이다. 기존
 센서 timeout을 임의로 늘려 해결하지 않고, 진단의 `inference_duration_sec`, 추론에 사용한
 입력 시각과 최신 센서 age를 같이 본다.
+
+추가된 `phase_timing_sec`는 지도·모델·검사·발행 등의 처리시간을 나눠 보여준다.
+`input_ages`는 센서 헤더와 수신 시각을 구분한다. 헤더가 상위 노드에서 현재 시각으로
+덮여 있다면 실제 센서 지연이 가려질 수 있으므로 이 숫자만으로 지연이 없다고 판단하지 않는다.
 
 추론 중에도 센서 콜백은 계속 동작한다. 완료 후 최신 정보로 안전 검사를 다시 하며,
 `inference_result_expired`는 추론 결과가 1.20초를 넘었다는 뜻이다. 그 나이는 ROS 시각과

@@ -42,3 +42,31 @@ def test_active_result_cannot_claim_model_was_not_collected():
     quality = summary['Quality']()
     summary['summarize_bridge']([(1, row)], quality)
     assert quality.report()['counts'] == {'inconsistent:model_output_collected': 1}
+
+
+def test_failed_preparation_inference_and_unknown_events_break_heading_comparison():
+    for event in ('inference_error', 'preparation_rejected', 'unknown_status'):
+        rows = [(1, record(1_000_000_000, 0)),
+                (2, {'event': event, 'stamp_ns': 2_000_000_000,
+                     'model_output_collected': False, 'error': 'unobserved model heading'}),
+                (3, record(3_000_000_000, 1))]
+        quality = summary['Quality']()
+        report = summary['summarize_bridge'](rows, quality)
+        assert quality.report()['error_count'] == 0, event
+        assert report['events'][event] == 1
+        assert report['predictions']['total'] == 2
+        assert report['actual_vs_legacy_heading']['samples'] == 2
+        assert report['consecutive_actual_heading_change']['samples'] == 0
+
+
+def test_heading_comparison_resumes_between_predictions_after_a_failed_job():
+    rows = [(1, record(1_000_000_000, 0)),
+            (2, {'event': 'inference_error', 'stamp_ns': 2_000_000_000}),
+            (3, record(3_000_000_000, 1)),
+            (4, record(4_000_000_000, 1.25))]
+    quality = summary['Quality']()
+    report = summary['summarize_bridge'](rows, quality)
+    assert quality.report()['error_count'] == 0
+    comparison = report['consecutive_actual_heading_change']
+    assert comparison['samples'] == 1
+    assert abs(comparison['max_abs_rad'] - 0.25) < 1e-12

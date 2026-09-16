@@ -124,6 +124,68 @@ def goal_key(record, line, quality):
     return value
 
 
+def timing_stats(values):
+    ordered = sorted(values)
+    size = len(ordered)
+    return {"samples": size, "mean_sec": sum(ordered) / size if size else None,
+            "min_sec": ordered[0] if size else None,
+            "p50_sec": ordered[max(0, math.ceil(size * 0.50) - 1)] if size else None,
+            "p95_sec": ordered[max(0, math.ceil(size * 0.95) - 1)] if size else None,
+            "max_sec": ordered[-1] if size else None}
+
+
+def summarize_phase_timing(rows, quality):
+    """Optional fields keep older logs valid; unavailable measurements stay absent."""
+    phases, ages, previous_io = defaultdict(list), defaultdict(list), defaultdict(list)
+
+    def collect(value, destination, prefix, line, *, signed=False):
+        if not isinstance(value, dict):
+            quality.issue(line, "null_or_invalid", prefix)
+            return
+        for key, seconds in value.items():
+            if not key.endswith("_sec") or seconds is None:
+                continue
+            try:
+                finite = math.isfinite(float(seconds))
+            except (TypeError, ValueError, OverflowError):
+                finite = False
+            if (isinstance(seconds, bool) or not isinstance(seconds, (int, float))
+                    or not finite or (not signed and seconds < 0)):
+                quality.issue(line, "null_or_invalid", f"{prefix}.{key}")
+                continue
+            destination[key].append(seconds)
+
+    for line, record in rows:
+        if not isinstance(record, dict):
+            continue
+        if "phase_timing_sec" in record:
+            collect(record["phase_timing_sec"], phases, "phase_timing_sec", line)
+        if "previous_diagnostic_io_sec" in record:
+            collect(record["previous_diagnostic_io_sec"], previous_io, "previous_diagnostic_io_sec", line)
+        if "input_ages" in record:
+            snapshots = record["input_ages"]
+            if not isinstance(snapshots, dict):
+                quality.issue(line, "null_or_invalid", "input_ages")
+                continue
+            for stage, snapshot in snapshots.items():
+                stage_values = defaultdict(list)
+                collect(snapshot, stage_values, f"input_ages.{stage}", line, signed=True)
+                for key, values in stage_values.items():
+                    ages[f"{stage}.{key}"].extend(values)
+    return {
+        "phases_sec": {key: timing_stats(values) for key, values in sorted(phases.items())},
+        "input_ages_sec": {key: timing_stats(values) for key, values in sorted(ages.items())},
+        "previous_record_io_sec": {key: timing_stats(values) for key, values in sorted(previous_io.items())},
+        "interpretation": (
+            "Samples are available log records, not control cycles or unique jobs; "
+            "one job can have multiple records. Total phases overlap subphases. "
+            "Percentiles use nearest rank. Header ages use the reported ROS headers, "
+            "not measured upstream state-estimator latency; negative ages mean future headers. "
+            "Previous-record I/O excludes the final record's unreported write."
+        ),
+    }
+
+
 def summarize_bridge(rows, quality):
     times, reversals, duplicates = timestamps(rows, "stamp_ns", 1e-9, quality)
     counts, reasons, candidate_counts, candidate_reasons = Counter(), Counter(), Counter(), Counter()
@@ -144,6 +206,10 @@ def summarize_bridge(rows, quality):
         if time is None:
             previous = None
         if event != "prediction":
+            # inference_error/preparation_rejected contain no comparable model
+            # heading. Unknown events also cannot establish continuity; do not
+            # join the predictions on either side of an unobserved interval.
+            previous = None
             continue
         counts["total"] += 1
         valid = field(record, "valid", line, quality)
@@ -215,6 +281,7 @@ def summarize_bridge(rows, quality):
         "actual_vs_legacy_heading": magnitude_stats(differences),
         "consecutive_actual_heading_change": None if reversals else magnitude_stats(steps),
         "time_order_valid": not reversals, "duplicate_timestamps": duplicates,
+        "timing": summarize_phase_timing(rows, quality),
     }
 
 

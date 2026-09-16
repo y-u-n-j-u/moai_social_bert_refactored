@@ -4,6 +4,8 @@ import math
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Optional, Sequence, Tuple
 
+from .route_progress import RouteProgress, RouteProgressReference
+
 
 XY = Tuple[float, float]
 
@@ -93,6 +95,7 @@ class CandidateCheck:
     goal_progress_m: float
     minimum_human_distance_m: float
     minimum_human_clearance_m: float
+    route_progress: Optional[RouteProgress] = None
 
 
 def validate_candidate_path(
@@ -111,6 +114,7 @@ def validate_candidate_path(
     minimum_human_center_distance: float,
     human_radius: float,
     human_safety_margin: float,
+    route_reference: Optional[RouteProgressReference] = None,
 ) -> CandidateCheck:
     """Apply the runtime checks that are independent of ROS message types."""
     if not path:
@@ -145,6 +149,10 @@ def validate_candidate_path(
         (float(endpoint[0]) - float(current[0])) * gx
         + (float(endpoint[1]) - float(current[1])) * gy
     ) / goal_distance
+    route_progress = (
+        route_reference.measure(path, sample_spacing_m=spacing)
+        if route_reference is not None else None
+    )
 
     minimum_center = math.inf
     required_human_distance = max(
@@ -188,7 +196,11 @@ def validate_candidate_path(
         reason = "robot_footprint_collision"
     elif maximum_step > allowed_step:
         reason = "kinematic_jump"
-    elif progress < float(minimum_goal_progress):
+    elif route_progress is not None and route_progress.error:
+        reason = route_progress.error
+    elif route_progress is not None and route_progress.effective_progress_m < float(minimum_goal_progress):
+        reason = "insufficient_route_progress"
+    elif route_progress is None and progress < float(minimum_goal_progress):
         reason = "insufficient_goal_progress"
     elif minimum_clearance < 0.0:
         reason = "predicted_human_clearance"
@@ -202,6 +214,7 @@ def validate_candidate_path(
         goal_progress_m=float(progress),
         minimum_human_distance_m=float(minimum_center),
         minimum_human_clearance_m=float(minimum_clearance),
+        route_progress=route_progress,
     )
 
 

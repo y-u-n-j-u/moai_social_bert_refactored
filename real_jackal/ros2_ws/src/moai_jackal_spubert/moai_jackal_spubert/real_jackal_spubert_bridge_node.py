@@ -45,6 +45,8 @@ from .planning_stability import PathOption, SelectionConfig, rank_valid_paths
 from .goal_lifecycle import GoalLifecycle
 from .diagnostics_utils import json_finite
 from .sensor_freshness import stamp_error
+from .route_progress import RouteProgressReference
+from .phase_timing import input_age_snapshot, phase_now, record_duration
 
 
 XY = Tuple[float, float]
@@ -151,6 +153,14 @@ class RealJackalSpubertBridgeNode(Node):
         self.minimum_goal_progress = float(
             self.declare_parameter("minimum_goal_progress", 0.10).value
         )
+        self.candidate_progress_mode = self._string_param("candidate_progress_mode", "route")
+        self.route_progress_max_distance = float(
+            self.declare_parameter("route_progress_max_distance", 1.50).value
+        )
+        if self.candidate_progress_mode not in {"route", "final_goal"}:
+            raise ValueError("candidate_progress_mode must be route or final_goal")
+        if not math.isfinite(self.route_progress_max_distance) or self.route_progress_max_distance <= 0:
+            raise ValueError("route_progress_max_distance must be positive and finite")
         self.goal_tolerance = float(self.declare_parameter("goal_tolerance", 0.50).value)
         self.odom_timeout = float(self.declare_parameter("odom_timeout_sec", 0.60).value)
         self.scan_timeout = float(self.declare_parameter("scan_timeout_sec", 0.60).value)
@@ -477,6 +487,8 @@ class RealJackalSpubertBridgeNode(Node):
         if now - self._last_predict_s < self.replan_period:
             return
         self._last_predict_s = now
+        preparation_started = phase_now()
+        phase_timings = {}
 
         if self._mission.completed:
             self._hold("goal_reached")
@@ -547,11 +559,14 @@ class RealJackalSpubertBridgeNode(Node):
             self._hold("goal_reached")
             return
 
+        map_started = phase_now()
         map_update_stamp_ns = self._refresh_map(robot)
+        record_duration(phase_timings, "preparation_map_sec", map_started)
         if not self.map_provider.ready:
             self._hold("rolling_map_unavailable")
             return
 
+        guidance_started = phase_now()
         route = self._route_in_frame(odom_frame)
         if route is None:
             if self.require_global_path:
@@ -591,9 +606,17 @@ class RealJackalSpubertBridgeNode(Node):
                     radius=self.guidance_radius,
                 )
         except ValueError as exc:
+            record_duration(phase_timings, "route_guidance_prepare_sec", guidance_started)
+            record_duration(phase_timings, "preparation_total_sec", preparation_started)
+            self._record("preparation_rejected", {
+                "reason": "adaptive_guidance_failed", "phase_timing_sec": phase_timings,
+                "input_ages": {"preparation": self._input_age_diagnostics()},
+            })
             self._hold(f"adaptive_guidance_failed:{exc}")
             return
 
+        record_duration(phase_timings, "route_guidance_prepare_sec", guidance_started)
+        runtime_inputs_started = phase_now()
         try:
             heading = self.heading_selector.select(
                 history_xy=list(self._robot_history),
@@ -612,11 +635,15 @@ class RealJackalSpubertBridgeNode(Node):
             )
         except Exception as exc:  # keep the outdoor control process fail-closed
             self.get_logger().error(f"SPU-BERT inference failed: {exc}")
-            self._record("inference_error", {"error": str(exc)})
+            record_duration(phase_timings, "runtime_inputs_prepare_sec", runtime_inputs_started)
+            record_duration(phase_timings, "preparation_total_sec", preparation_started)
+            self._record("inference_error", {"error": str(exc), "phase_timing_sec": phase_timings})
             self._hold("inference_error")
             return
 
+        record_duration(phase_timings, "runtime_inputs_prepare_sec", runtime_inputs_started)
         input_diagnostics = {
+            "phase_timing_sec": phase_timings,
             "goal_id": self._mission.goal_id,
             "model_output_collected": False,
             "robot": [robot_x, robot_y],
@@ -644,9 +671,12 @@ class RealJackalSpubertBridgeNode(Node):
             "pose_frame_generation": self._pose_frame_generation,
             "start_s": inference_started_ns * 1e-9, "start_monotonic": time.monotonic(),
             "route": route, "guidance": guidance, "diagnostics": input_diagnostics,
+            "preparation_started": preparation_started, "worker_timing": {},
         }
         dispatch_error = self._input_safety_error()
         if dispatch_error:
+            record_duration(phase_timings, "preparation_total_sec", preparation_started)
+            input_diagnostics["input_ages"] = {"dispatch": self._input_age_diagnostics()}
             self._record("prediction", {**input_diagnostics, "valid": False,
                                          "reason": "inputs_stale_before_inference",
                                          "current_input_error": dispatch_error, "attempts": []})
@@ -654,15 +684,32 @@ class RealJackalSpubertBridgeNode(Node):
             return
         # Snapshot contains its own numpy grid. The main thread can rebuild the
         # live map while inference reads this snapshot without a data race.
+        snapshot_started = phase_now()
         snapshot = deepcopy(self.map_provider)
-        future = self._inference_executor.submit(self._run_inference, snapshot, runtime_inputs)
+        record_duration(phase_timings, "map_snapshot_copy_sec", snapshot_started)
+        input_diagnostics["input_ages"] = {"dispatch": self._input_age_diagnostics()}
+        record_duration(phase_timings, "preparation_total_sec", preparation_started)
+        job["worker_timing"]["_enqueued_perf_s"] = phase_now()
+        future = self._inference_executor.submit(self._run_inference, snapshot, runtime_inputs, job["worker_timing"])
         self._pending_inference = (future, job)
 
-    def _run_inference(self, map_snapshot, runtime_inputs):
+    def _run_inference(self, map_snapshot, runtime_inputs, worker_timing=None):
         started = time.monotonic()
-        self._runtime.map_provider = map_snapshot
-        candidates = self._runtime.predict_candidates(**runtime_inputs)
-        return candidates, deepcopy(self._runtime.last_input_diagnostics), time.monotonic() - started
+        worker_started = phase_now()
+        timings = worker_timing if worker_timing is not None else {}
+        record_duration(timings, "worker_queue_sec", timings.get("_enqueued_perf_s"), worker_started)
+        try:
+            self._runtime.map_provider = map_snapshot
+            predict_started = phase_now()
+            try:
+                candidates = self._runtime.predict_candidates(**runtime_inputs)
+            finally:
+                record_duration(timings, "worker_predict_sec", predict_started)
+            return candidates, deepcopy(self._runtime.last_input_diagnostics), time.monotonic() - started
+        finally:
+            finished = phase_now()
+            record_duration(timings, "worker_total_sec", worker_started, finished)
+            timings["_finished_perf_s"] = finished
 
     def _inference_age(self, job) -> float:
         # A ROS clock reset must not make old work become young again.
@@ -719,11 +766,26 @@ class RealJackalSpubertBridgeNode(Node):
         return current
 
     def _finish_inference(self, future, job) -> None:
+        collection_started = phase_now()
         input_diagnostics = job["diagnostics"]
+        phase_timings = input_diagnostics.setdefault("phase_timing_sec", {})
+        worker_timing = job.get("worker_timing", {})
+        for key in ("worker_queue_sec", "worker_predict_sec", "worker_total_sec"):
+            if key in worker_timing:
+                record_duration(phase_timings, key, 0.0, worker_timing[key])
+        record_duration(phase_timings, "result_collection_wait_sec",
+                        worker_timing.get("_finished_perf_s"), collection_started)
+        input_diagnostics.setdefault("input_ages", {})["collection"] = self._input_age_diagnostics()
         age = self._inference_age(job)
         input_diagnostics["inference_result_age_sec"] = age
 
+        def finish_timings():
+            # Totals overlap the named subphases, and exclude this record's JSON/file I/O.
+            record_duration(phase_timings, "validation_and_publish_total_sec", collection_started)
+            record_duration(phase_timings, "prepare_to_decision_total_sec", job.get("preparation_started"))
+
         def reject(reason):
+            finish_timings()
             self._record("prediction", {**input_diagnostics, "valid": False, "reason": reason, "attempts": []})
             self._hold(reason)
 
@@ -761,17 +823,24 @@ class RealJackalSpubertBridgeNode(Node):
             candidates, model_diagnostics, duration = future.result()
         except Exception as exc:
             self.get_logger().error(f"SPU-BERT inference failed: {exc}")
+            finish_timings()
             self._record("inference_error", {"error": str(exc), **input_diagnostics})
             self._hold("inference_error")
             return
         input_diagnostics["model_input"] = model_diagnostics
         input_diagnostics["model_output_collected"] = True
         input_diagnostics["inference_duration_sec"] = duration
+        record_duration(phase_timings, "result_precheck_sec", collection_started)
+        validation_map_started = phase_now()
         validation_map_stamp_ns = self._refresh_map(robot)
+        record_duration(phase_timings, "validation_map_sec", validation_map_started)
         if not self.map_provider.ready:
             reject("rolling_map_unavailable")
             return
+        humans_started = phase_now()
         human_histories = self._current_human_histories()
+        record_duration(phase_timings, "latest_humans_prepare_sec", humans_started)
+        input_diagnostics["input_ages"]["validation"] = self._input_age_diagnostics()
         input_diagnostics["validation"] = {
             "robot": [robot_x, robot_y], "robot_yaw_rad": robot_yaw,
             "goal": list(goal_xy),
@@ -784,6 +853,38 @@ class RealJackalSpubertBridgeNode(Node):
             "human_positions": {str(key): list(value[-1]) for key, value in human_histories.items()},
         }
         route, guidance = job["route"], job["guidance"]
+        route_reference = None
+        input_diagnostics["progress_mode"] = self.candidate_progress_mode
+        if self.candidate_progress_mode == "route":
+            progress_reference_started = phase_now()
+            # Re-transform the latest route after inference. A dispatch-time
+            # route in odom can be outdated following map->odom corrections.
+            progress_route = self._route_in_frame(odom_frame)
+            if progress_route is None:
+                if self.require_global_path:
+                    record_duration(phase_timings, "progress_route_prepare_sec", progress_reference_started)
+                    reject("progress_route_unavailable")
+                    return
+                progress_route = [(robot_x, robot_y), goal_xy]
+            try:
+                route_reference = RouteProgressReference(
+                    progress_route, (robot_x, robot_y),
+                    max_distance_m=self.route_progress_max_distance,
+                    ambiguity_distance_m=max(self.map_provider.resolution * 0.5, 0.02),
+                )
+                if math.dist(progress_route[-1], goal_xy) > self.goal_tolerance:
+                    raise ValueError("progress_route_goal_mismatch")
+            except ValueError as exc:
+                record_duration(phase_timings, "progress_route_prepare_sec", progress_reference_started)
+                reject(str(exc))
+                return
+            input_diagnostics["validation"]["progress_route"] = {
+                **route_reference.diagnostics(),
+                "frame": odom_frame,
+                "goal_generation": self._goal_generation,
+                "points": [list(point) for point in progress_route],
+            }
+            record_duration(phase_timings, "progress_route_prepare_sec", progress_reference_started)
         footprint_radius = self.robot_radius + self.static_safety_margin
         now = self._now_s()
 
@@ -791,6 +892,7 @@ class RealJackalSpubertBridgeNode(Node):
         selected: Optional[GuidedInferenceResult] = None
         selected_check = None
         options, checks = [], []
+        candidate_checks_started = phase_now()
         for index, result in enumerate(candidates):
             if not result.selected_goal_valid:
                 reason = "no_map_safe_goal"
@@ -817,6 +919,7 @@ class RealJackalSpubertBridgeNode(Node):
                     minimum_human_center_distance=self.minimum_human_center_distance,
                     human_radius=self.human_radius,
                     human_safety_margin=self.human_safety_margin,
+                    route_reference=route_reference,
                 )
                 reason = check.reason
             valid = check.valid if check is not None else False
@@ -840,6 +943,10 @@ class RealJackalSpubertBridgeNode(Node):
                     "first_collision": first_collision,
                     "maximum_step_m": None if check is None or not math.isfinite(check.maximum_step_m) else check.maximum_step_m,
                     "goal_progress_m": None if check is None else check.goal_progress_m,
+                    "route_progress": (
+                        asdict(check.route_progress)
+                        if check is not None and check.route_progress is not None else None
+                    ),
                     "minimum_human_distance_m": (
                         None if check is None or not math.isfinite(check.minimum_human_distance_m)
                         else check.minimum_human_distance_m
@@ -849,6 +956,8 @@ class RealJackalSpubertBridgeNode(Node):
             checks.append(check)
             options.append(PathOption(index, result.path_world, float(result.guidance_distance_m), bool(valid)))
 
+        record_duration(phase_timings, "candidate_validation_sec", candidate_checks_started)
+        ranking_started = phase_now()
         reference = self._previous_path if (
             self._previous_path is not None
             and same_frame_id(self._previous_path_frame, odom_frame)
@@ -863,7 +972,9 @@ class RealJackalSpubertBridgeNode(Node):
             selected_check = checks[ranked[0].index]
         input_diagnostics["selection_mode"] = self.selection_config.mode
         input_diagnostics["continuity_reference_used"] = reference is not None
+        record_duration(phase_timings, "candidate_ranking_sec", ranking_started)
 
+        markers_started = phase_now()
         debug_result = selected or (candidates[0] if candidates else None)
         self._publish_markers(
             odom_frame,
@@ -872,15 +983,20 @@ class RealJackalSpubertBridgeNode(Node):
             debug_result,
             selected is not None,
         )
+        record_duration(phase_timings, "marker_publish_sec", markers_started)
         if selected is None:
             reason = attempts[0]["reason"] if attempts else "no_candidates"
+            finish_timings()
             self._record("prediction", {**input_diagnostics, "valid": False, "reason": reason, "attempts": attempts})
             self._hold(f"all_candidates_rejected:{reason}")
             return
 
+        final_check_started = phase_now()
         publish_now = self._now_s()
         source_error = self._sensor_stamp_error()
         if self._inference_age(job) > self.inference_max_age:
+            record_duration(phase_timings, "final_freshness_check_sec", final_check_started)
+            finish_timings()
             self._record("prediction", {**input_diagnostics, "valid": False,
                                          "reason": "inference_result_expired_after_validation",
                                          "inference_result_age_sec": self._inference_age(job), "attempts": attempts})
@@ -889,14 +1005,19 @@ class RealJackalSpubertBridgeNode(Node):
         if (source_error or publish_now - self._odom_stamp_s > self.odom_timeout
                 or publish_now - self._scan_stamp_s > self.scan_timeout
                 or publish_now - self._tracks_stamp_s > self.tracks_timeout):
+            record_duration(phase_timings, "final_freshness_check_sec", final_check_started)
+            finish_timings()
             self._record("prediction", {**input_diagnostics, "valid": False, "reason": "inputs_stale_after_validation", "source_stamp_error": source_error, "attempts": attempts})
             self._hold("inputs_stale_after_validation")
             return
+        record_duration(phase_timings, "final_freshness_check_sec", final_check_started)
+        path_publish_started = phase_now()
         path_message = self._path_message(odom_frame, selected.path_world)
         path_stamp_ns = self._stamp_ns(path_message.header.stamp)
         self._publish_plan_context("active", path_stamp_ns=path_stamp_ns, path_points=selected.path_world)
         self.path_pub.publish(path_message)
         self.goal_pub.publish(self._point_pose(odom_frame, goal_xy))
+        record_duration(phase_timings, "path_context_publish_sec", path_publish_started)
         self._previous_path = [(robot_x, robot_y), *selected.path_world]
         self._previous_path_stamp_s = self._now_s()
         self._previous_path_frame = odom_frame
@@ -904,6 +1025,7 @@ class RealJackalSpubertBridgeNode(Node):
             f"path_valid rank={selected.candidate_rank}/{len(candidates)} "
             f"human_min={selected_check.minimum_human_distance_m:.3f}"
         )
+        finish_timings()
         self._record(
             "prediction",
             {
@@ -1169,19 +1291,48 @@ class RealJackalSpubertBridgeNode(Node):
         self.status_pub.publish(String(data=text))
         self.get_logger().info(text)
 
+    def _input_age_diagnostics(self) -> dict:
+        try:
+            return input_age_snapshot(
+                now_ns=self.get_clock().now().nanoseconds,
+                stamps={
+                    "odom": getattr(getattr(self._latest_odom, "header", None), "stamp", None),
+                    "scan": getattr(getattr(self._latest_scan, "header", None), "stamp", None),
+                    "tracks": self._tracks_source_stamp,
+                },
+                receipt_times_s={"odom": self._odom_stamp_s, "scan": self._scan_stamp_s,
+                                 "tracks": self._tracks_stamp_s},
+                history_times_s=self._robot_history_times,
+                history_odom_stamps_ns=self._robot_history_odom_stamps,
+            )
+        except Exception:
+            # Diagnostics must never turn unavailable instrumentation into a control fault.
+            return {"unavailable": True}
+
     def _record(self, event: str, payload: dict) -> None:
         if self._diagnostics_file is None:
             return
-        record = {"event": event, "stamp_ns": int(self.get_clock().now().nanoseconds), **payload}
+        io_timings = {}
         try:
-            self._diagnostics_file.write(json.dumps(json_finite(record), ensure_ascii=False, allow_nan=False) + "\n")
-        except OSError as exc:
+            record = {"event": event, "stamp_ns": int(self.get_clock().now().nanoseconds), **payload}
+            # A write cannot describe its own duration until it finishes. Report the
+            # previous record's synchronous I/O separately from the current phases.
+            record["previous_diagnostic_io_sec"] = getattr(self, "_last_diagnostic_io_sec", {})
+            serialize_started = phase_now()
+            encoded = json.dumps(json_finite(record), ensure_ascii=False, allow_nan=False) + "\n"
+            record_duration(io_timings, "serialization_sec", serialize_started)
+            write_started = phase_now()
+            self._diagnostics_file.write(encoded)
+            record_duration(io_timings, "file_write_sec", write_started)
+        except Exception as exc:
             failed_file, self._diagnostics_file = self._diagnostics_file, None
             try:
                 failed_file.close()
-            except OSError:
+            except Exception:
                 pass
             self.get_logger().warning(f"Bridge diagnostics disabled after a write failure: {exc}")
+        finally:
+            self._last_diagnostic_io_sec = io_timings
 
     def destroy_node(self):
         self._inference_executor.shutdown(wait=True, cancel_futures=True)
