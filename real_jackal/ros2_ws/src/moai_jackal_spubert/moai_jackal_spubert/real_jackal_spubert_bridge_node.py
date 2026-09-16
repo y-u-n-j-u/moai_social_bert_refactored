@@ -113,6 +113,7 @@ class RealJackalSpubertBridgeNode(Node):
         self.tgp_top_k = max(int(self.declare_parameter("tgp_top_k", 5).value), 1)
         self.d_sample = max(int(self.declare_parameter("d_sample", 40).value), 20)
         self.runtime_seed = int(self.declare_parameter("runtime_seed", 21).value)
+        self.goal_candidate_policy = self._string_param("goal_candidate_policy", "preserve_safe_samples")
         self.heading_selector = HeadingSelector(HeadingConfig(
             mode=self._string_param("model_heading_mode", "motion_guarded"),
         ))
@@ -267,6 +268,7 @@ class RealJackalSpubertBridgeNode(Node):
             tgp_top_k=self.tgp_top_k,
             footprint_radius=self.robot_radius + self.static_safety_margin,
             logger=self.get_logger(),
+            goal_candidate_policy=self.goal_candidate_policy,
         )
         if self._runtime.obs_len != self.obs_len or self._runtime.pred_len != self.pred_len:
             raise RuntimeError(
@@ -1187,7 +1189,8 @@ class RealJackalSpubertBridgeNode(Node):
                 marker.header.frame_id = frame_id
                 marker.header.stamp = self.get_clock().now().to_msg()
                 marker.ns = "mgp_candidates"
-                marker.id = 100 + index
+                slot = result.candidate_goal_indices[index] if result.candidate_goal_indices else index
+                marker.id = 100 + slot
                 marker.type = Marker.SPHERE
                 marker.action = Marker.ADD
                 marker.pose.position.x = float(point[0])

@@ -174,6 +174,7 @@ class RuntimeHeadingOverrideTest(unittest.TestCase):
         runtime.guidance_radius = 8.0
         runtime.d_sample = 20
         runtime.tgp_top_k = 1
+        runtime.goal_candidate_policy = "legacy"  # this fixture tests transforms, not model sampling
         runtime.args = SimpleNamespace(reject_unknown_goals=True)
         runtime.torch = SimpleNamespace(no_grad=nullcontext)
         runtime._SpatialTokens = lambda _: None

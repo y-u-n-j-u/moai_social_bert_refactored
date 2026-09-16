@@ -7,6 +7,8 @@ real_jackal_spubert_bridge:
     runtime_seed: 21
     d_sample: 40
     tgp_top_k: 5
+    # Keep safe original representatives; repair unsafe slots from safe raw samples.
+    goal_candidate_policy: preserve_safe_samples
 
     # Preserve the training heading during reliable motion; use yaw at low speed.
     model_heading_mode: motion_guarded

@@ -5,10 +5,14 @@ import math
 import os
 import random
 import sys
+from collections import Counter
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
+
+from .goal_candidate_repair import capture_and_repair_goal_samples, repair_goal_candidates
 
 
 XY = Tuple[float, float]
@@ -40,6 +44,7 @@ class GuidedInferenceResult:
     candidate_rank: int = 1
     candidate_index: int = -1
     guidance_distance_m: float = math.inf
+    candidate_goal_indices: Tuple[int, ...] = ()
 
 
 def guidance_point(current: XY, final_goal: XY, radius: float) -> XY:
@@ -254,6 +259,7 @@ class GuidedSpubertRuntime:
         tgp_top_k: int,
         footprint_radius: float,
         logger: Any,
+        goal_candidate_policy: str = "preserve_safe_samples",
     ) -> None:
         self.repo_path = os.path.abspath(os.path.expanduser(repo_path))
         self.config_path = os.path.abspath(os.path.expanduser(config_path))
@@ -265,6 +271,9 @@ class GuidedSpubertRuntime:
         self.footprint_radius = max(float(footprint_radius), 0.0)
         self.logger = logger
         self.last_input_diagnostics: Dict[str, Any] = {}
+        self.goal_candidate_policy = str(goal_candidate_policy)
+        if self.goal_candidate_policy not in {"preserve_safe_samples", "legacy"}:
+            raise ValueError("goal_candidate_policy must be preserve_safe_samples or legacy")
 
         for label, path, predicate in (
             ("model repository", self.repo_path, os.path.isdir),
@@ -294,12 +303,13 @@ class GuidedSpubertRuntime:
                 _SpatialTokens,
                 build_mgp_tgp_streams,
             )
-            from spubert.model import SBertPlusFTConfig, SBertPlusFTModel
+            from spubert.model import SBertPlusFTConfig, SBertPlusFTModel, classify_map_points
             from spubert.training import _build_spubert_mgp_config, _build_spubert_tgp_config
         except Exception as exc:
             raise RuntimeError(f"guided SPU-BERT imports failed: {exc}") from exc
 
         self.torch = torch
+        self._classify_map_points = classify_map_points
         self._SpatialTokens = _SpatialTokens
         self._build_streams = build_mgp_tgp_streams
         torch.set_num_threads(1)
@@ -542,7 +552,18 @@ class GuidedSpubertRuntime:
             "selected_neighbor_count": rows - 1,
         })
 
-        with self.torch.no_grad():
+        self.last_input_diagnostics["goal_sampling"] = {"policy": self.goal_candidate_policy}
+        repair_context = (
+            capture_and_repair_goal_samples(
+                self.model.mgp_model,
+                lambda raw, original: self._repair_goal_candidates(
+                    raw, original, batch=batch, origin=origin, theta=theta,
+                    guidance_local=gp_local,
+                ),
+            )
+            if self.goal_candidate_policy == "preserve_safe_samples" else nullcontext()
+        )
+        with self.torch.no_grad(), repair_context:
             output = self.model.inference_guided_candidates(
                 mgp_spatial_ids=batch["mgp_spatial_ids"],
                 mgp_temporal_ids=batch["mgp_temporal_ids"],
@@ -582,8 +603,20 @@ class GuidedSpubertRuntime:
         ][0].detach().cpu().numpy()
         execution_valid = output["guided_execution_valid"][0].detach().cpu().numpy()
         candidate_safe = output["candidate_safe_mask"][0].detach().cpu().numpy()
+        sampling = self.last_input_diagnostics["goal_sampling"]
+        if self.goal_candidate_policy == "preserve_safe_samples":
+            # The unchanged model selector rechecks repaired endpoints. Never
+            # override its verdict or silently accept an incompatible model API.
+            expected = sampling.get("output_safe_mask")
+            if expected is None or not np.array_equal(candidate_safe, np.asarray(expected, dtype=bool)):
+                raise RuntimeError("goal candidate repair did not match the model safety recheck")
+            if not np.array_equal(candidates_local, np.asarray(sampling["output_points_local"]), equal_nan=True):
+                raise RuntimeError("model changed repaired goal coordinates before validation")
+        sampling["output_safe_count"] = int(np.count_nonzero(candidate_safe))
+        sampling["output_count"] = int(len(candidate_safe))
         candidates_world = []
         candidate_safe_world = []
+        candidate_world_indices = []
         for index, point in enumerate(candidates_local):
             if not np.isfinite(point[:2]).all():
                 continue
@@ -591,6 +624,7 @@ class GuidedSpubertRuntime:
                 local_to_world((float(point[0]), float(point[1])), origin, theta)
             )
             candidate_safe_world.append(bool(candidate_safe[index]))
+            candidate_world_indices.append(index)
         valid_goal_count = int(np.count_nonzero(goal_valid))
         attempt_count = max(valid_goal_count, 1)
         results = []
@@ -617,9 +651,80 @@ class GuidedSpubertRuntime:
                     candidate_rank=rank + 1,
                     candidate_index=int(candidate_indices[rank]),
                     guidance_distance_m=float(guidance_distances[rank]),
+                    candidate_goal_indices=tuple(candidate_world_indices),
                 )
             )
         return results
+
+    def _goal_safety_snapshot(self, goals, *, batch, origin: XY, theta: float):
+        """Use exactly the existing model-cell AND world-footprint predicates."""
+        points = goals.detach().cpu().numpy()
+        if points.ndim != 3 or points.shape[0] != 1 or points.shape[-1] < 2:
+            raise ValueError("goal safety diagnostics expect shape (1,N,2+)")
+        classification = self._classify_map_points(
+            goals, batch["envs"], batch["envs_params"],
+            reject_unknown=bool(self.args.reject_unknown_goals),
+        )
+        model_safe = classification["point_safe_mask"][0].detach().cpu().numpy().astype(bool)
+        in_bounds = classification["point_in_bounds_mask"][0].detach().cpu().numpy().astype(bool)
+        cell_values = classification["point_cell_values"][0].detach().cpu().numpy()
+        footprint_safe = self._candidate_footprint_safe_mask(
+            goals, origin=origin, theta=theta,
+        )[0].detach().cpu().numpy().astype(bool)
+        finite = np.isfinite(points[0, :, :2]).all(axis=-1)
+        safe = model_safe & footprint_safe & finite
+        worlds, reasons = [], []
+        for index, point in enumerate(points[0]):
+            if not finite[index]:
+                worlds.append(None)
+                reasons.append(["nonfinite"])
+                continue
+            world = local_to_world((float(point[0]), float(point[1])), origin, theta)
+            worlds.append(list(world))
+            rejected = []
+            if not in_bounds[index]:
+                rejected.append("outside_model_map")
+            elif not model_safe[index]:
+                rejected.append("unknown_model_map" if cell_values[index] <= 0 else "occupied_model_map")
+            if not footprint_safe[index]:
+                # Detail is diagnostic only; the boolean above comes from the
+                # exact existing footprint check even if detail is unavailable.
+                kind = "blocked"
+                detail_fn = getattr(self.map_provider, "first_path_collision", None)
+                if callable(detail_fn):
+                    try:
+                        detail = detail_fn([world], radius=self.footprint_radius)
+                        if detail and isinstance(detail.get("kind"), str):
+                            kind = detail["kind"]
+                    except Exception:
+                        pass
+                rejected.append("footprint_" + kind)
+            reasons.append(rejected)
+        return safe, {
+            "points_local": points[0].tolist(), "points_world": worlds,
+            "model_safe_mask": model_safe.tolist(), "model_in_bounds": in_bounds.tolist(),
+            "model_cell_values": cell_values.tolist(),
+            "footprint_safe_mask": footprint_safe.tolist(), "safe_mask": safe.tolist(),
+            "rejection_reasons": reasons,
+            "rejection_counts": dict(Counter(reason for group in reasons for reason in group)),
+        }
+
+    def _repair_goal_candidates(self, raw, original, *, batch, origin: XY, theta: float, guidance_local):
+        raw_safe, raw_details = self._goal_safety_snapshot(raw, batch=batch, origin=origin, theta=theta)
+        original_safe, original_details = self._goal_safety_snapshot(original, batch=batch, origin=origin, theta=theta)
+        repaired, metadata = repair_goal_candidates(
+            raw.detach().cpu().numpy()[0], raw_safe,
+            original.detach().cpu().numpy()[0], original_safe, guidance_local[:2],
+        )
+        output_safe = original_safe.copy()
+        for replacement in metadata["replacement_sources"]:
+            output_safe[replacement["slot"]] = True
+        self.last_input_diagnostics["goal_sampling"] = {
+            "policy": self.goal_candidate_policy, **metadata,
+            "raw": raw_details, "original": original_details,
+            "output_points_local": repaired.tolist(), "output_safe_mask": output_safe.tolist(),
+        }
+        return self.torch.as_tensor(repaired[None], dtype=original.dtype, device=original.device)
 
     def _candidate_footprint_safe_mask(
         self,

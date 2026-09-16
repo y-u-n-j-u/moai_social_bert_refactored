@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Load the deployed checkpoint and execute one complete guided inference."""
 
+import hashlib
 import logging
 import math
 import os
@@ -11,6 +12,82 @@ from moai_jackal_spubert.rolling_laser_map import RollingLaserMapProvider
 
 
 MODEL_ROOT = os.environ.get("MOAI_MODEL_ROOT", "/root/moai_social_bert_refactored")
+
+
+def model_state_sha256(model, torch_module):
+    """Hash parameter/buffer contents without changing or retaining tensors."""
+    digest = hashlib.sha256()
+    for name, tensor in sorted(model.state_dict().items()):
+        digest.update(name.encode("utf-8") + b"\0")
+        digest.update(str(tensor.dtype).encode("ascii") + b"\0")
+        digest.update(str(tuple(tensor.shape)).encode("ascii") + b"\0")
+        raw = tensor.detach().cpu().contiguous().reshape(-1).view(torch_module.uint8)
+        digest.update(raw.numpy().tobytes())
+    return digest.hexdigest()
+
+
+def sampling_state(runtime):
+    mgp = runtime.model.mgp_model
+    method = mgp.goal_predictor
+    return {
+        "k_values": (int(runtime.args.k_sample), int(runtime.model.cfgs.k_sample),
+                     int(mgp.cfgs.k_sample)),
+        "d_sample": int(runtime.d_sample),
+        "top_k": int(runtime.tgp_top_k),
+        "method_function": getattr(method, "__func__", method),
+        "method_owner": getattr(method, "__self__", None),
+        "instance_override": "goal_predictor" in vars(mgp),
+        "instance_value": vars(mgp).get("goal_predictor"),
+        "decoder_hooks": tuple((key, id(hook)) for key, hook in mgp.sbert_decoder._forward_hooks.items()),
+    }
+
+
+def check_sampling_restored(before, runtime):
+    after = sampling_state(runtime)
+    for name in ("k_values", "d_sample", "top_k", "instance_override", "decoder_hooks"):
+        if before[name] != after[name]:
+            raise RuntimeError(f"goal candidate wrapper changed persistent sampling state: {name}")
+    for name in ("method_function", "method_owner", "instance_value"):
+        if before[name] is not after[name]:
+            raise RuntimeError(f"goal candidate wrapper did not restore {name}")
+
+
+def check_goal_sampling(diagnostics):
+    sampling = diagnostics.get("goal_sampling")
+    if not isinstance(sampling, dict) or sampling.get("policy") != "preserve_safe_samples":
+        raise RuntimeError("checkpoint smoke did not exercise preserve_safe_samples goal sampling")
+    names = ("raw_count", "original_count", "repaired_count", "original_safe_count",
+             "output_safe_count", "raw_safe_count")
+    for name in names:
+        if type(sampling.get(name)) is not int or sampling[name] < 0:
+            raise RuntimeError(f"goal sampling diagnostic {name} is missing or invalid")
+    raw, original = sampling["raw_count"], sampling["original_count"]
+    repaired = sampling["repaired_count"]
+    original_safe, output_safe = sampling["original_safe_count"], sampling["output_safe_count"]
+    raw_safe = sampling["raw_safe_count"]
+    if (raw, original) != (40, 20):
+        raise RuntimeError(f"social005 smoke requires 40 raw samples and 20 representatives; got {raw}/{original}")
+    if original_safe > original or output_safe > original or raw_safe > raw:
+        raise RuntimeError("goal sampling safe counts exceed their candidate counts")
+    if output_safe < original_safe or output_safe != original_safe + repaired:
+        raise RuntimeError("goal repair lost safe representatives or reported inconsistent replacements")
+    if raw_safe > 0 and original_safe == 0 and output_safe == 0:
+        raise RuntimeError("goal repair discarded all safe raw samples when every centroid was unsafe")
+    if repaired > 0 and raw_safe == 0:
+        raise RuntimeError("goal repair reported a replacement without a safe raw sample")
+    sources = sampling.get("replacement_sources")
+    if not isinstance(sources, list) or len(sources) != repaired:
+        raise RuntimeError("goal sampling replacement_sources does not match repaired_count")
+    slots = set()
+    for source in sources:
+        if not isinstance(source, dict):
+            raise RuntimeError("goal sampling replacement source must identify a slot and raw_index")
+        slot, raw_index = source.get("slot"), source.get("raw_index")
+        if (type(slot) is not int or type(raw_index) is not int
+                or not 0 <= slot < original or not 0 <= raw_index < raw or slot in slots):
+            raise RuntimeError("goal sampling replacement indices are invalid or duplicate a slot")
+        slots.add(slot)
+    return sampling
 
 
 def check_default_heading_selector():
@@ -80,8 +157,15 @@ def main() -> None:
         guidance_radius=8.0,
         tgp_top_k=5,
         footprint_radius=0.50,
+        goal_candidate_policy="preserve_safe_samples",
         logger=logger,
     )
+    before_sampling = sampling_state(runtime)
+    if before_sampling["k_values"] != (20, 20, 20):
+        raise RuntimeError(f"social005 checkpoint smoke expects unchanged k_sample=20: {before_sampling['k_values']}")
+    if (before_sampling["d_sample"], before_sampling["top_k"]) != (40, 5):
+        raise RuntimeError("social005 checkpoint smoke expects d_sample=40 and tgp_top_k=5")
+    before_state_sha = model_state_sha256(runtime.model, runtime.torch)
     candidates = runtime.predict_candidates(
         robot_history=robot_history,
         robot_yaw=0.0,
@@ -91,7 +175,11 @@ def main() -> None:
         heading_override_rad=heading.theta_rad,
         heading_source=heading.source,
     )
+    check_sampling_restored(before_sampling, runtime)
+    if model_state_sha256(runtime.model, runtime.torch) != before_state_sha:
+        raise RuntimeError("checkpoint parameters or buffers changed during scoped goal repair")
     diagnostics = runtime.last_input_diagnostics
+    goal_sampling = check_goal_sampling(diagnostics)
     if not diagnostics.get("heading_override_used") or diagnostics.get("heading_source") != heading.source:
         raise RuntimeError("runtime smoke did not exercise the motion_guarded heading override")
     valid_count = sum(
@@ -106,7 +194,11 @@ def main() -> None:
         )
     print(
         "REAL JACKAL MODEL RUNTIME SMOKE: PASS "
-        f"candidates={len(candidates)} valid={valid_count}"
+        f"candidates={len(candidates)} valid={valid_count} "
+        f"goal_policy={goal_sampling['policy']} raw={goal_sampling['raw_count']} "
+        f"representatives={goal_sampling['original_count']} repaired={goal_sampling['repaired_count']} "
+        f"safe={goal_sampling['original_safe_count']}->{goal_sampling['output_safe_count']} "
+        f"model_state_sha256={before_state_sha}"
     )
 
 

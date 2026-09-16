@@ -186,6 +186,152 @@ def summarize_phase_timing(rows, quality):
     }
 
 
+def summarize_goal_sampling(rows, quality):
+    """Count available prediction metadata within each policy, never across it."""
+    keys = ("raw_count", "original_count", "repaired_count", "original_safe_count",
+            "output_safe_count", "raw_safe_count")
+    prefix = "model_input.goal_sampling"
+    policies = {}
+    predictions = unavailable = invalid = 0
+    for line, record in rows:
+        if not isinstance(record, dict) or record.get("event") != "prediction":
+            continue
+        predictions += 1
+        model_input = record.get("model_input")
+        if (record.get("model_output_collected") is False or not isinstance(model_input, dict)
+                or "goal_sampling" not in model_input):
+            unavailable += 1
+            continue
+        metadata = model_input["goal_sampling"]
+        if not isinstance(metadata, dict) or not isinstance(metadata.get("policy"), str) or not metadata["policy"]:
+            quality.issue(line, "null_or_invalid", prefix + ".policy")
+            invalid += 1
+            continue
+        policy = metadata["policy"]
+        group = policies.setdefault(policy, {
+            "metadata_predictions": 0, "invalid_metadata_predictions": 0,
+            "incomplete_predictions": 0, "comparable_predictions": 0,
+            "metrics": Counter(), "field_samples": Counter(), "field_totals": Counter(),
+            "missing_fields": Counter(),
+            "rejections": {stage: {"prediction_samples": 0, "candidate_samples": 0,
+                                    "totals": Counter()} for stage in ("raw", "original")},
+        })
+        group["metadata_predictions"] += 1
+        values, bad = {}, False
+        for key in (*keys, "output_count"):
+            if key not in metadata:
+                if key in keys:
+                    group["missing_fields"][key] += 1
+                continue
+            value = metadata[key]
+            if type(value) is not int or value < 0:
+                quality.issue(line, "null_or_invalid", prefix + "." + key)
+                bad = True
+            else:
+                values[key] = value
+
+        def inconsistent(condition, label):
+            nonlocal bad
+            if condition:
+                quality.issue(line, "inconsistent", prefix + "." + label)
+                bad = True
+
+        for safe, count in (("raw_safe_count", "raw_count"),
+                            ("original_safe_count", "original_count"),
+                            ("output_safe_count", "original_count"),
+                            ("output_safe_count", "output_count"),
+                            ("repaired_count", "original_count")):
+            inconsistent(safe in values and count in values and values[safe] > values[count], safe)
+        if policy == "preserve_safe_samples":
+            if all(key in values for key in ("original_safe_count", "repaired_count", "output_safe_count")):
+                inconsistent(values["output_safe_count"] != values["original_safe_count"] + values["repaired_count"],
+                             "safe_count_repair_balance")
+            if "output_count" in values and "original_count" in values:
+                inconsistent(values["output_count"] != values["original_count"], "output_count")
+            if "raw_safe_count" in values and "repaired_count" in values:
+                inconsistent(values["raw_safe_count"] == 0 and values["repaired_count"] > 0, "raw_safe_count")
+
+        rejections = {}
+        for stage in ("raw", "original"):
+            if stage not in metadata:
+                continue
+            details = metadata[stage]
+            if not isinstance(details, dict):
+                quality.issue(line, "null_or_invalid", prefix + "." + stage)
+                bad = True
+                continue
+            if "rejection_counts" not in details:
+                continue
+            counts = details["rejection_counts"]
+            label = prefix + "." + stage + ".rejection_counts"
+            if not isinstance(counts, dict):
+                quality.issue(line, "null_or_invalid", label)
+                bad = True
+                continue
+            for reason, count in counts.items():
+                if not isinstance(reason, str) or not reason or type(count) is not int or count < 0:
+                    quality.issue(line, "null_or_invalid", label)
+                    bad = True
+                elif stage + "_count" in values:
+                    limit = values[stage + "_count"] - values.get(stage + "_safe_count", 0)
+                    inconsistent(count > limit, stage + ".rejection_counts." + reason)
+            rejections[stage] = counts
+        if bad:
+            group["invalid_metadata_predictions"] += 1
+            invalid += 1
+            continue
+        for key in keys:
+            if key in values:
+                group["field_samples"][key] += 1
+                group["field_totals"][key] += values[key]
+        if all(key in values for key in keys):
+            group["comparable_predictions"] += 1
+            group["metrics"]["zero_original_safe"] += int(values["original_safe_count"] == 0)
+            group["metrics"]["zero_output_safe"] += int(values["output_safe_count"] == 0)
+            group["metrics"]["recovered_zero_to_positive"] += int(
+                values["original_safe_count"] == 0 and values["output_safe_count"] > 0)
+            group["metrics"]["total_repaired_slots"] += values["repaired_count"]
+        else:
+            group["incomplete_predictions"] += 1
+        for stage, counts in rejections.items():
+            if stage + "_count" not in values:
+                continue  # No denominator: do not assume zero or count this sample.
+            aggregate = group["rejections"][stage]
+            aggregate["prediction_samples"] += 1
+            aggregate["candidate_samples"] += values[stage + "_count"]
+            aggregate["totals"].update(counts)
+
+    by_policy = {}
+    for policy, group in sorted(policies.items()):
+        by_policy[policy] = {
+            key: group[key] for key in ("metadata_predictions", "invalid_metadata_predictions",
+                                       "incomplete_predictions", "comparable_predictions")}
+        by_policy[policy].update({
+            key: group["metrics"][key] if group["comparable_predictions"] else None
+            for key in ("zero_original_safe", "zero_output_safe", "recovered_zero_to_positive", "total_repaired_slots")})
+        by_policy[policy]["fields"] = {
+            key: {"prediction_samples": group["field_samples"][key],
+                  "total": group["field_totals"][key] if group["field_samples"][key] else None}
+            for key in keys}
+        by_policy[policy]["missing_fields"] = dict(sorted(group["missing_fields"].items()))
+        by_policy[policy]["rejections"] = {
+            stage: {"prediction_samples": value["prediction_samples"],
+                    "candidate_samples": value["candidate_samples"] if value["prediction_samples"] else None,
+                    "reason_totals": dict(sorted(value["totals"].items())) if value["prediction_samples"] else None}
+            for stage, value in group["rejections"].items()}
+    return {
+        "prediction_records": predictions, "metadata_unavailable_predictions": unavailable,
+        "invalid_metadata_predictions": invalid, "by_policy": by_policy,
+        "interpretation": (
+            "Only prediction records count; metrics require complete, consistent count fields. "
+            "Missing legacy metadata is unavailable, not zero. Policies are kept separate. "
+            "Rejection totals count candidate reasons, which can overlap on one candidate; "
+            "they are not stop events or unique rejected candidates. Field/rejection sample counts "
+            "show coverage. These descriptive counts do not prove performance improvement or safety."
+        ),
+    }
+
+
 def summarize_bridge(rows, quality):
     times, reversals, duplicates = timestamps(rows, "stamp_ns", 1e-9, quality)
     counts, reasons, candidate_counts, candidate_reasons = Counter(), Counter(), Counter(), Counter()
@@ -282,6 +428,7 @@ def summarize_bridge(rows, quality):
         "consecutive_actual_heading_change": None if reversals else magnitude_stats(steps),
         "time_order_valid": not reversals, "duplicate_timestamps": duplicates,
         "timing": summarize_phase_timing(rows, quality),
+        "goal_sampling": summarize_goal_sampling(rows, quality),
     }
 
 

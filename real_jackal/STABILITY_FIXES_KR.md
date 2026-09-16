@@ -13,6 +13,9 @@ clone은 소스를 받는 단계이며, 아래 overlay 이미지 빌드와 새 �
 
 ## 변경 범위와 검증의 의미
 
+- 안전했던 MGP 대표점은 유지하고, 탈락한 자리만 안전한 원래 표본으로 보충한다.
+  모델·K-means·가중치를 유지하며 [MGP 보충 설명](MGP_CANDIDATE_FIX_KR.md)의
+  원인별 진단을 추가한다. 이전 `6ecc8f3`에는 없는 변경이다.
 - 기본 `motion_guarded` 모드는 이동 방향을 신뢰할 수 있을 때 학습과 같은 마지막 이동
   선분의 heading을 사용하고, 정지·저속 잡음 구간에서는 odometry yaw를 사용한다.
 - 추종점은 경로 선분을 따라 선택하고, 매번 안전 검사를 통과한 후보 사이의 연속성을
@@ -142,6 +145,8 @@ bash real_jackal/docker/build_stability_overlay.bash
 빌드는 ROS 노드, 카메라/LiDAR, 경로 추종, arm을 실행하지 않는다. 기본 `motion_guarded`의
 mm 단위 위치 잡음→yaw fallback과 0.2 m/s 이동→마지막 선분 heading을 검사하고,
 CPU에서 실제 기존 checkpoint를 읽어 선택한 heading을 적용한 합성 입력 추론을 1회 수행한다.
+이때 MGP 원래 표본 보존 기능, 안전 후보 수·보충 출처, hook·메서드 복원과
+추론 전후 모델 parameter/buffer 해시 동일성도 검사한다.
 
 개발 PC에서는 Docker/ROS 이미지 빌드와 실차 실행을 확인하지 못했다. 연구실에서
 위 빌드의 import/manifest/모델 추론 검사가 성공하는지 확인해야 한다.
@@ -291,6 +296,7 @@ bash /root/jackal_runtime/scripts/capture_stability_state.bash
 | 항목 | 이번 기본값 |
 | --- | --- |
 | `model_heading_mode` | `motion_guarded` |
+| `goal_candidate_policy` | `preserve_safe_samples` (안전한 원래 MGP 표본 보충) |
 | `inference_max_age_sec` | `1.20` (추론 결과 최대 나이; 기존 센서 timeout과 별개) |
 | `candidate_selection_mode` | `continuous` |
 | `candidate_progress_mode` | `route` (전역 경로 기준 진행량) |
