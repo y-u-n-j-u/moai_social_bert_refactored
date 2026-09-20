@@ -4,6 +4,7 @@ from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -17,6 +18,9 @@ def generate_launch_description():
     require_global_path = LaunchConfiguration("require_global_path")
     launch_rviz = LaunchConfiguration("launch_rviz")
     rviz_config = LaunchConfiguration("rviz_config")
+    route_progress_ambiguity_distance_m = LaunchConfiguration(
+        "route_progress_ambiguity_distance_m"
+    )
 
     bridge = Node(
         package="moai_jackal_spubert",
@@ -28,6 +32,9 @@ def generate_launch_description():
             {
                 "use_cuda": use_cuda,
                 "require_global_path": require_global_path,
+                "route_progress_ambiguity_distance_m": ParameterValue(
+                    route_progress_ambiguity_distance_m, value_type=float
+                ),
             },
         ],
     )
@@ -55,6 +62,9 @@ def generate_launch_description():
             DeclareLaunchArgument("require_global_path", default_value="true"),
             DeclareLaunchArgument("launch_rviz", default_value="false"),
             DeclareLaunchArgument("rviz_config", default_value=default_rviz_config),
+            DeclareLaunchArgument(
+                "route_progress_ambiguity_distance_m", default_value="-1.0"
+            ),
             bridge,
             tracker,
             rviz,
