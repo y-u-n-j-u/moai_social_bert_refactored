@@ -158,10 +158,26 @@ class RealJackalSpubertBridgeNode(Node):
         self.route_progress_max_distance = float(
             self.declare_parameter("route_progress_max_distance", 1.50).value
         )
+        # RouteProgressReference's ambiguity_distance_m defaults to half the
+        # map resolution (e.g. 0.025m on a 0.05m/px map) -- sized for
+        # millimeter-level localization noise. Real AMCL on this platform
+        # measured 0.10-0.35m position std dev even after a converging
+        # nudge, which is 5-15x that band, so ordinary AMCL jitter near a
+        # corner can flip which route branch a candidate projects onto and
+        # spuriously raise all_candidates_rejected:ambiguous_progress_route.
+        # -1 (default) keeps the original resolution-derived value; set this
+        # explicitly (e.g. close to your measured AMCL std dev, ~0.2-0.35m
+        # here) to widen the band. Trade-off: too large risks conflating two
+        # genuinely distinct route branches (e.g. parallel corridors) as one.
+        self.route_progress_ambiguity_distance_m = float(
+            self.declare_parameter("route_progress_ambiguity_distance_m", -1.0).value
+        )
         if self.candidate_progress_mode not in {"route", "final_goal"}:
             raise ValueError("candidate_progress_mode must be route or final_goal")
         if not math.isfinite(self.route_progress_max_distance) or self.route_progress_max_distance <= 0:
             raise ValueError("route_progress_max_distance must be positive and finite")
+        if not math.isfinite(self.route_progress_ambiguity_distance_m):
+            raise ValueError("route_progress_ambiguity_distance_m must be finite")
         self.goal_tolerance = float(self.declare_parameter("goal_tolerance", 0.50).value)
         self.odom_timeout = float(self.declare_parameter("odom_timeout_sec", 0.60).value)
         self.scan_timeout = float(self.declare_parameter("scan_timeout_sec", 0.60).value)
@@ -217,6 +233,18 @@ class RealJackalSpubertBridgeNode(Node):
         self._route_message: Optional[Path] = None
         self._route_pending = False
         self._last_route_request_s = -math.inf
+        # Cache of the last map->target_frame transform of _route_message,
+        # keyed by (id(message), target_frame). Without this, _route_in_frame
+        # re-samples the live map->odom correction on every control cycle
+        # (tens of Hz) rather than once per new route (~every 2s, on Nav2
+        # refresh) -- the robot's own pose comes from raw /odom (smooth), so
+        # a route that shifts with every small AMCL correction looks like
+        # the path itself is jumping around relative to a stationary robot.
+        # Re-deriving this only when the route message actually changes
+        # keeps it consistent between refreshes; odom drift over that ~2s
+        # window is negligible (that's the point of using odom at all).
+        self._route_frame_cache_key: Optional[tuple] = None
+        self._route_frame_cache: Optional[list] = None
         self._last_predict_s = -math.inf
         self._map_generation = 0
         self._pending_inference = None
@@ -869,10 +897,14 @@ class RealJackalSpubertBridgeNode(Node):
                     return
                 progress_route = [(robot_x, robot_y), goal_xy]
             try:
+                if self.route_progress_ambiguity_distance_m >= 0.0:
+                    ambiguity_distance_m = self.route_progress_ambiguity_distance_m
+                else:
+                    ambiguity_distance_m = max(self.map_provider.resolution * 0.5, 0.02)
                 route_reference = RouteProgressReference(
                     progress_route, (robot_x, robot_y),
                     max_distance_m=self.route_progress_max_distance,
-                    ambiguity_distance_m=max(self.map_provider.resolution * 0.5, 0.02),
+                    ambiguity_distance_m=ambiguity_distance_m,
                 )
                 if math.dist(progress_route[-1], goal_xy) > self.goal_tolerance:
                     raise ValueError("progress_route_goal_mismatch")
@@ -1100,6 +1132,9 @@ class RealJackalSpubertBridgeNode(Node):
     def _route_in_frame(self, target_frame: str):
         if self._route_message is None or self._route_generation != self._goal_generation:
             return None
+        cache_key = (id(self._route_message), target_frame)
+        if self._route_frame_cache_key == cache_key:
+            return self._route_frame_cache
         source_frame = self._route_message.header.frame_id or target_frame
         points = []
         for pose in self._route_message.poses:
@@ -1111,6 +1146,8 @@ class RealJackalSpubertBridgeNode(Node):
             points.append(point)
         transformed = self._path_message(target_frame, points)
         self.global_path_pub.publish(transformed)
+        self._route_frame_cache_key = cache_key
+        self._route_frame_cache = points
         return points
 
     def _pose_in_frame(self, pose: PoseStamped, target_frame: str):
