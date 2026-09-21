@@ -21,6 +21,7 @@ def generate_launch_description():
     route_progress_ambiguity_distance_m = LaunchConfiguration(
         "route_progress_ambiguity_distance_m"
     )
+    tgp_top_k = LaunchConfiguration("tgp_top_k")
 
     bridge = Node(
         package="moai_jackal_spubert",
@@ -35,6 +36,7 @@ def generate_launch_description():
                 "route_progress_ambiguity_distance_m": ParameterValue(
                     route_progress_ambiguity_distance_m, value_type=float
                 ),
+                "tgp_top_k": ParameterValue(tgp_top_k, value_type=int),
             },
         ],
     )
@@ -65,6 +67,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "route_progress_ambiguity_distance_m", default_value="-1.0"
             ),
+            DeclareLaunchArgument("tgp_top_k", default_value="5"),
             bridge,
             tracker,
             rviz,
