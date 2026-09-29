@@ -3,6 +3,9 @@
 이 문서는 `/home/moai/capstone_navi`의 최신 guided SPU-BERT 모델과
 MID-360/RealSense 센서 스택을 실제 Jackal에 연결하는 명령을 정리한다.
 
+추종점 수정의 오프라인 검증과 새 진단 토픽은
+[추종점·진단 검증 안내](TRACKER_DIAGNOSTICS_KR.md)를 참고한다.
+
 전체 흐름은 다음과 같다.
 
 ```text

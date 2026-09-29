@@ -141,6 +141,30 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /spu_bert/predicted_path
       Value: true
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: Tracker Lookahead (orange)
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /spu_bert/tracker_lookahead
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Collision Check Centers (red-magenta)
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /spu_bert/collision_markers
+      Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
       Name: Adaptive GP and MGP Candidates

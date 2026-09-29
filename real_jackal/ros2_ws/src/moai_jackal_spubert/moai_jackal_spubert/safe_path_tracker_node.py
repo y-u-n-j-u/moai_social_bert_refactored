@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import asdict
 from typing import Optional
 
 import rclpy
@@ -14,15 +15,17 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
 from std_srvs.srv import SetBool
+from visualization_msgs.msg import Marker
 
 from .navigation_core import (
     clamp,
     finite_ranges_in_sector,
-    lookahead_point,
+    PathProgressTracker,
     normalize_angle,
     same_frame_id,
     yaw_from_quaternion,
 )
+from .tracker_diagnostics import StopEpisode, diagnostic_json
 
 
 class SafePathTrackerNode(Node):
@@ -41,6 +44,12 @@ class SafePathTrackerNode(Node):
             "emergency_stop_topic", "/spu_bert/emergency_stop"
         )
         self.status_topic = self._string_param("status_topic", "/spu_bert/tracker_status")
+        self.diagnostics_topic = self._string_param(
+            "diagnostics_topic", "/spu_bert/tracker_diagnostics"
+        )
+        self.lookahead_marker_topic = self._string_param(
+            "lookahead_marker_topic", "/spu_bert/tracker_lookahead"
+        )
         self.enable_service = self._string_param("enable_service", "/spu_bert/enable_motion")
         self.base_frame = self._string_param("base_frame", "base_link")
 
@@ -98,9 +107,17 @@ class SafePathTrackerNode(Node):
         self._emergency_latched = False
         self._last_command = Twist()
         self._last_status = ""
+        self._progress_tracker = PathProgressTracker()
+        self._path_receipt_id = 0
+        self._path_received_s = -math.inf
+        self._path_source_stamp_ns = 0
+        self._tracking_debug = None
+        self._stop_episode = StopEpisode()
 
         self.cmd_pub = self.create_publisher(Twist, self.cmd_vel_topic, 10)
         self.status_pub = self.create_publisher(String, self.status_topic, 10)
+        self.diagnostics_pub = self.create_publisher(String, self.diagnostics_topic, 10)
+        self.lookahead_pub = self.create_publisher(Marker, self.lookahead_marker_topic, 10)
         self.create_subscription(Odometry, self.odom_topic, self._on_odom, 20)
         self.create_subscription(Path, self.path_topic, self._on_path, 10)
         self.create_subscription(PoseStamped, self.goal_topic, self._on_goal, 10)
@@ -134,10 +151,21 @@ class SafePathTrackerNode(Node):
         self._odom_stamp_s = self._now_s()
 
     def _on_path(self, msg: Path) -> None:
+        self._path_receipt_id += 1
+        self._path_received_s = self._now_s()
+        self._path_source_stamp_ns = self._header_stamp_ns(msg)
+        points = [(float(item.pose.position.x), float(item.pose.position.y)) for item in msg.poses]
+        self._progress_tracker.set_path(points, msg.header.frame_id)
+        self._tracking_debug = None
         if len(msg.poses) < 2:
             self._path = None
             self._path_stamp_s = -math.inf
             self._stop("planner_hold")
+            return
+        if not all(math.isfinite(value) for point in points for value in point):
+            self._path = None
+            self._path_stamp_s = -math.inf
+            self._stop("invalid_path_coordinates")
             return
         self._path = msg
         self._path_stamp_s = self._now_s()
@@ -181,6 +209,7 @@ class SafePathTrackerNode(Node):
                 response.message = "Emergency stop is latched; call with data=false first to reset."
                 return response
             self.motion_enabled = True
+            self._stop_episode.finish(self._now_s())
             response.success = True
             response.message = "Motion armed. Keep the physical E-stop operator ready."
             self._status("armed_waiting_for_fresh_path")
@@ -244,6 +273,9 @@ class SafePathTrackerNode(Node):
             pose.orientation.z,
             pose.orientation.w,
         )
+        if not all(math.isfinite(value) for value in (robot_x, robot_y, robot_yaw)):
+            self._stop("invalid_robot_pose")
+            return
         goal_distance = math.hypot(
             float(self._goal.pose.position.x) - robot_x,
             float(self._goal.pose.position.y) - robot_y,
@@ -264,13 +296,16 @@ class SafePathTrackerNode(Node):
             self._stop(f"obstacle_too_close:{minimum_obstacle:.2f}m")
             return
 
-        points = [
-            (float(item.pose.position.x), float(item.pose.position.y))
-            for item in self._path.poses
-        ]
-        target = lookahead_point(points, (robot_x, robot_y), self.lookahead_distance)
-        if target is None:
+        result = self._progress_tracker.update((robot_x, robot_y), self.lookahead_distance)
+        if result is None:
             self._stop("path_has_no_lookahead")
+            return
+        target = result.target
+        if (result.progress_m >= result.path_length_m - 1e-6
+                or math.hypot(target[0] - robot_x, target[1] - robot_y) <= 1e-6):
+            # An exhausted short path must not command forward via atan2(0, 0),
+            # or steer backwards toward an endpoint already passed.
+            self._stop("path_endpoint_reached")
             return
         heading_error = normalize_angle(math.atan2(target[1] - robot_y, target[0] - robot_x) - robot_yaw)
         angular = clamp(
@@ -289,11 +324,19 @@ class SafePathTrackerNode(Node):
                 0.0,
                 1.0,
             )
+        self._tracking_debug = {
+            **asdict(result),
+            "heading_error_rad": heading_error,
+            "goal_distance_m": goal_distance,
+            "front_obstacle_distance_m": minimum_obstacle,
+        }
         self._publish_command(linear, angular)
-        self._status(
+        status = (
             f"tracking v={linear:.2f} w={angular:.2f} "
             f"obstacle={minimum_obstacle:.2f} human={self._minimum_human_distance:.2f}"
         )
+        self._status(status)
+        self._emit_diagnostics(status, linear, angular, stopped=False)
 
     def _publish_command(self, linear: float, angular: float) -> None:
         dt = 1.0 / max(self.control_rate, 1.0)
@@ -314,6 +357,96 @@ class SafePathTrackerNode(Node):
         self.cmd_pub.publish(command)
         self._last_command = command
         self._status(reason)
+        self._tracking_debug = None
+        self._emit_diagnostics(reason, 0.0, 0.0, stopped=True)
+
+    @staticmethod
+    def _header_stamp_ns(message) -> int:
+        if message is None:
+            return 0
+        return int(message.header.stamp.sec) * 1_000_000_000 + int(message.header.stamp.nanosec)
+
+    def _emit_diagnostics(self, status: str, linear: float, angular: float, *, stopped: bool) -> None:
+        # Motion has already been published. Diagnostic failures must not skip
+        # the safety decision or turn this optional observer into a control path.
+        try:
+            now = self._now_s()
+
+            def input_age(message, received_s):
+                stamp = self._header_stamp_ns(message)
+                return {
+                    "stamp_ns": stamp or None,
+                    "source_age_s": now - stamp * 1e-9 if stamp else None,
+                    "received_age_s": now - received_s,
+                }
+
+            odom = self._odom
+            robot = None
+            twist = None
+            if odom is not None:
+                pose = odom.pose.pose
+                q = pose.orientation
+                robot = {
+                    "frame_id": odom.header.frame_id,
+                    "x": pose.position.x, "y": pose.position.y,
+                    "yaw_rad": yaw_from_quaternion(q.x, q.y, q.z, q.w),
+                }
+                twist = {"v": odom.twist.twist.linear.x, "w": odom.twist.twist.angular.z}
+            episode = self._stop_episode.observe(status, now, stopped)
+            record = {
+                "schema_version": 1,
+                "event": "stop" if stopped else "tracking",
+                "stamp_ns": int(self.get_clock().now().nanoseconds),
+                "status": status,
+                "motion_enabled": self.motion_enabled,
+                "emergency_latched": self._emergency_latched,
+                "cmd_vel_topic": self.cmd_vel_topic,
+                "path": {
+                    "geometry_id": self._progress_tracker.version,
+                    "receipt_id": self._path_receipt_id,
+                    "frame_id": self._progress_tracker.frame_id,
+                    "point_count": len(self._progress_tracker.points),
+                    "present": self._path is not None,
+                    "fresh": self._path is not None and now - self._path_stamp_s <= self.path_timeout,
+                    "stamp_ns": self._path_source_stamp_ns or None,
+                    "source_age_s": (now - self._path_source_stamp_ns * 1e-9
+                                     if self._path_source_stamp_ns else None),
+                    "received_age_s": now - self._path_received_s,
+                },
+                "robot": robot,
+                "lookahead": self._tracking_debug,
+                "target_command": {"v": linear, "w": angular},
+                "published_command": {"v": self._last_command.linear.x,
+                                      "w": self._last_command.angular.z},
+                "odom_reported_twist": twist,
+                "inputs": {
+                    "odom": input_age(self._odom, self._odom_stamp_s),
+                    "scan": input_age(self._scan, self._scan_stamp_s),
+                    "tracks_received_age_s": now - self._tracks_stamp_s,
+                },
+                "minimum_human_distance_m": self._minimum_human_distance,
+                "stop_episode": episode,
+            }
+            self.diagnostics_pub.publish(String(data=diagnostic_json(record)))
+            marker = Marker()
+            marker.header.frame_id = odom.header.frame_id if odom is not None else self.base_frame
+            marker.header.stamp = self.get_clock().now().to_msg()
+            marker.ns = "tracker_lookahead"
+            marker.id = 0
+            if stopped or self._tracking_debug is None:
+                marker.action = Marker.DELETE
+            else:
+                marker.action = Marker.ADD
+                marker.type = Marker.SPHERE
+                marker.pose.position.x, marker.pose.position.y = self._tracking_debug["target"]
+                marker.pose.position.z = 0.25
+                marker.pose.orientation.w = 1.0
+                marker.scale.x = marker.scale.y = marker.scale.z = 0.15
+                marker.color.r, marker.color.g, marker.color.b, marker.color.a = 1.0, 0.5, 0.0, 1.0
+                marker.lifetime.nanosec = 500_000_000
+            self.lookahead_pub.publish(marker)
+        except Exception as exc:
+            self.get_logger().warning(f"Tracker diagnostics unavailable: {exc}", throttle_duration_sec=5.0)
 
     def _status(self, text: str) -> None:
         if text == self._last_status:

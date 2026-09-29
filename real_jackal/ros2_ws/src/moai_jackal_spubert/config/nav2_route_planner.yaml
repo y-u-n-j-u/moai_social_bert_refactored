@@ -46,7 +46,13 @@ global_costmap:
       publish_frequency: 1.0
       global_frame: map
       robot_base_frame: base_link
-      robot_radius: 0.34
+      # Matches the bridge's hard footprint cutoff (robot_radius 0.34 +
+      # static_safety_margin 0.16 in real_jackal_social005.yaml), not just
+      # the physical robot radius. Otherwise NavFn can hand back a path that
+      # threads within 0.34-0.50m of an obstacle (inflation is a soft cost),
+      # which the bridge then rejects every cycle with no way out (09/21 log:
+      # ~167s + ~105s continuous holds at the same chokepoint).
+      robot_radius: 0.50
       resolution: 0.05
       track_unknown_space: true
       transform_tolerance: 0.50

@@ -13,6 +13,7 @@ real_jackal_spubert_bridge:
     scan_topic: /scan
     goal_topic: /goal_pose
     path_topic: /spu_bert/predicted_path
+    collision_marker_topic: /spu_bert/collision_markers
     final_goal_topic: /spu_bert/final_goal_odom
     global_path_topic: /spu_bert/global_path_odom
     compute_path_action: /compute_path_to_pose
@@ -29,6 +30,13 @@ real_jackal_spubert_bridge:
     adaptive_guidance: true
     adaptive_guidance_min_distance: 2.0
     adaptive_guidance_probe_step: 0.5
+
+    # If guidance/candidates stay rejected as blocked this long, sweep-scan
+    # in place instead of holding forever (see real_jackal_spubert_bridge_node.py).
+    stuck_hold_timeout_sec: 3.0
+    recovery_sweep_angle_rad: 1.10
+    recovery_sweep_period_sec: 2.5
+    recovery_step_m: 1.00
 
     robot_radius: 0.34
     static_safety_margin: 0.16
@@ -61,6 +69,8 @@ safe_path_tracker:
     base_frame: base_link
     emergency_stop_topic: /spu_bert/emergency_stop
     enable_service: /spu_bert/enable_motion
+    diagnostics_topic: /spu_bert/tracker_diagnostics
+    lookahead_marker_topic: /spu_bert/tracker_lookahead
 
     motion_enabled: false
     require_tracks_heartbeat: true

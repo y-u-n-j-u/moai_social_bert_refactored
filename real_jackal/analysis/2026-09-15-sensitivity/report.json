@@ -1,0 +1,5621 @@
+{
+  "synthetic_heading": [
+    {
+      "case": "below_boundary_lateral",
+      "displacement_m": 0.0009,
+      "source": "odom_yaw",
+      "heading_deg": 0.0,
+      "heading_minus_yaw_deg": 0.0
+    },
+    {
+      "case": "above_boundary_lateral",
+      "displacement_m": 0.0011,
+      "source": "last_two_positions",
+      "heading_deg": 90.0,
+      "heading_minus_yaw_deg": 90.0
+    },
+    {
+      "case": "above_boundary_backward",
+      "displacement_m": 0.0011,
+      "source": "last_two_positions",
+      "heading_deg": 180.0,
+      "heading_minus_yaw_deg": 180.0
+    },
+    {
+      "case": "above_boundary_opposite_lateral",
+      "displacement_m": 0.0011,
+      "source": "last_two_positions",
+      "heading_deg": -90.0,
+      "heading_minus_yaw_deg": -90.0
+    },
+    {
+      "case": "forward_motion",
+      "displacement_m": 0.04,
+      "source": "last_two_positions",
+      "heading_deg": 0.0,
+      "heading_minus_yaw_deg": 0.0
+    }
+  ],
+  "radius_comparison": {
+    "warning": "Collision-only sensitivity of fixed candidates, NOT safe-to-drive or full model rerun. Other rejection checks still apply.",
+    "matched_predictions": 32,
+    "skipped": {
+      "missing_or_ambiguous_map": 5
+    },
+    "totals": {
+      "0.34": {
+        "tested_candidates": 145,
+        "collision_candidates": 5,
+        "previous_collision_now_collision_free": 17
+      },
+      "0.4": {
+        "tested_candidates": 145,
+        "collision_candidates": 11,
+        "previous_collision_now_collision_free": 11
+      },
+      "0.45": {
+        "tested_candidates": 145,
+        "collision_candidates": 21,
+        "previous_collision_now_collision_free": 1
+      },
+      "0.5": {
+        "tested_candidates": 145,
+        "collision_candidates": 22,
+        "previous_collision_now_collision_free": 0
+      },
+      "0.55": {
+        "tested_candidates": 145,
+        "collision_candidates": 40,
+        "previous_collision_now_collision_free": 0
+      }
+    },
+    "predictions": [
+      {
+        "time": 1789473880.9342687,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "kinematic_jump",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 2,
+                "first_xy": [
+                  4.550137588264604,
+                  0.5068376951003251
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473881.8488123,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 27,
+                "first_xy": [
+                  1.233190737224764,
+                  -0.6394753605949002
+                ],
+                "at_current": false
+              },
+              "0.4": {
+                "count": 35,
+                "first_xy": [
+                  1.096487449366205,
+                  -0.6078518327181041
+                ],
+                "at_current": false
+              },
+              "0.45": {
+                "count": 47,
+                "first_xy": [
+                  0.8378180459591115,
+                  -0.5061402454523775
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 47,
+                "first_xy": [
+                  0.8378180459591115,
+                  -0.5061402454523775
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 53,
+                "first_xy": [
+                  0.5835715804979951,
+                  -0.41040612822517164
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 4,
+                "first_xy": [
+                  1.5756667513957565,
+                  -0.6049151470319359
+                ],
+                "at_current": false
+              },
+              "0.4": {
+                "count": 19,
+                "first_xy": [
+                  1.2285401197541614,
+                  -0.539973257952887
+                ],
+                "at_current": false
+              },
+              "0.45": {
+                "count": 27,
+                "first_xy": [
+                  1.051130190239481,
+                  -0.5039003071358388
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 32,
+                "first_xy": [
+                  1.051130190239481,
+                  -0.5039003071358388
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 46,
+                "first_xy": [
+                  0.7685719693180617,
+                  -0.4104234060319121
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 28,
+                "first_xy": [
+                  1.163063088475669,
+                  -0.7055910014494341
+                ],
+                "at_current": false
+              },
+              "0.4": {
+                "count": 42,
+                "first_xy": [
+                  0.8587332342530198,
+                  -0.6054911189378824
+                ],
+                "at_current": false
+              },
+              "0.45": {
+                "count": 47,
+                "first_xy": [
+                  0.6334959706462047,
+                  -0.49937994591906815
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 47,
+                "first_xy": [
+                  0.6334959706462047,
+                  -0.49937994591906815
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 52,
+                "first_xy": [
+                  0.4133222754828453,
+                  -0.4047274584577629
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 2,
+                "first_xy": [
+                  1.4412736295145625,
+                  -0.3035459622067536
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 10,
+                "first_xy": [
+                  1.2851603674833214,
+                  -0.5042679310594552
+                ],
+                "at_current": false
+              },
+              "0.45": {
+                "count": 12,
+                "first_xy": [
+                  1.2851603674833214,
+                  -0.5042679310594552
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 18,
+                "first_xy": [
+                  1.239125674863204,
+                  -0.49524532392560483
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 30,
+                "first_xy": [
+                  0.7761038863735708,
+                  -0.40501625082848586
+                ],
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473882.9057658,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 2,
+                "first_xy": [
+                  4.51243665884207,
+                  0.5316955903130409
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473883.9200509,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 2,
+                "first_xy": [
+                  4.4434101810713065,
+                  -0.4063337900162692
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 8,
+                "first_xy": [
+                  4.347467252979381,
+                  -0.40068111380559696
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 14,
+                "first_xy": [
+                  4.347467252979381,
+                  -0.40068111380559696
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473884.9060879,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 4,
+                "first_xy": [
+                  4.348891193780214,
+                  0.6060299025537045
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 12,
+                "first_xy": [
+                  4.348891193780214,
+                  0.6060299025537045
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 17,
+                "first_xy": [
+                  3.793528115374322,
+                  0.5065688842869147
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473885.9022748,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 1,
+                "first_xy": [
+                  3.8884070503531634,
+                  0.501684470412042
+                ],
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473886.9047616,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 7,
+                "first_xy": [
+                  3.3762676542927355,
+                  -0.5023566383981622
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 9,
+                "first_xy": [
+                  3.3762676542927355,
+                  -0.5023566383981622
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 23,
+                "first_xy": [
+                  2.714253723419243,
+                  -0.4079371544019367
+                ],
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473887.9094782,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "kinematic_jump",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473888.8875961,
+        "original_valid": false,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 13,
+                "first_xy": [
+                  2.4136678246920416,
+                  0.7209110850769233
+                ],
+                "at_current": false
+              },
+              "0.45": {
+                "count": 18,
+                "first_xy": [
+                  2.364364647147739,
+                  0.7138224848390397
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 18,
+                "first_xy": [
+                  2.364364647147739,
+                  0.7138224848390397
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 19,
+                "first_xy": [
+                  2.31870711724923,
+                  0.698144266422466
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 1,
+                "first_xy": [
+                  1.539405080524983,
+                  -0.5060986173048535
+                ],
+                "at_current": false
+              },
+              "0.45": {
+                "count": 2,
+                "first_xy": [
+                  1.3712670600960795,
+                  -0.41178888102439776
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 5,
+                "first_xy": [
+                  1.3712670600960795,
+                  -0.41178888102439776
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 9,
+                "first_xy": [
+                  1.2089049565884287,
+                  -0.3324809389473221
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "insufficient_goal_progress",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473889.905329,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 4,
+                "first_xy": [
+                  3.187204065990626,
+                  -0.5029432287182584
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 4,
+                "first_xy": [
+                  3.187204065990626,
+                  -0.5029432287182584
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 14,
+                "first_xy": [
+                  2.7147047690195376,
+                  -0.43888249616834446
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473890.9025555,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 18,
+                "first_xy": [
+                  3.3614914445748387,
+                  -0.4041712264301444
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 9,
+                "first_xy": [
+                  3.5743824863778118,
+                  -0.3987603315345448
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473891.902271,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 5,
+                "first_xy": [
+                  3.9678353786206344,
+                  -0.4996208679895483
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 9,
+                "first_xy": [
+                  3.9678353786206344,
+                  -0.4996208679895483
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 23,
+                "first_xy": [
+                  3.230294122979585,
+                  -0.4039891185383097
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473892.9032972,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 9,
+                "first_xy": [
+                  3.798283544390764,
+                  -0.5008445553499895
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 15,
+                "first_xy": [
+                  3.798283544390764,
+                  -0.5008445553499895
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 24,
+                "first_xy": [
+                  3.18666698170555,
+                  -0.4074041288134904
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 2,
+                "first_xy": [
+                  2.8433753360126426,
+                  0.6002798869029573
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 2,
+                "first_xy": [
+                  2.8433753360126426,
+                  0.6002798869029573
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 7,
+                "first_xy": [
+                  2.6277566549534925,
+                  0.5508655740670744
+                ],
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473893.9065065,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "kinematic_jump",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 2,
+                "first_xy": [
+                  4.412219463677753,
+                  -0.4198134518845081
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 6,
+                "first_xy": [
+                  4.213967548570502,
+                  -0.41700275585577085
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 13,
+                "first_xy": [
+                  3.7773222899827954,
+                  -0.3990135556772162
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473894.907193,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "kinematic_jump",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 2,
+                "first_xy": [
+                  4.433331837715974,
+                  -0.3154951296809569
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473895.8811831,
+        "original_valid": false,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 9,
+                "first_xy": [
+                  1.6298962724170896,
+                  -0.503297123796269
+                ],
+                "at_current": false
+              },
+              "0.45": {
+                "count": 10,
+                "first_xy": [
+                  1.6298962724170896,
+                  -0.503297123796269
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 15,
+                "first_xy": [
+                  1.5167083065535898,
+                  -0.41275394146831923
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 18,
+                "first_xy": [
+                  1.44124966264459,
+                  -0.3523918199163527
+                ],
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473896.862904,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473897.9041104,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473898.9271762,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 5,
+                "first_xy": [
+                  4.24836690773337,
+                  0.6362944206470282
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 16,
+                "first_xy": [
+                  4.007149122140651,
+                  0.6020748313771876
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 29,
+                "first_xy": [
+                  3.5766317182589162,
+                  0.5011139986153985
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 9,
+                "first_xy": [
+                  4.218121581563391,
+                  0.5261413015707849
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 2,
+                "first_xy": [
+                  4.422993699075401,
+                  -0.3238389868097865
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473899.8879168,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "kinematic_jump",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473900.9031477,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473901.9036198,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473902.9044793,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "kinematic_jump",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 11,
+                "first_xy": [
+                  3.715455174230346,
+                  -0.4129382069004194
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473903.843933,
+        "original_valid": false,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "insufficient_goal_progress",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "insufficient_goal_progress",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473904.8629708,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "kinematic_jump",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 4,
+                "first_xy": [
+                  4.101311984584661,
+                  0.5060719620684515
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473905.8555307,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 1,
+                "first_xy": [
+                  2.4293787974411902,
+                  -0.5047065555857406
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473906.8442285,
+        "original_valid": false,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 37,
+                "first_xy": [
+                  1.0710205774818387,
+                  -0.7152977182292868
+                ],
+                "at_current": false
+              },
+              "0.4": {
+                "count": 40,
+                "first_xy": [
+                  0.9584442163079597,
+                  -0.6235170569324409
+                ],
+                "at_current": false
+              },
+              "0.45": {
+                "count": 44,
+                "first_xy": [
+                  0.8090754646165934,
+                  -0.5005200456076552
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 44,
+                "first_xy": [
+                  0.8090754646165934,
+                  -0.5005200456076552
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 47,
+                "first_xy": [
+                  0.6975986982534231,
+                  -0.40780518991732256
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "insufficient_goal_progress",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473907.8612432,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473908.9031208,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "kinematic_jump",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 1,
+                "first_xy": [
+                  4.493630084822885,
+                  -0.29976513411493966
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473909.8961854,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 14,
+                "first_xy": [
+                  1.0388111132499815,
+                  0.5018727815120696
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 16,
+                "first_xy": [
+                  1.0117104200730678,
+                  0.5147189050234683
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 9,
+                "first_xy": [
+                  1.018516022824673,
+                  0.5088856651728171
+                ],
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473910.8595402,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 16,
+                "first_xy": [
+                  3.515574993326091,
+                  -0.4016454000854773
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 2,
+                "first_xy": [
+                  3.496480270132091,
+                  -0.50095198025984
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 2,
+                "first_xy": [
+                  3.496480270132091,
+                  -0.50095198025984
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 18,
+                "first_xy": [
+                  2.743738674300057,
+                  -0.40492545773565974
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "time": 1789473911.91837,
+        "original_valid": true,
+        "baseline_radius_m": 0.5,
+        "baseline_verified": true,
+        "candidates": [
+          {
+            "rank": 1,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 2,
+                "first_xy": [
+                  1.732666923598462,
+                  -0.5039741949443466
+                ],
+                "at_current": false
+              },
+              "0.45": {
+                "count": 13,
+                "first_xy": [
+                  1.2456856022736735,
+                  -0.45856447898703473
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 24,
+                "first_xy": [
+                  1.0218726688481714,
+                  -0.40931076185030585
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 38,
+                "first_xy": [
+                  1.0218726688481714,
+                  -0.40931076185030585
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 2,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 3,
+                "first_xy": [
+                  1.704554204126135,
+                  -0.50279602955011
+                ],
+                "at_current": false
+              },
+              "0.45": {
+                "count": 11,
+                "first_xy": [
+                  1.2432377175422267,
+                  -0.4704554997585527
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 22,
+                "first_xy": [
+                  1.0122047996403691,
+                  -0.4200161392729626
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 28,
+                "first_xy": [
+                  0.9660329741504337,
+                  -0.4079759162786975
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 3,
+            "original_reason": "valid",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.55": {
+                "count": 6,
+                "first_xy": [
+                  1.2428252357222822,
+                  -0.3487167191523812
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 4,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 2,
+                "first_xy": [
+                  1.7347434310627614,
+                  -0.6012854126743592
+                ],
+                "at_current": false
+              },
+              "0.4": {
+                "count": 21,
+                "first_xy": [
+                  1.0256339360357907,
+                  -0.5268280446708828
+                ],
+                "at_current": false
+              },
+              "0.45": {
+                "count": 26,
+                "first_xy": [
+                  0.9838654511316568,
+                  -0.5120059252049332
+                ],
+                "at_current": false
+              },
+              "0.5": {
+                "count": 30,
+                "first_xy": [
+                  0.9838654511316568,
+                  -0.5120059252049332
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 39,
+                "first_xy": [
+                  0.6914860568027198,
+                  -0.4082510889432851
+                ],
+                "at_current": false
+              }
+            }
+          },
+          {
+            "rank": 5,
+            "original_reason": "robot_footprint_collision",
+            "by_radius": {
+              "0.34": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.4": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.45": {
+                "count": 0,
+                "first_xy": null,
+                "at_current": false
+              },
+              "0.5": {
+                "count": 1,
+                "first_xy": [
+                  1.6254695009527511,
+                  -0.4007364072244062
+                ],
+                "at_current": false
+              },
+              "0.55": {
+                "count": 7,
+                "first_xy": [
+                  1.2348812411671908,
+                  -0.3733349818155293
+                ],
+                "at_current": false
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "captured_odom_proxy": {
+    "warning": "0.4s resampling proxy; not exact recorded model theta and not proof of inference causality.",
+    "pairs": 70,
+    "position_heading_pairs": 25,
+    "max_abs_heading_minus_yaw_deg": 175.56854273767578,
+    "samples": [
+      {
+        "time": 1789473881.252279,
+        "displacement_m": 0.0005152073235304026,
+        "source": "odom_yaw",
+        "heading_deg": -0.027223439471456744,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473881.65457,
+        "displacement_m": 0.000306688507968607,
+        "source": "odom_yaw",
+        "heading_deg": -0.045519240872678925,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473882.142419,
+        "displacement_m": 0.00026209547677675426,
+        "source": "odom_yaw",
+        "heading_deg": -0.03932133338093184,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473882.6359942,
+        "displacement_m": 0.0002832979318838519,
+        "source": "odom_yaw",
+        "heading_deg": -0.017534343458681642,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473883.1468291,
+        "displacement_m": 0.0002460760782498703,
+        "source": "odom_yaw",
+        "heading_deg": -0.03754871083130681,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473883.571868,
+        "displacement_m": 0.0009989552451529732,
+        "source": "odom_yaw",
+        "heading_deg": -0.05143411071079659,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473884.0282483,
+        "displacement_m": 0.0010126333896214182,
+        "source": "last_two_positions",
+        "heading_deg": 133.400452086317,
+        "heading_minus_yaw_deg": 133.42198088205524
+      },
+      {
+        "time": 1789473884.5450313,
+        "displacement_m": 0.00016756687773649483,
+        "source": "odom_yaw",
+        "heading_deg": -0.015189847705812724,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473884.9546149,
+        "displacement_m": 0.0004057503986595728,
+        "source": "odom_yaw",
+        "heading_deg": -0.01675108441948298,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473885.3701346,
+        "displacement_m": 4.0022506377938154e-05,
+        "source": "odom_yaw",
+        "heading_deg": 0.013879308855251904,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473885.8501503,
+        "displacement_m": 0.0008842522213940652,
+        "source": "odom_yaw",
+        "heading_deg": 0.0067507326721020135,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473886.2518106,
+        "displacement_m": 0.00036763171101764964,
+        "source": "odom_yaw",
+        "heading_deg": -0.03419010946558916,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473886.7477102,
+        "displacement_m": 0.0012250068710631097,
+        "source": "last_two_positions",
+        "heading_deg": 105.51216720942362,
+        "heading_minus_yaw_deg": 105.5804089501334
+      },
+      {
+        "time": 1789473887.15396,
+        "displacement_m": 0.0010626241441578153,
+        "source": "last_two_positions",
+        "heading_deg": -79.93338168160984,
+        "heading_minus_yaw_deg": -79.87885111192264
+      },
+      {
+        "time": 1789473887.597873,
+        "displacement_m": 0.00027613538844561383,
+        "source": "odom_yaw",
+        "heading_deg": -0.046036515869100514,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473888.0490518,
+        "displacement_m": 0.0005794331050494927,
+        "source": "odom_yaw",
+        "heading_deg": -0.045204422212237264,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473888.546563,
+        "displacement_m": 0.0004497769927923059,
+        "source": "odom_yaw",
+        "heading_deg": -0.017299054990162384,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473888.9513018,
+        "displacement_m": 0.0012104787605917147,
+        "source": "last_two_positions",
+        "heading_deg": -21.083866847430468,
+        "heading_minus_yaw_deg": -21.07610406566017
+      },
+      {
+        "time": 1789473889.3755202,
+        "displacement_m": 0.0014901245230718057,
+        "source": "last_two_positions",
+        "heading_deg": 119.30020193018804,
+        "heading_minus_yaw_deg": 119.37480799817315
+      },
+      {
+        "time": 1789473889.7876322,
+        "displacement_m": 0.0008842142434073775,
+        "source": "odom_yaw",
+        "heading_deg": -0.037720013415412465,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473890.2269075,
+        "displacement_m": 0.0026012572735759007,
+        "source": "last_two_positions",
+        "heading_deg": -127.88797584098488,
+        "heading_minus_yaw_deg": -127.89864497004184
+      },
+      {
+        "time": 1789473890.6360846,
+        "displacement_m": 0.002219537513588185,
+        "source": "last_two_positions",
+        "heading_deg": 35.70481860852869,
+        "heading_minus_yaw_deg": 35.74158780417021
+      },
+      {
+        "time": 1789473891.0486934,
+        "displacement_m": 0.0011619234847124915,
+        "source": "last_two_positions",
+        "heading_deg": -82.70311198356106,
+        "heading_minus_yaw_deg": -82.68017403767121
+      },
+      {
+        "time": 1789473891.4911585,
+        "displacement_m": 0.0010575296087473331,
+        "source": "last_two_positions",
+        "heading_deg": 126.88117151202935,
+        "heading_minus_yaw_deg": 126.94501696433299
+      },
+      {
+        "time": 1789473892.0257952,
+        "displacement_m": 0.0005984326182199049,
+        "source": "odom_yaw",
+        "heading_deg": -0.030690138386856677,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473892.4677198,
+        "displacement_m": 0.000931056582157198,
+        "source": "odom_yaw",
+        "heading_deg": -0.0664132419173786,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473892.8863845,
+        "displacement_m": 0.0005648857672609998,
+        "source": "odom_yaw",
+        "heading_deg": -0.04676417181383437,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473893.4381428,
+        "displacement_m": 0.0005942311445999408,
+        "source": "odom_yaw",
+        "heading_deg": -0.010736254077662854,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473893.9568026,
+        "displacement_m": 0.000920988262976646,
+        "source": "odom_yaw",
+        "heading_deg": -0.010679843822263647,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473894.4604926,
+        "displacement_m": 0.0008080918982066208,
+        "source": "odom_yaw",
+        "heading_deg": -0.0169496576801023,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473894.8927271,
+        "displacement_m": 0.0013420088427467914,
+        "source": "last_two_positions",
+        "heading_deg": -11.729664063771562,
+        "heading_minus_yaw_deg": -11.777227842881864
+      },
+      {
+        "time": 1789473895.3417487,
+        "displacement_m": 0.00014742432680950484,
+        "source": "odom_yaw",
+        "heading_deg": -0.03323254472211203,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473895.74885,
+        "displacement_m": 0.001337636640262182,
+        "source": "last_two_positions",
+        "heading_deg": 141.5293708574918,
+        "heading_minus_yaw_deg": 141.569669630198
+      },
+      {
+        "time": 1789473896.162755,
+        "displacement_m": 0.0008242523994237789,
+        "source": "odom_yaw",
+        "heading_deg": -0.07079149725287885,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473896.652992,
+        "displacement_m": 0.000336463842847164,
+        "source": "odom_yaw",
+        "heading_deg": -0.060331424692731325,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473897.2225006,
+        "displacement_m": 0.0004564033140551825,
+        "source": "odom_yaw",
+        "heading_deg": -0.06026634312149055,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473897.6558077,
+        "displacement_m": 0.0006083158220460091,
+        "source": "odom_yaw",
+        "heading_deg": -0.09107999626880167,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473898.0575652,
+        "displacement_m": 0.0012221961479312981,
+        "source": "last_two_positions",
+        "heading_deg": -67.69134477554394,
+        "heading_minus_yaw_deg": -67.63312012012459
+      },
+      {
+        "time": 1789473898.4974492,
+        "displacement_m": 0.001395723362367998,
+        "source": "last_two_positions",
+        "heading_deg": 109.3493611377994,
+        "heading_minus_yaw_deg": 109.40956402274367
+      },
+      {
+        "time": 1789473898.9069347,
+        "displacement_m": 0.00015740304528134944,
+        "source": "odom_yaw",
+        "heading_deg": -0.10585656253360817,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473899.3234663,
+        "displacement_m": 0.0017560202855422247,
+        "source": "last_two_positions",
+        "heading_deg": -142.50743147501078,
+        "heading_minus_yaw_deg": -142.45771815619688
+      },
+      {
+        "time": 1789473899.7574127,
+        "displacement_m": 0.0019876481432633607,
+        "source": "last_two_positions",
+        "heading_deg": -92.63746147785598,
+        "heading_minus_yaw_deg": -92.59652756810753
+      },
+      {
+        "time": 1789473900.1627555,
+        "displacement_m": 0.0032177587129067695,
+        "source": "last_two_positions",
+        "heading_deg": 75.39310189556932,
+        "heading_minus_yaw_deg": 75.49420152303797
+      },
+      {
+        "time": 1789473900.6479852,
+        "displacement_m": 0.0005751440793005763,
+        "source": "odom_yaw",
+        "heading_deg": -0.09903849560071774,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473901.0623946,
+        "displacement_m": 0.0010354683338274849,
+        "source": "last_two_positions",
+        "heading_deg": -75.7474981125881,
+        "heading_minus_yaw_deg": -75.70824054660079
+      },
+      {
+        "time": 1789473901.4865088,
+        "displacement_m": 0.0010742834636840663,
+        "source": "last_two_positions",
+        "heading_deg": 103.37552269658796,
+        "heading_minus_yaw_deg": 103.4272880815589
+      },
+      {
+        "time": 1789473901.9495943,
+        "displacement_m": 0.001980693096537269,
+        "source": "last_two_positions",
+        "heading_deg": -84.05390140601365,
+        "heading_minus_yaw_deg": -84.01619677588317
+      },
+      {
+        "time": 1789473902.446883,
+        "displacement_m": 0.0038079024088916147,
+        "source": "last_two_positions",
+        "heading_deg": -175.62215794244725,
+        "heading_minus_yaw_deg": -175.56854273767578
+      },
+      {
+        "time": 1789473902.8517127,
+        "displacement_m": 0.00415279035262406,
+        "source": "last_two_positions",
+        "heading_deg": 33.693321015246916,
+        "heading_minus_yaw_deg": 33.74798997626305
+      },
+      {
+        "time": 1789473903.3439677,
+        "displacement_m": 0.0052612731663461065,
+        "source": "last_two_positions",
+        "heading_deg": -135.01537146161118,
+        "heading_minus_yaw_deg": -134.97945183783736
+      },
+      {
+        "time": 1789473903.849486,
+        "displacement_m": 0.004765514786948115,
+        "source": "last_two_positions",
+        "heading_deg": 35.666078095826734,
+        "heading_minus_yaw_deg": 35.69295867738732
+      },
+      {
+        "time": 1789473904.282934,
+        "displacement_m": 0.00041644626081109506,
+        "source": "odom_yaw",
+        "heading_deg": -0.06392711352505728,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473904.7515996,
+        "displacement_m": 0.00040841457189058275,
+        "source": "odom_yaw",
+        "heading_deg": -0.02686523750613096,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473905.1550164,
+        "displacement_m": 0.0008790229745564775,
+        "source": "odom_yaw",
+        "heading_deg": -0.039368023589600606,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473905.6438622,
+        "displacement_m": 0.0008552800035669412,
+        "source": "odom_yaw",
+        "heading_deg": -0.07300095410645238,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473906.0572345,
+        "displacement_m": 0.0007024414809514805,
+        "source": "odom_yaw",
+        "heading_deg": -0.03718570168309548,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473906.4621356,
+        "displacement_m": 0.0008207527511249756,
+        "source": "odom_yaw",
+        "heading_deg": -0.050240947061484326,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473906.884032,
+        "displacement_m": 0.0005837473119608793,
+        "source": "odom_yaw",
+        "heading_deg": -0.003680757643054876,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473907.3269422,
+        "displacement_m": 0.0004469365925847828,
+        "source": "odom_yaw",
+        "heading_deg": -0.05949617732745775,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473907.7451873,
+        "displacement_m": 0.0003939985269625937,
+        "source": "odom_yaw",
+        "heading_deg": -0.0323163437875458,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473908.1508467,
+        "displacement_m": 0.0004423167048184061,
+        "source": "odom_yaw",
+        "heading_deg": -0.024670364679134117,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473908.6651762,
+        "displacement_m": 0.0007718270930459804,
+        "source": "odom_yaw",
+        "heading_deg": -0.06677801385680564,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473909.1060596,
+        "displacement_m": 0.0006017177926203308,
+        "source": "odom_yaw",
+        "heading_deg": -0.10376542460681994,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473909.537325,
+        "displacement_m": 0.0008069124872620697,
+        "source": "odom_yaw",
+        "heading_deg": -0.05032046266878853,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473909.9384637,
+        "displacement_m": 0.0008401101131438847,
+        "source": "odom_yaw",
+        "heading_deg": -0.07826475057226831,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473910.447051,
+        "displacement_m": 0.0007471221490936784,
+        "source": "odom_yaw",
+        "heading_deg": -0.07660100949732916,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473910.850708,
+        "displacement_m": 0.0004196851199588663,
+        "source": "odom_yaw",
+        "heading_deg": -0.07204890916186737,
+        "heading_minus_yaw_deg": 0.0
+      },
+      {
+        "time": 1789473911.332444,
+        "displacement_m": 0.0017789323602092149,
+        "source": "last_two_positions",
+        "heading_deg": -65.38655125813821,
+        "heading_minus_yaw_deg": -65.34370255969704
+      },
+      {
+        "time": 1789473911.7403398,
+        "displacement_m": 0.0012027929256191684,
+        "source": "last_two_positions",
+        "heading_deg": 110.66957910730589,
+        "heading_minus_yaw_deg": 110.73682138851309
+      },
+      {
+        "time": 1789473912.2501934,
+        "displacement_m": 0.00046053271998810694,
+        "source": "odom_yaw",
+        "heading_deg": -0.07145284397301795,
+        "heading_minus_yaw_deg": 0.0
+      }
+    ]
+  }
+}

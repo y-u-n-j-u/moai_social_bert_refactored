@@ -93,6 +93,14 @@ class CandidateCheck:
     goal_progress_m: float
     minimum_human_distance_m: float
     minimum_human_clearance_m: float
+    # Diagnostic-only: sample centers, not the occupied cell/contact location.
+    current_footprint_collision: Optional[bool] = None
+    first_collision_point: Optional[XY] = None
+    first_collision_sample_index: Optional[int] = None
+    first_collision_segment_index: Optional[int] = None
+    first_collision_distance_m: Optional[float] = None
+    collision_sample_spacing_m: Optional[float] = None
+    swept_sample_count: int = 0
 
 
 def validate_candidate_path(
@@ -120,10 +128,33 @@ def validate_candidate_path(
 
     spacing = max(float(map_provider.resolution) * 0.5, 0.02)
     swept = interpolate_polyline([current, *path], spacing)
-    collision_count = sum(
-        map_provider.path_collision_cost([point], radius=footprint_radius, weight=1.0) > 0.0
-        for point in swept
-    )
+    # Preserve the exact samples, radius, call order and full collision count.
+    collision_count = 0
+    first_collision_index = None
+    current_collision = False
+    for index, point in enumerate(swept):
+        collision = map_provider.path_collision_cost(
+            [point], radius=footprint_radius, weight=1.0
+        ) > 0.0
+        if index == 0:
+            current_collision = bool(collision)
+        if collision:
+            collision_count += 1
+            if first_collision_index is None:
+                first_collision_index = index
+    first_segment = None
+    first_distance = None
+    if first_collision_index is not None:
+        first_distance = sum(math.hypot(b[0] - a[0], b[1] - a[1])
+                             for a, b in zip(swept[:first_collision_index],
+                                             swept[1:first_collision_index + 1]))
+        if first_collision_index > 0:
+            end_sample = 0
+            for segment, (a, b) in enumerate(zip([current, *path], path)):
+                end_sample += max(1, int(math.ceil(math.hypot(b[0] - a[0], b[1] - a[1]) / spacing)))
+                if first_collision_index <= end_sample:
+                    first_segment = segment
+                    break
 
     previous = current
     steps = []
@@ -187,6 +218,13 @@ def validate_candidate_path(
         goal_progress_m=float(progress),
         minimum_human_distance_m=float(minimum_center),
         minimum_human_clearance_m=float(minimum_clearance),
+        current_footprint_collision=current_collision,
+        first_collision_point=(None if first_collision_index is None else swept[first_collision_index]),
+        first_collision_sample_index=first_collision_index,
+        first_collision_segment_index=first_segment,
+        first_collision_distance_m=first_distance,
+        collision_sample_spacing_m=spacing,
+        swept_sample_count=len(swept),
     )
 
 
@@ -202,24 +240,132 @@ def closest_path_index(points: Sequence[XY], current: XY) -> int:
     )
 
 
-def lookahead_point(points: Sequence[XY], current: XY, distance: float) -> Optional[XY]:
-    if not points:
+@dataclass(frozen=True)
+class LookaheadResult:
+    projection: XY
+    target: XY
+    segment_index: int
+    target_segment_index: int
+    progress_m: float
+    target_progress_m: float
+    path_length_m: float
+    cross_track_error_m: float
+    search_start_m: float
+    search_end_m: float
+
+
+def projected_lookahead(
+    points: Sequence[XY],
+    current: XY,
+    distance: float,
+    *,
+    minimum_progress: float = 0.0,
+    maximum_progress: Optional[float] = None,
+) -> Optional[LookaheadResult]:
+    """Project onto a polyline, then advance by arc length, not robot-to-vertex distance.
+
+    Progress bounds constrain the projection only, not the lookahead target.
+    Equal-distance projections select the earliest segment. Degenerate or
+    nonfinite input has no usable tracking target and fails closed.
+    """
+    normalized = [(float(x), float(y)) for x, y in points]
+    scalars = [*current, distance, minimum_progress]
+    if maximum_progress is not None:
+        scalars.append(maximum_progress)
+    if not all(math.isfinite(value) for value in scalars):
         return None
-    start = closest_path_index(points, current)
-    previous = (float(current[0]), float(current[1]))
-    remaining = max(float(distance), 0.0)
-    for point in points[start:]:
-        target = float(point[0]), float(point[1])
-        segment = math.hypot(target[0] - previous[0], target[1] - previous[1])
-        if segment >= remaining and segment > 1e-9:
-            ratio = remaining / segment
-            return (
-                previous[0] + ratio * (target[0] - previous[0]),
-                previous[1] + ratio * (target[1] - previous[1]),
+    if not all(math.isfinite(value) for point in normalized for value in point):
+        return None
+    segments = []
+    total = 0.0
+    for index, (start, end) in enumerate(zip(normalized, normalized[1:])):
+        length = math.hypot(end[0] - start[0], end[1] - start[1])
+        if length <= 1e-9:
+            continue
+        segments.append((index, start, end, total, length))
+        total += length
+    if not segments or not math.isfinite(total):
+        return None
+
+    lower = clamp(minimum_progress, 0.0, total)
+    upper = total if maximum_progress is None else clamp(maximum_progress, lower, total)
+    best = None
+    best_distance = math.inf
+    for index, start, end, offset, length in segments:
+        if offset + length < lower or offset > upper:
+            continue
+        ux, uy = (end[0] - start[0]) / length, (end[1] - start[1]) / length
+        along = (current[0] - start[0]) * ux + (current[1] - start[1]) * uy
+        along = clamp(along, max(0.0, lower - offset), min(length, upper - offset))
+        projection = (start[0] + ux * along, start[1] + uy * along)
+        error = math.hypot(current[0] - projection[0], current[1] - projection[1])
+        if error < best_distance - 1e-12:
+            best_distance = error
+            best = (index, projection, offset + along)
+    if best is None:
+        return None
+
+    index, projection, progress = best
+    target_progress = min(progress + max(float(distance), 0.0), total)
+    for target_index, start, end, offset, length in segments:
+        if target_progress <= offset + length + 1e-12:
+            ratio = clamp((target_progress - offset) / length, 0.0, 1.0)
+            target = (start[0] + ratio * (end[0] - start[0]),
+                      start[1] + ratio * (end[1] - start[1]))
+            return LookaheadResult(
+                projection, target, index, target_index, progress, target_progress,
+                total, best_distance, lower, upper,
             )
-        remaining -= segment
-        previous = target
-    return float(points[-1][0]), float(points[-1][1])
+    return None
+
+
+def lookahead_point(points: Sequence[XY], current: XY, distance: float) -> Optional[XY]:
+    result = projected_lookahead(points, current, distance)
+    return None if result is None else result.target
+
+
+class PathProgressTracker:
+    """Forward progress on one geometry; reset when geometry or frame changes.
+
+    After initial acquisition, search at most one lookahead distance plus the
+    robot's displacement ahead of prior progress. This bounds jumps to a later
+    branch at intersections. It is a forward-path tracker, not reverse driving
+    or recovery logic; a replacement path acquires its projection afresh.
+    """
+
+    def __init__(self) -> None:
+        self.points: Tuple[XY, ...] = ()
+        self.frame_id = ""
+        self.version = 0
+        self.progress: Optional[float] = None
+        self._last_position: Optional[XY] = None
+
+    def set_path(self, points: Sequence[XY], frame_id: str) -> bool:
+        normalized = tuple((float(x), float(y)) for x, y in points)
+        if normalized == self.points and frame_id == self.frame_id:
+            return False
+        self.points = normalized
+        self.frame_id = frame_id
+        self.version += 1
+        self.progress = None
+        self._last_position = None
+        return True
+
+    def update(self, current: XY, distance: float) -> Optional[LookaheadResult]:
+        maximum = None
+        if self.progress is not None and self._last_position is not None:
+            displacement = math.hypot(current[0] - self._last_position[0],
+                                      current[1] - self._last_position[1])
+            maximum = self.progress + displacement + max(distance, 0.0)
+        result = projected_lookahead(
+            self.points, current, distance,
+            minimum_progress=self.progress if self.progress is not None else 0.0,
+            maximum_progress=maximum,
+        )
+        if result is not None:
+            self.progress = result.progress_m
+            self._last_position = current
+        return result
 
 
 def finite_ranges_in_sector(
