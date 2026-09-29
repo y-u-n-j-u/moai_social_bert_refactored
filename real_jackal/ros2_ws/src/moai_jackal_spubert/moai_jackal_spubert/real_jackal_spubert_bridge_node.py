@@ -32,6 +32,7 @@ from .guided_spubert_runtime import (
     GuidedInferenceResult,
     GuidedSpubertRuntime,
     adaptive_guidance_point_along_path,
+    lateral_guidance_point,
     sample_polyline,
 )
 from .rolling_laser_map import RollingLaserMapProvider
@@ -467,10 +468,29 @@ class RealJackalSpubertBridgeNode(Node):
                     radius=self.guidance_radius,
                 )
         except ValueError as exc:
-            self._blocked_hold(
-                f"adaptive_guidance_failed:{exc}", now, robot_x, robot_y, robot_yaw, odom_frame
-            )
-            return
+            # The along-path search never leaves the Nav2 route, so a live
+            # obstacle (not on the static map) that straddles the whole
+            # route within the footprint radius fails it everywhere. Try a
+            # lateral fan around the robot's own heading before escalating
+            # to _blocked_hold; it's checked with the same live rolling-map
+            # safety function, and whatever SPU-BERT actually predicts from
+            # it is still independently validated below like any other
+            # candidate (field-tested 2026-09-29: resolved 3 consecutive
+            # otherwise-stuck cycles).
+            detour = lateral_guidance_point((robot_x, robot_y), robot_yaw, direct_path_safe)
+            if detour is None:
+                self._blocked_hold(
+                    f"adaptive_guidance_failed:{exc}", now, robot_x, robot_y, robot_yaw, odom_frame
+                )
+                return
+            guidance = detour
+            self._blocked_since_s = None
+            self._recovery_active = False
+            self._record("lateral_detour", {
+                "reason": "adaptive_guidance_failed_used_lateral_detour",
+                "robot": [robot_x, robot_y, robot_yaw],
+                "guidance": list(guidance),
+            })
 
         try:
             candidates = self._runtime.predict_candidates(

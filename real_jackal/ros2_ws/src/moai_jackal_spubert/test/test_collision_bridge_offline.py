@@ -26,6 +26,7 @@ class Runtime:
         self.candidates = []
 
     def predict_candidates(self, **kwargs):
+        self.last_kwargs = kwargs
         return self.candidates
 
 
@@ -52,6 +53,7 @@ def bridge(monkeypatch):
         "moai_jackal_spubert.guided_spubert_runtime": {
             "GuidedInferenceResult": NS, "GuidedSpubertRuntime": Runtime,
             "adaptive_guidance_point_along_path": lambda *a, **kw: (2.0, 0.0),
+            "lateral_guidance_point": lambda *a, **kw: None,
             "sample_polyline": lambda points, **kw: points},
     }
     for name, attrs in modules.items():
@@ -166,6 +168,29 @@ def test_unchecked_model_rejection_is_explicit_and_nonfinite_path_logs_safely(br
     assert record["attempts"][0]["collision"] == {"swept_check_performed": False}
     assert record["attempts"][0]["path"][0] == [None, 0]
     assert bridge.path_pub.messages[-1].poses == []
+
+
+def test_lateral_detour_used_when_along_path_search_fails(bridge):
+    bridge_globals = type(bridge)._on_timer.__globals__
+
+    def raise_no_safe_point(*args, **kwargs):
+        raise ValueError("no directly footprint-safe guidance point on global path")
+
+    bridge_globals["adaptive_guidance_point_along_path"] = raise_no_safe_point
+    bridge_globals["lateral_guidance_point"] = lambda *a, **kw: (1.0, 0.6)
+    bridge.map_collision = False  # candidates are otherwise safe once guided sideways
+
+    bridge._on_timer()
+
+    assert bridge._last_status.startswith("path_valid")
+    assert bridge.path_pub.messages[-1].poses == bridge._runtime.candidates[0].path_world
+    assert bridge._runtime.last_kwargs["guidance_point_world"] == (1.0, 0.6)
+    assert bridge._blocked_since_s is None
+    record = json.loads(bridge._diagnostics_file.getvalue().splitlines()[0])
+    assert record["event"] == "lateral_detour"
+    assert record["reason"] == "adaptive_guidance_failed_used_lateral_detour"
+    assert record["robot"] == [0.0, 0.0, 0.0]
+    assert record["guidance"] == [1.0, 0.6]
 
 
 def test_short_block_still_holds_empty_like_before(bridge):

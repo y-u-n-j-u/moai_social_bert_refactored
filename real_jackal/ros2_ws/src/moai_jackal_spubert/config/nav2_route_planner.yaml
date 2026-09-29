@@ -46,13 +46,20 @@ global_costmap:
       publish_frequency: 1.0
       global_frame: map
       robot_base_frame: base_link
-      # Matches the bridge's hard footprint cutoff (robot_radius 0.34 +
-      # static_safety_margin 0.16 in real_jackal_social005.yaml), not just
-      # the physical robot radius. Otherwise NavFn can hand back a path that
-      # threads within 0.34-0.50m of an obstacle (inflation is a soft cost),
-      # which the bridge then rejects every cycle with no way out (09/21 log:
-      # ~167s + ~105s continuous holds at the same chokepoint).
-      robot_radius: 0.50
+      # The robot's actual physical radius, not the bridge's stricter
+      # footprint cutoff (robot_radius 0.34 + static_safety_margin 0.16 =
+      # 0.5 in real_jackal_social005.yaml). We tried setting this to 0.5 to
+      # match the bridge exactly, but the corridors here are only ~2m wide:
+      # requiring a full 0.5m clearance on every side made NavFn refuse to
+      # plan at all near a live obstacle ("failed to create plan with
+      # tolerance 0.50", field test 2026-09-29). Keep Nav2 at the physical
+      # radius so it can still find a geometrically tight-but-valid route;
+      # the bridge's own 0.5m footprint check plus its lateral-detour
+      # fallback (guided_spubert_runtime.lateral_guidance_point) is what
+      # actually keeps execution safe when Nav2's path hugs closer than
+      # that (09/21 log: ~167s + ~105s continuous holds at the same
+      # chokepoint before that fallback existed).
+      robot_radius: 0.34
       resolution: 0.05
       track_unknown_space: true
       transform_tolerance: 0.50

@@ -202,6 +202,54 @@ def adaptive_guidance_point_along_path(
     raise ValueError("no directly footprint-safe guidance point on global path")
 
 
+def lateral_guidance_point(
+    current: XY,
+    heading: float,
+    is_direct_path_safe: Callable[[Sequence[XY]], bool],
+    forward_distances: Sequence[float] = (0.4, 0.6, 0.8, 1.0, 1.5, 2.0, 2.5),
+    lateral_offsets: Sequence[float] = (0.6, 0.9, 1.2, 1.6, 2.0),
+) -> Optional[XY]:
+    """Probe points off to either side of the current heading.
+
+    adaptive_guidance_point_along_path only walks distance along the given
+    Nav2 route; it never leaves that route. If a live obstacle (not on the
+    static map) straddles the whole route within the footprint radius, that
+    search fails everywhere and the caller has no candidate to fall back on
+    except stopping. This scans a small fan of points to the left/right of
+    the robot's current heading instead, so the guidance point (and hence
+    the SPU-BERT prediction it conditions) can be pulled toward a real
+    opening. Every candidate here is still checked with the same live
+    rolling-map safety function used elsewhere, and the trajectory SPU-BERT
+    actually outputs is still independently validated afterward, so this
+    only changes what gets suggested, not what gets accepted. The forward
+    probe starts close in (0.4m) because a robot that has already stopped
+    right next to an obstacle needs a nearby detour point, not just a far
+    one (field test 2026-09-29: a 1.0m-minimum probe still clipped the
+    obstacle on the straight-line safety check when the robot was closer
+    than that).
+    """
+    cx, cy = float(current[0]), float(current[1])
+    ch, sh = math.cos(float(heading)), math.sin(float(heading))
+    perp_x, perp_y = -sh, ch
+    for forward in forward_distances:
+        best: Optional[XY] = None
+        best_offset = math.inf
+        for offset in lateral_offsets:
+            for sign in (1.0, -1.0):
+                point = (
+                    cx + ch * forward + perp_x * offset * sign,
+                    cy + sh * forward + perp_y * offset * sign,
+                )
+                if not is_direct_path_safe([current, point]):
+                    continue
+                if offset < best_offset:
+                    best_offset = offset
+                    best = point
+        if best is not None:
+            return best
+    return None
+
+
 def pad_history(points: Sequence[XY], length: int) -> List[XY]:
     result = [(float(x), float(y)) for x, y in points[-max(int(length), 1) :]]
     if not result:
