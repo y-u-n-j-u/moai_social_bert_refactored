@@ -274,3 +274,70 @@ def test_diagnostic_publisher_failure_does_not_prevent_stop(tracker):
     tracker._on_path(make_path([]))
     assert_zero(tracker)
     assert "diagnostics unavailable" in tracker.warnings[-1]
+
+
+# --- corridor obstacle rule (narrow-passage fix) ----------------------------
+
+def scan_with_point(tracker, x, y):
+    """Scan of empty space (inf) with a single return at (x, y) in base_link."""
+    step = 0.01
+    count = int(2 * math.pi / step) + 1
+    ranges = [math.inf] * count
+    index = round((math.atan2(y, x) + math.pi) / step)
+    ranges[index] = math.hypot(x, y)
+    tracker._on_scan(NS(header=header("base_link"), ranges=ranges,
+                        angle_min=-math.pi, angle_increment=step))
+
+
+def use_corridor_rule(tracker):
+    tracker.obstacle_corridor_half_width = 0.42
+    tracker.obstacle_stop_distance = 0.45
+    tracker.obstacle_slow_distance = 1.00
+    tracker.obstacle_hard_stop_distance = 0.38
+
+
+def test_sector_rule_stops_for_a_box_edge_beside_the_robot(tracker):
+    tracker.motion_enabled = True
+    scan_with_point(tracker, 0.60, 0.44)  # 0.74 m away, 32 deg off to the side
+    tracker._control_tick()
+    assert_zero(tracker)
+    assert record(tracker)["status"].startswith("obstacle_too_close")
+
+
+def test_corridor_rule_lets_the_robot_pass_a_box_edge_beside_it(tracker):
+    use_corridor_rule(tracker)
+    tracker.motion_enabled = True
+    scan_with_point(tracker, 0.60, 0.44)  # outside the +-0.42 m body corridor
+    tracker._control_tick()
+    assert record(tracker)["status"].startswith("tracking")
+    assert tracker.cmd_pub.messages[-1].linear.x > 0.0
+
+
+def test_corridor_rule_still_stops_for_an_obstacle_in_the_path(tracker):
+    use_corridor_rule(tracker)
+    tracker.motion_enabled = True
+    scan_with_point(tracker, 0.40, 0.10)  # dead ahead, inside 0.45 m
+    tracker._control_tick()
+    assert_zero(tracker)
+    assert record(tracker)["status"].startswith("obstacle_too_close:0.40")
+
+
+def test_corridor_rule_keeps_the_emergency_stop_very_close_in_the_sector(tracker):
+    use_corridor_rule(tracker)
+    tracker.motion_enabled = True
+    scan_with_point(tracker, 0.30, 0.10)  # r = 0.32 m < hard stop 0.38 m
+    tracker._control_tick()
+    assert_zero(tracker)
+    assert record(tracker)["status"].startswith("obstacle_too_close")
+
+
+def test_corridor_rule_slows_for_obstacles_ahead_between_stop_and_slow_distance(tracker):
+    use_corridor_rule(tracker)
+    tracker.motion_enabled = True
+    scan_with_point(tracker, 0.80, 0.0)
+    tracker._control_tick()
+    slowed = record(tracker)["target_command"]["v"]
+    scan_with_point(tracker, 5.0, 0.0)
+    tracker._control_tick()
+    clear = record(tracker)["target_command"]["v"]
+    assert 0.10 < slowed < 0.20 < 0.24 < clear

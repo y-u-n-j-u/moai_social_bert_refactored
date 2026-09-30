@@ -289,10 +289,18 @@ ros2 launch mid360_bringup full_stack.launch.py \
   use_sim_time:=false \
   use_fast_livo:=true \
   launch_rviz:=false \
+  fast_livo_image_enable:=false \
   fast_livo_lidar_msg_type:=pointcloud2 \
   fast_livo_odom_fallback:=false \
   extrinsic_path:=/root/data/calib/extrinsic.txt
 ```
+
+> **`fast_livo_image_enable:=false`(LIO 전용)는 필수다.** 이 옵션이 없으면 VIO가 켜져
+> `fastlivo_mapping`의 메모리가 초당 20MB 이상 늘어 수십 분 안에 OOM으로 종료되고,
+> 그 전에 `/aft_mapped_to_init` 위치가 수만 m로 발산한다(2026-09-30 두 번 발생).
+> 옵션을 켠 상태에서는 RSS가 약 150~230MB에서 완만하게 유지된다.
+> 또한 FAST-LIVO 소스는 `spu_deploy_docker`의 `ed0512c`, `fca86c0`, `30349ff` 이후 버전이어야 하고,
+> `mola_bringup`의 `filterpass.py`는 벡터화된 버전이어야 한다.
 
 `full_stack`이 base-to-LiDAR static TF를 발행하므로 동일 TF를 별도로 발행하지 않는다.
 

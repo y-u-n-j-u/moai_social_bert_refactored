@@ -38,8 +38,24 @@ real_jackal_spubert_bridge:
     recovery_sweep_period_sec: 2.5
     recovery_step_m: 1.00
 
+    # Follow a safe prefix of the Nav2 path when every SPU-BERT candidate is rejected.
+    global_path_fallback: true
+    global_fallback_length_m: 1.5
+    global_fallback_min_safe_length_m: 0.8
+    global_fallback_max_sec: 60.0
+    global_fallback_max_shift_m: 0.30
+    global_fallback_shift_step_m: 0.03
+    global_fallback_taper_m: 0.40
+    arc_planner_fallback: true
+    arc_max_curvature: 1.6
+    arc_curvature_step: 0.1
+    arc_target_distance_m: 2.0
+
     robot_radius: 0.34
-    static_safety_margin: 0.16
+    # 0.16 -> 0.10 (09-30): with robot_radius 0.34 the 0.50m footprint left only
+    # ~1.2m of free width in the ~2.1-2.4m corridors; this check runs on the
+    # lidar rolling map in odom (not AMCL), so it needn't absorb localization error.
+    static_safety_margin: 0.10
     minimum_human_center_distance: 1.20
     human_radius: 0.35
     human_safety_margin: 0.20
@@ -85,8 +101,14 @@ safe_path_tracker:
     odom_timeout_sec: 0.50
     scan_timeout_sec: 0.50
     tracks_timeout_sec: 1.00
-    obstacle_stop_distance: 0.75
-    obstacle_slow_distance: 1.40
+    # 09-30: the old rule (any point within 0.75 m in a +-40 deg sector => stop)
+    # froze the robot beside a box in the ~2 m corridor although the planner had a
+    # validated path. Now only obstacles in the straight-ahead body corridor stop
+    # or slow it; anything inside 0.38 m in the sector is still an emergency stop.
+    obstacle_stop_distance: 0.45
+    obstacle_slow_distance: 1.00
+    obstacle_corridor_half_width: 0.42
+    obstacle_hard_stop_distance: 0.38
     forward_scan_half_angle: 0.70
     human_stop_distance: 0.90
     rotate_in_place_angle: 0.95

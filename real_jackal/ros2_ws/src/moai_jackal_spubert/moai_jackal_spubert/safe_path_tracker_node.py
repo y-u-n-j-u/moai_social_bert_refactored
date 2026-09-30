@@ -19,6 +19,7 @@ from visualization_msgs.msg import Marker
 
 from .navigation_core import (
     clamp,
+    corridor_obstacle_distance,
     finite_ranges_in_sector,
     PathProgressTracker,
     normalize_angle,
@@ -82,6 +83,17 @@ class SafePathTrackerNode(Node):
         )
         self.forward_scan_half_angle = float(
             self.declare_parameter("forward_scan_half_angle", 0.70).value
+        )
+        # Corridor mode (off when half width is 0): stop/slow only for obstacles
+        # in the strip the body sweeps when driving straight, so a box edge
+        # beside the robot in a narrow passage no longer freezes it. Anything
+        # closer than the hard-stop distance anywhere in the forward sector
+        # still stops it.
+        self.obstacle_corridor_half_width = float(
+            self.declare_parameter("obstacle_corridor_half_width", 0.0).value
+        )
+        self.obstacle_hard_stop_distance = float(
+            self.declare_parameter("obstacle_hard_stop_distance", 0.0).value
         )
         self.human_stop_distance = float(
             self.declare_parameter("human_stop_distance", 0.90).value
@@ -292,6 +304,16 @@ class SafePathTrackerNode(Node):
             self.forward_scan_half_angle,
         )
         minimum_obstacle = min(front_ranges, default=math.inf)
+        if self.obstacle_corridor_half_width > 0.0:
+            if minimum_obstacle < self.obstacle_hard_stop_distance:
+                self._stop(f"obstacle_too_close:{minimum_obstacle:.2f}m")
+                return
+            minimum_obstacle = corridor_obstacle_distance(
+                self._scan.ranges,
+                self._scan.angle_min,
+                self._scan.angle_increment,
+                self.obstacle_corridor_half_width,
+            )
         if minimum_obstacle < self.obstacle_stop_distance:
             self._stop(f"obstacle_too_close:{minimum_obstacle:.2f}m")
             return

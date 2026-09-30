@@ -98,11 +98,16 @@ def bridge(monkeypatch):
     return node
 
 
+def _predictions(bridge):
+    return [json.loads(line) for line in bridge._diagnostics_file.getvalue().splitlines()
+            if json.loads(line)["event"] == "prediction"]
+
+
 def test_all_candidates_rejected_records_geometry_context_and_sends_empty_path(bridge):
     bridge._on_timer()
     assert bridge.path_pub.messages[-1].poses == []
     assert bridge._last_status == "hold:all_candidates_rejected:robot_footprint_collision"
-    record = json.loads(bridge._diagnostics_file.getvalue())
+    record = _predictions(bridge)[0]
     assert record["valid"] is False
     assert len(record["attempts"]) == 5
     assert all(a["collision"]["current_footprint_collision"] for a in record["attempts"])
@@ -129,7 +134,7 @@ def test_recovery_selects_same_first_valid_candidate_and_clears_markers(bridge):
     bridge.now_s += 1.0
     bridge._odom_stamp_s = bridge._scan_stamp_s = bridge._tracks_stamp_s = bridge.now_s
     bridge._on_timer()
-    records = [json.loads(line) for line in bridge._diagnostics_file.getvalue().splitlines()]
+    records = _predictions(bridge)
     assert [r["valid"] for r in records] == [False, True]
     assert records[-1]["selected_rank"] == 0
     assert bridge.path_pub.messages[-1].poses == bridge._runtime.candidates[0].path_world
@@ -143,7 +148,7 @@ def test_diagnostics_io_and_marker_failures_cannot_prevent_empty_path_stop(bridg
     bridge._diagnostics_file = NS(write=fail)
     bridge._on_timer()
     assert bridge.path_pub.messages[-1].poses == []
-    assert len(bridge.warnings) == 2
+    assert len(bridge.warnings) >= 2  # marker + every diagnostics write that failed
 
 
 def test_non_start_marker_is_red_and_sensor_hold_clears_it(bridge):
@@ -163,7 +168,7 @@ def test_unchecked_model_rejection_is_explicit_and_nonfinite_path_logs_safely(br
         result.selected_goal_valid = False
         result.path_world[0] = (float("nan"), 0)
     bridge._on_timer()
-    record = json.loads(bridge._diagnostics_file.getvalue())
+    record = _predictions(bridge)[0]
     assert record["reason"] == "no_map_safe_goal"
     assert record["attempts"][0]["collision"] == {"swept_check_performed": False}
     assert record["attempts"][0]["path"][0] == [None, 0]
@@ -228,3 +233,233 @@ def test_blocked_hold_escalates_to_recovery_sweep_after_timeout(bridge):
     assert bridge.path_pub.messages[-1].poses == bridge._runtime.candidates[0].path_world
     assert bridge._blocked_since_s is None
     assert bridge._recovery_active is False
+
+
+# --- global-path fallback -------------------------------------------------
+
+def _model_rejects_everything(bridge):
+    for result in bridge._runtime.candidates:
+        result.selected_goal_valid = False  # model-side rejection, map is free
+    bridge.map_collision = False
+
+
+def _events(bridge, name):
+    records = [json.loads(line) for line in bridge._diagnostics_file.getvalue().splitlines()]
+    return [r for r in records if r["event"] == name]
+
+
+def test_safe_route_prefix_is_followed_when_model_rejects_all_candidates(bridge):
+    _model_rejects_everything(bridge)
+    bridge._on_timer()
+    assert bridge._last_status.startswith("path_valid global_fallback")
+    path = bridge.path_pub.messages[-1].poses
+    assert len(path) == 12
+    assert path[0][0] > 0 and all(abs(y) < 1e-9 for _, y in path)  # along the route
+    assert path[-1][0] == pytest.approx(1.5)
+    assert bridge._blocked_since_s is None and not bridge._recovery_active
+    event = _events(bridge, "global_path_fallback")[0]
+    assert event["trigger"] == "all_candidates_rejected:no_map_safe_goal"
+    assert event["points_kept"] == 12
+
+
+def test_unsafe_route_is_never_followed_and_reason_is_logged(bridge):
+    for result in bridge._runtime.candidates:
+        result.selected_goal_valid = False
+    bridge.map_collision = True  # live obstacle covers the whole route
+    bridge._on_timer()
+    assert bridge._last_status == "hold:all_candidates_rejected:no_map_safe_goal"
+    assert bridge.path_pub.messages[-1].poses == []
+    assert not _events(bridge, "global_path_fallback")
+    rejected = _events(bridge, "global_path_fallback_rejected")
+    assert rejected and rejected[0]["reason"] == "robot_footprint_collision"
+
+
+def test_only_the_safe_part_of_the_route_is_used_but_not_below_the_minimum(bridge):
+    _model_rejects_everything(bridge)
+    bridge.arc_planner_fallback = False  # this test is about the route prefix alone
+    real_check = type(bridge)._try_global_path_fallback.__globals__["validate_candidate_path"]
+
+    def blocked_beyond(limit):
+        def check(**kw):
+            if kw["path"][-1][0] > limit:
+                return NS(valid=False, reason="robot_footprint_collision",
+                          minimum_human_distance_m=float("inf"))
+            return real_check(**kw)
+        return check
+
+    globals_ = type(bridge)._try_global_path_fallback.__globals__
+    try:
+        globals_["validate_candidate_path"] = blocked_beyond(1.0)
+        bridge._on_timer()
+        path = bridge.path_pub.messages[-1].poses
+        assert bridge._last_status.startswith("path_valid global_fallback")
+        assert 0.8 <= path[-1][0] <= 1.0
+
+        bridge.now_s += 1.0
+        bridge._odom_stamp_s = bridge._scan_stamp_s = bridge._tracks_stamp_s = bridge.now_s
+        globals_["validate_candidate_path"] = blocked_beyond(0.5)  # < 0.8 m safe
+        bridge._on_timer()
+        assert bridge.path_pub.messages[-1].poses == []
+        assert bridge._last_status.startswith("hold:")
+    finally:
+        globals_["validate_candidate_path"] = real_check
+
+
+def test_nearby_pedestrian_blocks_the_fallback_like_any_model_path(bridge):
+    _model_rejects_everything(bridge)
+    bridge._human_histories = {7: [(1.0, 0.0)] * 8}
+    bridge._on_timer()
+    assert bridge.path_pub.messages[-1].poses == []
+    assert bridge._last_status.startswith("hold:")
+    assert not _events(bridge, "global_path_fallback")
+
+
+def test_fallback_stops_after_the_episode_time_limit(bridge):
+    _model_rejects_everything(bridge)
+    bridge._request_route = lambda: False  # isolate recovery from the action client
+    bridge._on_timer()
+    assert bridge._last_status.startswith("path_valid global_fallback")
+    for _ in range(3):  # keep the episode alive with fresh sensor data
+        bridge.now_s += bridge.global_fallback_max_sec / 2
+        bridge._odom_stamp_s = bridge._scan_stamp_s = bridge._tracks_stamp_s = bridge.now_s
+        bridge._global_fallback_last_s = bridge.now_s - 0.5
+        bridge._on_timer()
+    assert not bridge._last_status.startswith("path_valid")  # normal recovery took over
+    assert len(bridge.path_pub.messages[-1].poses) != 12  # not a route-prefix path
+    assert _events(bridge, "global_path_fallback_rejected")[-1]["reason"] == "episode_time_limit"
+
+
+def test_fallback_can_be_disabled(bridge):
+    _model_rejects_everything(bridge)
+    bridge.global_path_fallback = False
+    bridge._on_timer()
+    assert bridge.path_pub.messages[-1].poses == []
+    assert bridge._last_status.startswith("hold:")
+
+
+def test_model_path_ends_the_fallback_episode(bridge):
+    _model_rejects_everything(bridge)
+    bridge._on_timer()
+    assert bridge._global_fallback_since_s is not None
+    for result in bridge._runtime.candidates:
+        result.selected_goal_valid = True
+    bridge.now_s += 1.0
+    bridge._odom_stamp_s = bridge._scan_stamp_s = bridge._tracks_stamp_s = bridge.now_s
+    bridge._on_timer()
+    assert bridge._last_status.startswith("path_valid rank=")
+    assert bridge._global_fallback_since_s is None
+
+
+def test_failed_lateral_detour_is_logged_then_global_fallback_is_tried(bridge):
+    globals_ = type(bridge)._on_timer.__globals__
+
+    def raise_no_safe_point(*args, **kwargs):
+        raise ValueError("no directly footprint-safe guidance point on global path")
+
+    globals_["adaptive_guidance_point_along_path"] = raise_no_safe_point
+    globals_["lateral_guidance_point"] = lambda *a, **kw: None
+    bridge.map_collision = False
+    bridge._on_timer()
+    assert _events(bridge, "lateral_detour_failed")
+    assert bridge._last_status.startswith("path_valid global_fallback")
+    assert _events(bridge, "global_path_fallback")[0]["trigger"].startswith("adaptive_guidance_failed")
+
+
+# --- narrow passage: box on the left, wall on the right, ~0.1 m safe tube ---
+
+def _narrow_passage(bridge, wall_y=-0.68):
+    """Live obstacle 0.43 m left of the centre line and a wall at ``wall_y``."""
+    def cost(points, radius, weight=1.0):
+        for x, y in points:
+            if 0.3 <= x <= 1.4 and (0.43 - y < radius or y - wall_y < radius):
+                return 1.0
+        return 0.0
+    bridge.map_provider.path_collision_cost = cost
+    bridge.map_collision = False
+    _model_rejects_everything(bridge)
+    return cost
+
+
+def test_route_prefix_is_slid_into_a_narrow_passage(bridge):
+    cost = _narrow_passage(bridge)
+    assert cost([(0.6, 0.0)], radius=0.5) > 0  # the straight route is blocked
+    bridge._on_timer()
+    assert bridge._last_status.startswith("path_valid global_fallback")
+    event = _events(bridge, "global_path_fallback")[0]
+    assert -0.18 < event["lateral_shift_m"] < -0.05  # right, a few cm only
+    path = bridge.path_pub.messages[-1].poses
+    assert len(path) >= 7
+    assert cost([(0.0, 0.0), *path], radius=0.5) == 0.0  # the very check that gates publishing
+    assert path[0][0] > 0 and abs(path[0][1]) < 0.1  # attached to the robot
+
+
+def test_no_passage_means_no_fallback_even_with_sideways_search(bridge):
+    _narrow_passage(bridge, wall_y=-0.40)  # only 0.83 m gap: no centre line fits 0.5 m radius
+    bridge.arc_planner_fallback = False  # this test is about the sideways route search alone
+    bridge._on_timer()
+    assert bridge.path_pub.messages[-1].poses == []
+    assert bridge._last_status.startswith("hold:")
+    assert not _events(bridge, "global_path_fallback")
+    assert _events(bridge, "global_path_fallback_rejected")
+
+
+# --- model-free arc planner: obstacle sitting on the route ------------------
+
+def _obstacle_on_route(bridge, obstacle_radius=0.1, centre=(1.0, 0.0), wall=False):
+    def cost(points, radius, weight=1.0):
+        for x, y in points:
+            if wall and (x + radius > 0.55 or abs(y) + radius > 0.60):
+                return 1.0  # a pocket the robot fits in but cannot leave
+            if not wall and (x - centre[0]) ** 2 + (y - centre[1]) ** 2 < (obstacle_radius + radius) ** 2:
+                return 1.0
+        return 0.0
+    bridge.map_provider.path_collision_cost = cost
+    bridge.map_collision = False
+    _model_rejects_everything(bridge)
+    return cost
+
+
+def test_arc_goes_around_an_obstacle_that_sideways_shift_cannot_clear(bridge):
+    cost = _obstacle_on_route(bridge)  # blocks radius 0.6 around (1, 0); shift max is only 0.3
+    bridge._on_timer()
+    assert bridge._last_status.startswith("path_valid global_fallback source=arc")
+    event = _events(bridge, "global_path_fallback")[0]
+    assert event["source"] == "arc" and event["curvature"] != 0.0
+    path = bridge.path_pub.messages[-1].poses
+    assert cost([(0.0, 0.0), *path], radius=0.5) == 0.0  # same check that gates publishing
+    assert max(abs(y) for _, y in path) > 0.6  # really goes around, not through
+    assert path[-1][0] > 1.0  # and makes progress toward the goal at (5, 0)
+
+
+def test_pedestrian_on_one_side_makes_the_arc_choose_the_other(bridge):
+    _obstacle_on_route(bridge)
+    bridge._human_histories = {3: [(1.0, 0.9)] * 8}
+    bridge._on_timer()
+    assert bridge._last_status.startswith("path_valid global_fallback source=arc")
+    path = bridge.path_pub.messages[-1].poses
+    assert path[-1][1] < -0.3 and all(y < 0.3 for _, y in path)  # passes on the far side
+
+
+def test_no_arc_when_the_way_is_completely_blocked(bridge):
+    _obstacle_on_route(bridge, wall=True)
+    bridge._request_route = lambda: False
+    bridge._on_timer()
+    assert not bridge._last_status.startswith("path_valid")
+    assert not _events(bridge, "global_path_fallback")
+    assert _events(bridge, "global_path_fallback_rejected")
+
+
+def test_arc_planner_can_be_disabled(bridge):
+    _obstacle_on_route(bridge)
+    bridge.arc_planner_fallback = False
+    bridge._request_route = lambda: False
+    bridge._on_timer()
+    assert not bridge._last_status.startswith("path_valid")
+    assert not _events(bridge, "global_path_fallback")
+
+
+def test_arc_still_works_when_the_robot_is_too_far_from_the_route_to_use_it(bridge):
+    _obstacle_on_route(bridge, obstacle_radius=0.05, centre=(1.0, 3.0))  # obstacle irrelevant to the arc
+    bridge._route_in_frame = lambda *a: [(0, 4.0), (5, 4.0)]  # route 4 m away: no prefix
+    bridge._on_timer()
+    assert bridge._last_status.startswith("path_valid global_fallback source=arc")

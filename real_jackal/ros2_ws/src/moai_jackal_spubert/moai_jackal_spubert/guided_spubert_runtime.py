@@ -207,7 +207,7 @@ def lateral_guidance_point(
     heading: float,
     is_direct_path_safe: Callable[[Sequence[XY]], bool],
     forward_distances: Sequence[float] = (0.4, 0.6, 0.8, 1.0, 1.5, 2.0, 2.5),
-    lateral_offsets: Sequence[float] = (0.6, 0.9, 1.2, 1.6, 2.0),
+    lateral_offsets: Sequence[float] = (0.3, 0.45, 0.6, 0.9, 1.2, 1.6, 2.0),
 ) -> Optional[XY]:
     """Probe points off to either side of the current heading.
 

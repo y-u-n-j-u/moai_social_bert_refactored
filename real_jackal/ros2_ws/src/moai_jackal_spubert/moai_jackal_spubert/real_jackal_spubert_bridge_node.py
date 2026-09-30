@@ -36,6 +36,8 @@ from .guided_spubert_runtime import (
     sample_polyline,
 )
 from .rolling_laser_map import RollingLaserMapProvider
+from .arc_planner import arc_cost, arc_points, curvature_fan
+from .route_fallback import lateral_offsets, route_prefix_points, shift_path_laterally
 from .collision_diagnostics import collision_evidence, header_evidence
 from .tracker_diagnostics import diagnostic_json
 
@@ -122,6 +124,54 @@ class RealJackalSpubertBridgeNode(Node):
         self.recovery_step_m = float(
             self.declare_parameter("recovery_step_m", 1.00).value
         )
+        # When every SPU-BERT candidate is rejected, follow a prefix of the
+        # Nav2 global path instead of stopping -- but only if that prefix
+        # passes the very same validate_candidate_path checks as a model
+        # candidate (footprint vs. live rolling map, pedestrian distance,
+        # goal progress). The speed limit stays the tracker's own. The
+        # fallback is time-boxed per episode so it cannot mask a persistent
+        # problem; after that the normal blocked-hold/recovery takes over.
+        self.global_path_fallback = bool(
+            self.declare_parameter("global_path_fallback", True).value
+        )
+        self.global_fallback_length_m = float(
+            self.declare_parameter("global_fallback_length_m", 1.5).value
+        )
+        self.global_fallback_min_safe_length_m = float(
+            self.declare_parameter("global_fallback_min_safe_length_m", 0.8).value
+        )
+        self.global_fallback_max_sec = float(
+            self.declare_parameter("global_fallback_max_sec", 20.0).value
+        )
+        # The Nav2 route only knows the static map, so around a live obstacle
+        # in a narrow corridor the safe tube can sit a few centimetres off the
+        # route. Try the route prefix slid sideways in small steps (smallest
+        # shift that keeps the longest safe prefix wins).
+        self.global_fallback_max_shift_m = float(
+            self.declare_parameter("global_fallback_max_shift_m", 0.30).value
+        )
+        self.global_fallback_shift_step_m = float(
+            self.declare_parameter("global_fallback_shift_step_m", 0.03).value
+        )
+        self.global_fallback_taper_m = float(
+            self.declare_parameter("global_fallback_taper_m", 0.40).value
+        )
+        # Model-free last resort: constant-curvature arcs from the current pose,
+        # each validated exactly like a model candidate; the one ending nearest
+        # the route point ahead wins. Handles obstacles the sideways-shifted
+        # route cannot clear.
+        self.arc_planner_fallback = bool(
+            self.declare_parameter("arc_planner_fallback", True).value
+        )
+        self.arc_max_curvature = float(self.declare_parameter("arc_max_curvature", 1.6).value)
+        self.arc_curvature_step = float(self.declare_parameter("arc_curvature_step", 0.1).value)
+        self.arc_target_distance_m = float(
+            self.declare_parameter("arc_target_distance_m", 2.0).value
+        )
+        # Start directions tried relative to the robot heading (rad). A large
+        # offset makes the tracker pivot in place first, which is how the robot
+        # gets around something directly in front of it.
+        self.arc_heading_offsets = (0.0, 0.4, -0.4, 0.8, -0.8, 1.2, -1.2)
 
         self.robot_radius = float(self.declare_parameter("robot_radius", 0.34).value)
         self.static_safety_margin = float(
@@ -185,6 +235,9 @@ class RealJackalSpubertBridgeNode(Node):
         self._diagnostics_file = None
         self._blocked_since_s: Optional[float] = None
         self._recovery_active = False
+        self._global_fallback_since_s: Optional[float] = None
+        self._global_fallback_last_s = -math.inf
+        self._throttled_record_s: Dict[str, float] = {}
         self._recovery_started_s = -math.inf
 
         if self.diagnostics_path:
@@ -479,6 +532,16 @@ class RealJackalSpubertBridgeNode(Node):
             # otherwise-stuck cycles).
             detour = lateral_guidance_point((robot_x, robot_y), robot_yaw, direct_path_safe)
             if detour is None:
+                self._record_throttled("lateral_detour_failed", {
+                    "reason": "no_lateral_point_passed_footprint_check",
+                    "robot": [robot_x, robot_y, robot_yaw],
+                    "guidance_error": str(exc),
+                }, now)
+                if self._try_global_path_fallback(
+                    f"adaptive_guidance_failed:{exc}", route, goal_xy, robot_x, robot_y,
+                    robot_yaw, odom_frame, now,
+                ):
+                    return
                 self._blocked_hold(
                     f"adaptive_guidance_failed:{exc}", now, robot_x, robot_y, robot_yaw, odom_frame
                 )
@@ -572,6 +635,11 @@ class RealJackalSpubertBridgeNode(Node):
             self._publish_collision_markers(odom_frame, attempts)
             self._record("prediction", {"valid": False, "reason": reason, "attempts": attempts,
                                         "collision_context": collision_context})
+            if self._try_global_path_fallback(
+                f"all_candidates_rejected:{reason}", route, goal_xy, robot_x, robot_y,
+                robot_yaw, odom_frame, now,
+            ):
+                return
             self._blocked_hold(
                 f"all_candidates_rejected:{reason}", now, robot_x, robot_y, robot_yaw, odom_frame
             )
@@ -579,6 +647,7 @@ class RealJackalSpubertBridgeNode(Node):
 
         self._blocked_since_s = None
         self._recovery_active = False
+        self._global_fallback_since_s = None
         path_message = self._path_message(odom_frame, selected.path_world)
         self.path_pub.publish(path_message)
         self.goal_pub.publish(self._point_pose(odom_frame, goal_xy))
@@ -860,6 +929,199 @@ class RealJackalSpubertBridgeNode(Node):
         message.pose.position.y = float(point[1])
         message.pose.orientation.w = 1.0
         return message
+
+    def _record_throttled(self, event: str, payload: dict, now: float, period_s: float = 2.0) -> None:
+        if now - self._throttled_record_s.get(event, -math.inf) < period_s:
+            return
+        self._throttled_record_s[event] = now
+        self._record(event, payload)
+
+    def _try_global_path_fallback(
+        self,
+        reason: str,
+        route,
+        goal_xy: XY,
+        robot_x: float,
+        robot_y: float,
+        robot_yaw: float,
+        odom_frame: str,
+        now: float,
+    ) -> bool:
+        """Publish a validated fallback path (route prefix, else arc); False = hold.
+
+        Uses validate_candidate_path unchanged, so footprint, pedestrian and
+        goal-progress rules are identical to those applied to model output.
+        """
+        if not self.global_path_fallback or not route:
+            return False
+        if (
+            self._global_fallback_since_s is not None
+            and now - self._global_fallback_last_s > 2.0
+        ):
+            self._global_fallback_since_s = None  # a gap ended the previous episode
+        if (
+            self._global_fallback_since_s is not None
+            and now - self._global_fallback_since_s > self.global_fallback_max_sec
+        ):
+            self._record_throttled("global_path_fallback_rejected", {
+                "trigger": reason, "reason": "episode_time_limit",
+                "episode_s": now - self._global_fallback_since_s,
+            }, now)
+            return False
+        count = max(int(self.pred_len), 1)
+        spacing = self.global_fallback_length_m / count
+        points = route_prefix_points(route, (robot_x, robot_y), count, spacing)
+        points = points or []
+        footprint_radius = self.robot_radius + self.static_safety_margin
+        minimum_points = max(1, math.ceil(self.global_fallback_min_safe_length_m / spacing))
+        human_histories = {key: list(value) for key, value in self._human_histories.items()}
+        chosen = None
+        chosen_shift = 0.0
+        check = None
+        last_reason = "prefix_too_short"
+        source = "route_prefix"
+        chosen_curvature = None
+        chosen_heading = None
+        keep_options = sorted({len(points), max(minimum_points, (len(points) * 3) // 4), minimum_points},
+                              reverse=True)
+        for shift in (lateral_offsets(
+            self.global_fallback_max_shift_m, self.global_fallback_shift_step_m
+        ) if points else []):
+            shifted = shift_path_laterally(
+                points, (robot_x, robot_y), shift, self.global_fallback_taper_m
+            )
+            if shifted is None:
+                continue
+            for keep in keep_options:
+                if chosen is not None and keep <= len(chosen):
+                    break  # cannot beat the prefix already found
+                candidate = shifted[:keep]
+                attempt = validate_candidate_path(
+                    current=(robot_x, robot_y),
+                    path=candidate,
+                    final_goal=goal_xy,
+                    map_provider=self.map_provider,
+                    footprint_radius=footprint_radius,
+                    prediction_dt=self.prediction_dt,
+                    maximum_model_speed=self.maximum_model_speed,
+                    maximum_step_ratio=self.maximum_step_ratio,
+                    minimum_goal_progress=self.minimum_goal_progress,
+                    human_histories=human_histories,
+                    human_sample_dt=self.prediction_dt,
+                    minimum_human_center_distance=self.minimum_human_center_distance,
+                    human_radius=self.human_radius,
+                    human_safety_margin=self.human_safety_margin,
+                )
+                if attempt.valid:
+                    chosen, chosen_shift, check = candidate, shift, attempt
+                    break
+                if shift == 0.0:
+                    last_reason = attempt.reason
+            if chosen is not None and len(chosen) == len(points):
+                break  # full-length prefix at the smallest shift: cannot improve
+        if chosen is None and self.arc_planner_fallback:
+            arc = self._select_arc_path(
+                route, goal_xy, robot_x, robot_y, robot_yaw, footprint_radius,
+                human_histories, count,
+            )
+            if arc is not None:
+                chosen, chosen_curvature, check, chosen_heading = arc
+                source = "arc"
+                points = points or chosen
+        if chosen is None:
+            self._record_throttled("global_path_fallback_rejected", {
+                "trigger": reason, "reason": last_reason,
+                "route_prefix_points": len(points),
+                "minimum_points": minimum_points,
+            }, now)
+            return False
+        if self._global_fallback_since_s is None:
+            self._global_fallback_since_s = now
+        self._global_fallback_last_s = now
+        self._blocked_since_s = None
+        self._recovery_active = False
+        self.path_pub.publish(self._path_message(odom_frame, chosen))
+        self.goal_pub.publish(self._point_pose(odom_frame, goal_xy))
+        self._status(
+            f"path_valid global_fallback source={source} points={len(chosen)}/{len(points)} "
+            f"shift={chosen_shift:+.2f} curvature={chosen_curvature or 0.0:+.2f} "
+            f"heading={chosen_heading or 0.0:+.2f} human_min={check.minimum_human_distance_m:.3f}"
+        )
+        self._record("global_path_fallback", {
+            "trigger": reason,
+            "robot": [robot_x, robot_y],
+            "goal": list(goal_xy),
+            "path": [list(point) for point in chosen],
+            "points_kept": len(chosen),
+            "points_total": len(points),
+            "lateral_shift_m": chosen_shift,
+            "source": source,
+            "curvature": chosen_curvature,
+            "heading_offset_rad": chosen_heading,
+            "episode_s": now - self._global_fallback_since_s,
+            "minimum_human_distance_m": (
+                None if not math.isfinite(check.minimum_human_distance_m)
+                else check.minimum_human_distance_m
+            ),
+        })
+        return True
+
+    def _select_arc_path(
+        self,
+        route,
+        goal_xy: XY,
+        robot_x: float,
+        robot_y: float,
+        robot_yaw: float,
+        footprint_radius: float,
+        human_histories,
+        count: int,
+    ):
+        """Best validated constant-curvature arc, or None. (points, curvature, check, heading_offset)."""
+        ahead = route_prefix_points(
+            route, (robot_x, robot_y), 1, max(self.arc_target_distance_m, 0.1)
+        )
+        target = ahead[-1] if ahead else (route[-1] if route else goal_xy)
+        maximum_length = self.global_fallback_length_m
+        best = None
+        best_cost = math.inf
+        for heading_offset in self.arc_heading_offsets:
+            # Off-axis starts use a gentler fan: the pivot already did the turning.
+            fan = (
+                curvature_fan(self.arc_max_curvature, self.arc_curvature_step)
+                if heading_offset == 0.0
+                else curvature_fan(min(self.arc_max_curvature, 0.8), 2 * self.arc_curvature_step)
+            )
+            for length in (maximum_length, min(1.0, maximum_length)):
+                for curvature in fan:
+                    pts = arc_points(
+                        (robot_x, robot_y), robot_yaw + heading_offset, curvature, length, count
+                    )
+                    if pts is None:
+                        continue
+                    cost = arc_cost(pts[-1], target, curvature, length, maximum_length,
+                                    heading_offset=heading_offset)
+                    if cost >= best_cost:
+                        continue  # cannot beat the best valid arc: skip the costly check
+                    check = validate_candidate_path(
+                        current=(robot_x, robot_y),
+                        path=pts,
+                        final_goal=goal_xy,
+                        map_provider=self.map_provider,
+                        footprint_radius=footprint_radius,
+                        prediction_dt=self.prediction_dt,
+                        maximum_model_speed=self.maximum_model_speed,
+                        maximum_step_ratio=self.maximum_step_ratio,
+                        minimum_goal_progress=self.minimum_goal_progress,
+                        human_histories=human_histories,
+                        human_sample_dt=self.prediction_dt,
+                        minimum_human_center_distance=self.minimum_human_center_distance,
+                        human_radius=self.human_radius,
+                        human_safety_margin=self.human_safety_margin,
+                    )
+                    if check.valid:
+                        best, best_cost = (pts, curvature, check, heading_offset), cost
+        return best
 
     def _blocked_hold(
         self,
