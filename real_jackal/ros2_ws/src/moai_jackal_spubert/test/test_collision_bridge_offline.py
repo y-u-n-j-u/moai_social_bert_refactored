@@ -591,3 +591,33 @@ def test_escape_paths_do_not_get_closer_to_the_obstacle_than_the_robot_already_i
     bridge._request_route = lambda: False
     bridge._on_timer()
     assert not bridge._last_status.startswith("path_valid global_fallback")
+
+
+# --- continuity: the published path must not flip sideways between cycles ---
+
+def _swerving_and_straight(bridge):
+    straight = [(0.2 * (i + 1), 0.0) for i in range(12)]
+    swerve = [(0.02 * (i + 1), 0.1 * (i + 1)) for i in range(12)]  # ~80 deg to the left
+    bridge._runtime.candidates = [
+        NS(selected_goal_valid=True, trajectory_map_safe=True, execution_valid=True,
+           path_world=swerve, candidate_rank=0, candidate_index=10),
+        NS(selected_goal_valid=True, trajectory_map_safe=True, execution_valid=True,
+           path_world=straight, candidate_rank=1, candidate_index=11),
+    ]
+    bridge.map_collision = False
+    return straight, swerve
+
+
+def test_default_selection_is_still_the_first_valid_candidate(bridge):
+    straight, swerve = _swerving_and_straight(bridge)
+    bridge._on_timer()
+    assert bridge.path_pub.messages[-1].poses == swerve  # old behaviour, weights are 0 by default
+
+
+def test_sharp_swerve_is_skipped_when_a_straighter_valid_candidate_exists(bridge):
+    straight, swerve = _swerving_and_straight(bridge)
+    bridge.selection_config = type(bridge.selection_config)(
+        rank_weight=0.15, continuity_weight=2.0, heading_weight=0.3, heading_limit_rad=0.9)
+    bridge._on_timer()
+    assert bridge.path_pub.messages[-1].poses == straight
+    assert _predictions(bridge)[0]["selected_rank"] == 1  # logged as the rank actually used

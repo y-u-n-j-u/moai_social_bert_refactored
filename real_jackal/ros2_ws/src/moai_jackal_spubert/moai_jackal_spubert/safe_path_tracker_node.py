@@ -101,6 +101,12 @@ class SafePathTrackerNode(Node):
         self.rotate_in_place_angle = float(
             self.declare_parameter("rotate_in_place_angle", 0.95).value
         )
+        # Forward speed kept while turning toward a target that is far off the heading
+        # (below the rotate-in-place angle): drive a curve instead of slowing to a crawl.
+        # 0 = off (speed is vmax*cos(error) only). Obstacle slow-down still applies after.
+        self.minimum_turn_speed = float(
+            self.declare_parameter("minimum_turn_speed", 0.0).value
+        )
         self.angular_gain = float(self.declare_parameter("angular_gain", 1.6).value)
 
         self._odom: Optional[Odometry] = None
@@ -339,6 +345,8 @@ class SafePathTrackerNode(Node):
             linear = 0.0
         else:
             linear = self.maximum_linear_speed * max(math.cos(heading_error), 0.0)
+            if self.minimum_turn_speed > 0.0:
+                linear = max(linear, min(self.minimum_turn_speed, self.maximum_linear_speed))
         if minimum_obstacle < self.obstacle_slow_distance:
             denominator = max(self.obstacle_slow_distance - self.obstacle_stop_distance, 1e-3)
             linear *= clamp(

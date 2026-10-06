@@ -341,3 +341,52 @@ def test_corridor_rule_slows_for_obstacles_ahead_between_stop_and_slow_distance(
     tracker._control_tick()
     clear = record(tracker)["target_command"]["v"]
     assert 0.10 < slowed < 0.20 < 0.24 < clear
+
+
+def sideways_path(angle):
+    """Path leaving the robot (0.39, 0.05, heading 0) at `angle` rad to the left."""
+    return make_path([(0.39 + 0.35 * i * math.cos(angle), 0.05 + 0.35 * i * math.sin(angle))
+                      for i in range(0, 6)])
+
+
+def test_large_heading_error_pivots_in_place_by_default(tracker):
+    tracker.motion_enabled = True
+    tracker._on_path(sideways_path(1.2))  # 69 deg > default 0.95 rad
+    tracker._control_tick()
+    assert record(tracker)["target_command"]["v"] == 0.0
+    assert record(tracker)["target_command"]["w"] > 0.5
+
+
+def test_minimum_turn_speed_keeps_the_robot_rolling_through_a_large_heading_error(tracker):
+    tracker.motion_enabled = True
+    tracker.rotate_in_place_angle = 1.35
+    tracker.minimum_turn_speed = 0.08
+    tracker._on_path(sideways_path(1.2))
+    tracker._control_tick()
+    command = record(tracker)["target_command"]
+    assert 0.08 <= command["v"] < 0.12 and command["w"] > 0.5  # a curve, not a pivot
+    tracker.minimum_turn_speed = 0.0  # without the floor the same error would pivot
+    tracker.rotate_in_place_angle = 0.95
+    tracker._control_tick()
+    assert record(tracker)["target_command"]["v"] == 0.0
+
+
+def test_pivot_still_happens_beyond_the_relaxed_angle(tracker):
+    tracker.motion_enabled = True
+    tracker.rotate_in_place_angle = 1.35
+    tracker.minimum_turn_speed = 0.08
+    tracker._on_path(sideways_path(1.5))  # 86 deg > 1.35 rad
+    tracker._control_tick()
+    assert record(tracker)["target_command"]["v"] == 0.0
+
+
+def test_turn_speed_floor_never_overrides_the_obstacle_stop(tracker):
+    use_corridor_rule(tracker)
+    tracker.rotate_in_place_angle = 1.35
+    tracker.minimum_turn_speed = 0.08
+    tracker.motion_enabled = True
+    tracker._on_path(sideways_path(1.2))
+    scan_with_point(tracker, 0.40, 0.0)  # inside the 0.45 m stop distance, dead ahead
+    tracker._control_tick()
+    assert_zero(tracker)
+    assert record(tracker)["status"].startswith("obstacle_too_close")

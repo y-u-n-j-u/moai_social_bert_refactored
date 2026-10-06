@@ -56,6 +56,11 @@ real_jackal_spubert_bridge:
     escape_footprint_radius_m: 0.36
     # escape radius adapts to the robot's current clearance, never below this floor (body diagonal radius).
     escape_floor_radius_m: 0.33
+    # Candidate choice (bridge): avoid flipping left/right between cycles and sharp swerves.
+    selection_rank_weight: 0.15
+    selection_continuity_weight: 2.0
+    selection_heading_weight: 0.3
+    selection_heading_limit_rad: 0.9
 
     robot_radius: 0.34
     # 0.16 -> 0.10 (09-30): with robot_radius 0.34 the 0.50m footprint left only
@@ -119,5 +124,8 @@ safe_path_tracker:
     obstacle_hard_stop_distance: 0.30
     forward_scan_half_angle: 0.70
     human_stop_distance: 0.90
-    rotate_in_place_angle: 0.95
+    # Pivot only for a really large heading error; below it keep >= minimum_turn_speed and
+    # drive a curve. Obstacle slow-down (stop 0.45 m / slow 1.0 m) still scales this down.
+    rotate_in_place_angle: 1.35
+    minimum_turn_speed: 0.08
     angular_gain: 1.60

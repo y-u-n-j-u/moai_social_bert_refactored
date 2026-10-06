@@ -37,6 +37,7 @@ from .guided_spubert_runtime import (
 )
 from .rolling_laser_map import RollingLaserMapProvider
 from .arc_planner import arc_cost, arc_points, curvature_fan
+from .candidate_select import SelectionConfig, choose_candidate
 from .route_fallback import lateral_offsets, route_prefix_points, shift_path_laterally
 from .collision_diagnostics import collision_evidence, header_evidence
 from .tracker_diagnostics import diagnostic_json
@@ -199,6 +200,17 @@ class RealJackalSpubertBridgeNode(Node):
         self.escape_floor_radius_m = float(
             self.declare_parameter("escape_floor_radius_m", 0.33).value
         )
+        # Choosing among valid model candidates. All weights 0 keeps the old rule
+        # (first valid by model rank). With weights, a candidate that jumps sideways
+        # relative to the path published a moment ago, or leaves the robot heading
+        # sharply, is avoided: the tracker otherwise chases a target that flips between
+        # left and right and ends up stopping to turn (2026-10-06 field run).
+        self.selection_config = SelectionConfig(
+            rank_weight=float(self.declare_parameter("selection_rank_weight", 0.0).value),
+            continuity_weight=float(self.declare_parameter("selection_continuity_weight", 0.0).value),
+            heading_weight=float(self.declare_parameter("selection_heading_weight", 0.0).value),
+            heading_limit_rad=float(self.declare_parameter("selection_heading_limit_rad", 0.0).value),
+        )
 
         self.robot_radius = float(self.declare_parameter("robot_radius", 0.34).value)
         self.static_safety_margin = float(
@@ -263,6 +275,8 @@ class RealJackalSpubertBridgeNode(Node):
         self._blocked_since_s: Optional[float] = None
         self._recovery_active = False
         self._global_fallback_since_s: Optional[float] = None
+        self._last_published_path = None
+        self._last_published_s = -math.inf
         self._global_fallback_last_s = -math.inf
         self._throttled_record_s: Dict[str, float] = {}
         self._recovery_started_s = -math.inf
@@ -598,6 +612,7 @@ class RealJackalSpubertBridgeNode(Node):
             return
 
         attempts = []
+        valid_entries = []
         selected: Optional[GuidedInferenceResult] = None
         selected_check = None
         for result in candidates:
@@ -646,9 +661,17 @@ class RealJackalSpubertBridgeNode(Node):
                     ),
                 }
             )
-            if valid and selected is None:
-                selected = result
-                selected_check = check
+            if valid:
+                valid_entries.append((result, check))
+
+        if valid_entries:
+            chosen_index = choose_candidate(
+                [list(entry[0].path_world) for entry in valid_entries],
+                (robot_x, robot_y), robot_yaw,
+                self._last_published_path, now - self._last_published_s,
+                self.selection_config,
+            )
+            selected, selected_check = valid_entries[chosen_index]
 
         debug_result = selected or (candidates[0] if candidates else None)
         self._publish_markers(
@@ -678,6 +701,8 @@ class RealJackalSpubertBridgeNode(Node):
         self._global_fallback_since_s = None
         path_message = self._path_message(odom_frame, selected.path_world)
         self.path_pub.publish(path_message)
+        self._last_published_path = [(robot_x, robot_y), *[tuple(p) for p in selected.path_world]]
+        self._last_published_s = now
         self.goal_pub.publish(self._point_pose(odom_frame, goal_xy))
         self._publish_collision_markers(odom_frame, attempts)
         self._status(
@@ -1039,6 +1064,8 @@ class RealJackalSpubertBridgeNode(Node):
         self._blocked_since_s = None
         self._recovery_active = False
         self.path_pub.publish(self._path_message(odom_frame, chosen))
+        self._last_published_path = [(robot_x, robot_y), *[tuple(p) for p in chosen]]
+        self._last_published_s = now
         self.goal_pub.publish(self._point_pose(odom_frame, goal_xy))
         self._status(
             f"path_valid global_fallback source={source} tier={tier}{'' if tier == 'normal' else f'({escape_radius:.2f}m)'} points={len(chosen)}/{len(points) or len(chosen)} "
