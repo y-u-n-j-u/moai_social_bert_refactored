@@ -124,6 +124,14 @@ class RealJackalSpubertBridgeNode(Node):
         self.recovery_step_m = float(
             self.declare_parameter("recovery_step_m", 1.00).value
         )
+        # Turning in place sweeps a circle of the body's circumscribed radius
+        # (Jackal 0.51 x 0.43 m -> ~0.33 m). Do not start a recovery rotation
+        # with anything inside that circle plus this margin: it would swing a
+        # corner into the obstacle (2026-10-06: robot stalled beside a box).
+        # 0 disables the guard.
+        self.recovery_rotation_clearance_m = float(
+            self.declare_parameter("recovery_rotation_clearance_m", 0.38).value
+        )
         # When every SPU-BERT candidate is rejected, follow a prefix of the
         # Nav2 global path instead of stopping -- but only if that prefix
         # passes the very same validate_candidate_path checks as a model
@@ -171,7 +179,26 @@ class RealJackalSpubertBridgeNode(Node):
         # Start directions tried relative to the robot heading (rad). A large
         # offset makes the tracker pivot in place first, which is how the robot
         # gets around something directly in front of it.
-        self.arc_heading_offsets = (0.0, 0.4, -0.4, 0.8, -0.8, 1.2, -1.2)
+        # Default offsets stay below the tracker's rotate-in-place angle (0.95 rad)
+        # so avoidance is a curve driven at speed, not stop-pivot-go. 1.2 rad would
+        # make the tracker zero the forward speed and turn on the spot.
+        self.arc_heading_offsets = tuple(
+            float(v) for v in self.declare_parameter(
+                "arc_heading_offsets_rad", [0.0, 0.4, -0.4, 0.8, -0.8]
+            ).value
+        )
+        # Reduced footprint radius for a last "keep moving" tier when nothing fits
+        # at the normal radius (robot centre must still be clear at this radius).
+        self.escape_footprint_radius_m = float(
+            self.declare_parameter("escape_footprint_radius_m", 0.36).value
+        )
+        # The escape radius adapts to the robot's actual clearance: the largest radius
+        # (<= the value above) at which the robot's own position is free, but never
+        # below this floor (body circumscribed radius ~0.33 m). Paths must then stay at
+        # least that far from every obstacle, i.e. never closer than the robot is now.
+        self.escape_floor_radius_m = float(
+            self.declare_parameter("escape_floor_radius_m", 0.33).value
+        )
 
         self.robot_radius = float(self.declare_parameter("robot_radius", 0.34).value)
         self.static_safety_margin = float(
@@ -536,6 +563,7 @@ class RealJackalSpubertBridgeNode(Node):
                     "reason": "no_lateral_point_passed_footprint_check",
                     "robot": [robot_x, robot_y, robot_yaw],
                     "guidance_error": str(exc),
+                    "clearance_probe": self._clearance_probe(robot_x, robot_y),
                 }, now)
                 if self._try_global_path_fallback(
                     f"adaptive_guidance_failed:{exc}", route, goal_xy, robot_x, robot_y,
@@ -970,18 +998,96 @@ class RealJackalSpubertBridgeNode(Node):
             return False
         count = max(int(self.pred_len), 1)
         spacing = self.global_fallback_length_m / count
-        points = route_prefix_points(route, (robot_x, robot_y), count, spacing)
-        points = points or []
+        points = route_prefix_points(route, (robot_x, robot_y), count, spacing) or []
         footprint_radius = self.robot_radius + self.static_safety_margin
         minimum_points = max(1, math.ceil(self.global_fallback_min_safe_length_m / spacing))
         human_histories = {key: list(value) for key, value in self._human_histories.items()}
+
+        tier = "normal"
+        found, last_reason = self._find_fallback_path(
+            points, route, goal_xy, robot_x, robot_y, robot_yaw, footprint_radius,
+            human_histories, count, spacing, minimum_points,
+        )
+        escape_radius = (
+            self._adaptive_escape_radius(robot_x, robot_y, footprint_radius)
+            if found is None else None
+        )
+        if found is None and escape_radius is not None:
+            # Every path failed at the normal radius, but the robot itself is not
+            # touching anything at the reduced one: keep moving (and away) rather
+            # than deadlock because the robot already sits inside the 0.44 m margin.
+            found, escape_reason = self._find_fallback_path(
+                points, route, goal_xy, robot_x, robot_y, robot_yaw, escape_radius,
+                human_histories, count, spacing, minimum_points,
+            )
+            if found is not None:
+                tier = "escape"
+            else:
+                last_reason = f"{last_reason}|escape:{escape_reason}"
+        if found is None:
+            self._record_throttled("global_path_fallback_rejected", {
+                "trigger": reason, "reason": last_reason,
+                "route_prefix_points": len(points),
+                "minimum_points": minimum_points,
+                "clearance_probe": self._clearance_probe(robot_x, robot_y),
+            }, now)
+            return False
+        chosen, chosen_shift, check, source, chosen_curvature, chosen_heading = found
+        if self._global_fallback_since_s is None:
+            self._global_fallback_since_s = now
+        self._global_fallback_last_s = now
+        self._blocked_since_s = None
+        self._recovery_active = False
+        self.path_pub.publish(self._path_message(odom_frame, chosen))
+        self.goal_pub.publish(self._point_pose(odom_frame, goal_xy))
+        self._status(
+            f"path_valid global_fallback source={source} tier={tier}{'' if tier == 'normal' else f'({escape_radius:.2f}m)'} points={len(chosen)}/{len(points) or len(chosen)} "
+            f"shift={chosen_shift:+.2f} curvature={chosen_curvature or 0.0:+.2f} "
+            f"heading={chosen_heading or 0.0:+.2f} human_min={check.minimum_human_distance_m:.3f}"
+        )
+        self._record("global_path_fallback", {
+            "trigger": reason,
+            "robot": [robot_x, robot_y],
+            "goal": list(goal_xy),
+            "path": [list(point) for point in chosen],
+            "points_kept": len(chosen),
+            "points_total": len(points) or len(chosen),
+            "lateral_shift_m": chosen_shift,
+            "source": source,
+            "tier": tier,
+            "footprint_radius_m": escape_radius if tier == "escape" else footprint_radius,
+            "curvature": chosen_curvature,
+            "heading_offset_rad": chosen_heading,
+            "episode_s": now - self._global_fallback_since_s,
+            "minimum_human_distance_m": (
+                None if not math.isfinite(check.minimum_human_distance_m)
+                else check.minimum_human_distance_m
+            ),
+        })
+        return True
+
+    def _find_fallback_path(
+        self,
+        points,
+        route,
+        goal_xy: XY,
+        robot_x: float,
+        robot_y: float,
+        robot_yaw: float,
+        footprint_radius: float,
+        human_histories,
+        count: int,
+        spacing: float,
+        minimum_points: int,
+    ):
+        """Best validated route-prefix (slid sideways) or arc at ``footprint_radius``.
+
+        Returns ((path, shift, check, source, curvature, heading_offset) | None, last_reason).
+        """
         chosen = None
         chosen_shift = 0.0
         check = None
         last_reason = "prefix_too_short"
-        source = "route_prefix"
-        chosen_curvature = None
-        chosen_heading = None
         keep_options = sorted({len(points), max(minimum_points, (len(points) * 3) // 4), minimum_points},
                               reverse=True)
         for shift in (lateral_offsets(
@@ -1019,52 +1125,17 @@ class RealJackalSpubertBridgeNode(Node):
                     last_reason = attempt.reason
             if chosen is not None and len(chosen) == len(points):
                 break  # full-length prefix at the smallest shift: cannot improve
-        if chosen is None and self.arc_planner_fallback:
+        if chosen is not None:
+            return (chosen, chosen_shift, check, "route_prefix", None, None), last_reason
+        if self.arc_planner_fallback:
             arc = self._select_arc_path(
                 route, goal_xy, robot_x, robot_y, robot_yaw, footprint_radius,
                 human_histories, count,
             )
             if arc is not None:
-                chosen, chosen_curvature, check, chosen_heading = arc
-                source = "arc"
-                points = points or chosen
-        if chosen is None:
-            self._record_throttled("global_path_fallback_rejected", {
-                "trigger": reason, "reason": last_reason,
-                "route_prefix_points": len(points),
-                "minimum_points": minimum_points,
-            }, now)
-            return False
-        if self._global_fallback_since_s is None:
-            self._global_fallback_since_s = now
-        self._global_fallback_last_s = now
-        self._blocked_since_s = None
-        self._recovery_active = False
-        self.path_pub.publish(self._path_message(odom_frame, chosen))
-        self.goal_pub.publish(self._point_pose(odom_frame, goal_xy))
-        self._status(
-            f"path_valid global_fallback source={source} points={len(chosen)}/{len(points)} "
-            f"shift={chosen_shift:+.2f} curvature={chosen_curvature or 0.0:+.2f} "
-            f"heading={chosen_heading or 0.0:+.2f} human_min={check.minimum_human_distance_m:.3f}"
-        )
-        self._record("global_path_fallback", {
-            "trigger": reason,
-            "robot": [robot_x, robot_y],
-            "goal": list(goal_xy),
-            "path": [list(point) for point in chosen],
-            "points_kept": len(chosen),
-            "points_total": len(points),
-            "lateral_shift_m": chosen_shift,
-            "source": source,
-            "curvature": chosen_curvature,
-            "heading_offset_rad": chosen_heading,
-            "episode_s": now - self._global_fallback_since_s,
-            "minimum_human_distance_m": (
-                None if not math.isfinite(check.minimum_human_distance_m)
-                else check.minimum_human_distance_m
-            ),
-        })
-        return True
+                pts, curvature, arc_check, heading = arc
+                return (pts, 0.0, arc_check, "arc", curvature, heading), last_reason
+        return None, last_reason
 
     def _select_arc_path(
         self,
@@ -1146,6 +1217,42 @@ class RealJackalSpubertBridgeNode(Node):
             return
         self._run_recovery_sweep(reason, blocked_duration, now, robot_x, robot_y, robot_yaw, odom_frame)
 
+    def _adaptive_escape_radius(self, robot_x: float, robot_y: float, footprint_radius: float):
+        """Largest radius in [floor, min(escape cap, normal)) at which the robot itself is free.
+
+        None when the robot is closer to an obstacle than the floor, or escape is off.
+        """
+        upper = min(self.escape_footprint_radius_m, footprint_radius - 0.01)
+        floor = self.escape_floor_radius_m
+        if not (upper > 0.0 and floor > 0.0 and upper >= floor - 1e-9):
+            return None
+        radius = upper
+        while radius >= floor - 1e-9:
+            if self.map_provider.path_collision_cost(
+                [(robot_x, robot_y)], radius=radius, weight=1.0
+            ) <= 0.0:
+                return radius
+            radius = round(radius - 0.01, 6)
+        return None
+
+    def _clearance_probe(self, robot_x: float, robot_y: float) -> dict:
+        """Which radii around the robot centre already touch the rolling map.
+
+        Diagnostic only: tells a "no room anywhere" stop apart from a "robot is
+        already inside the footprint radius, so every swept path starts in
+        collision" deadlock.
+        """
+        probe = {}
+        for radius in (0.30, 0.34, 0.38, 0.44, 0.50):
+            try:
+                hit = self.map_provider.path_collision_cost(
+                    [(robot_x, robot_y)], radius=radius, weight=1.0
+                ) > 0.0
+            except Exception:  # never let a diagnostic block the stop path
+                hit = None
+            probe[f"{radius:.2f}"] = hit
+        return probe
+
     def _run_recovery_sweep(
         self,
         reason: str,
@@ -1156,6 +1263,18 @@ class RealJackalSpubertBridgeNode(Node):
         robot_yaw: float,
         odom_frame: str,
     ) -> None:
+        if self.recovery_rotation_clearance_m > 0.0 and self.map_provider.path_collision_cost(
+            [(robot_x, robot_y)], radius=self.recovery_rotation_clearance_m, weight=1.0
+        ) > 0.0:
+            self._record_throttled("recovery_sweep_blocked", {
+                "reason": reason,
+                "blocked_duration_s": blocked_duration,
+                "robot": [robot_x, robot_y, robot_yaw],
+                "rotation_clearance_m": self.recovery_rotation_clearance_m,
+                "clearance_probe": self._clearance_probe(robot_x, robot_y),
+            }, now)
+            self._hold(f"recovery_blocked_obstacle_in_rotation_circle:{reason}")
+            return
         if not self._recovery_active:
             self._recovery_active = True
             self._recovery_started_s = now

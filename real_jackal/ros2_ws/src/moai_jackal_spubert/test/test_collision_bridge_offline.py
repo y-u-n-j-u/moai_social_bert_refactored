@@ -212,6 +212,7 @@ def test_short_block_still_holds_empty_like_before(bridge):
 
 def test_blocked_hold_escalates_to_recovery_sweep_after_timeout(bridge):
     bridge._request_route = lambda: False  # isolate from the action-client plumbing
+    bridge.recovery_rotation_clearance_m = 0.0  # fully occupied test map: guard covered below
     bridge._on_timer()
 
     bridge.now_s += bridge.stuck_hold_timeout_sec + 0.5
@@ -396,6 +397,7 @@ def test_route_prefix_is_slid_into_a_narrow_passage(bridge):
 def test_no_passage_means_no_fallback_even_with_sideways_search(bridge):
     _narrow_passage(bridge, wall_y=-0.40)  # only 0.83 m gap: no centre line fits 0.5 m radius
     bridge.arc_planner_fallback = False  # this test is about the sideways route search alone
+    bridge.escape_footprint_radius_m = 0.0
     bridge._on_timer()
     assert bridge.path_pub.messages[-1].poses == []
     assert bridge._last_status.startswith("hold:")
@@ -463,3 +465,129 @@ def test_arc_still_works_when_the_robot_is_too_far_from_the_route_to_use_it(brid
     bridge._route_in_frame = lambda *a: [(0, 4.0), (5, 4.0)]  # route 4 m away: no prefix
     bridge._on_timer()
     assert bridge._last_status.startswith("path_valid global_fallback source=arc")
+
+
+# --- recovery rotation must not swing the body into an obstacle -------------
+
+def _sweep_scene(bridge, nearest_obstacle_m):
+    """Map whose only obstacle is `nearest_obstacle_m` from the robot centre."""
+    def cost(points, radius, weight=1.0):
+        return 1.0 if radius > nearest_obstacle_m else 0.0
+    bridge.map_provider.path_collision_cost = cost
+    bridge.map_collision = False
+    bridge.escape_footprint_radius_m = 0.0  # these tests are about the rotation, not the escape tier
+    for result in bridge._runtime.candidates:
+        result.selected_goal_valid = False
+    bridge._request_route = lambda: False
+    bridge._on_timer()
+    bridge.now_s += bridge.stuck_hold_timeout_sec + 0.5
+    bridge._odom_stamp_s = bridge._scan_stamp_s = bridge._tracks_stamp_s = bridge.now_s
+
+
+def test_recovery_sweep_runs_when_the_rotation_circle_is_clear(bridge):
+    _sweep_scene(bridge, nearest_obstacle_m=0.45)  # body circle (0.38) is clear
+    bridge._on_timer()
+    assert bridge._last_status.startswith("recovery_sweep:")
+    assert len(bridge.path_pub.messages[-1].poses) == 2
+
+
+def test_recovery_sweep_is_blocked_when_an_obstacle_is_inside_the_rotation_circle(bridge):
+    _sweep_scene(bridge, nearest_obstacle_m=0.30)  # a corner would swing into it
+    bridge._on_timer()
+    assert bridge._last_status.startswith("hold:recovery_blocked_obstacle_in_rotation_circle:")
+    assert bridge.path_pub.messages[-1].poses == []
+    blocked = _events(bridge, "recovery_sweep_blocked")[0]
+    assert blocked["rotation_clearance_m"] == 0.38
+    assert blocked["clearance_probe"]["0.30"] is False and blocked["clearance_probe"]["0.34"] is True
+    assert not _events(bridge, "recovery_sweep")
+
+
+def test_rejected_fallback_reports_how_close_the_robot_already_is(bridge):
+    _sweep_scene(bridge, nearest_obstacle_m=0.30)
+    rejected = _events(bridge, "global_path_fallback_rejected")[0]
+    probe = rejected["clearance_probe"]
+    assert probe["0.30"] is False and all(probe[k] for k in ("0.34", "0.38", "0.44", "0.50"))
+
+
+# --- smooth avoidance: no pivots by default, escape tier instead of deadlock ---
+
+def test_default_arc_start_directions_never_force_a_stop_and_pivot(bridge):
+    assert bridge.arc_heading_offsets
+    assert max(abs(v) for v in bridge.arc_heading_offsets) < 0.95  # tracker rotate_in_place_angle
+    assert 0.0 in bridge.arc_heading_offsets
+
+
+def _parallel_obstacle(bridge, nearest_m):
+    """Obstacle `nearest_m` from the centre line along the whole drive: nothing fits at a larger radius."""
+    def cost(points, radius, weight=1.0):
+        return 1.0 if radius > nearest_m else 0.0
+    bridge.map_provider.path_collision_cost = cost
+    bridge.map_collision = False
+    _model_rejects_everything(bridge)
+    bridge._request_route = lambda: False
+
+
+def test_escape_tier_keeps_the_robot_moving_when_the_normal_margin_deadlocks(bridge):
+    _parallel_obstacle(bridge, nearest_m=0.40)  # normal footprint is 0.50, escape 0.36
+    bridge._on_timer()
+    assert bridge._last_status.startswith("path_valid global_fallback")
+    assert "tier=escape" in bridge._last_status
+    assert _events(bridge, "global_path_fallback")[0]["tier"] == "escape"
+    assert len(bridge.path_pub.messages[-1].poses) >= 7
+
+
+def test_escape_tier_is_not_used_when_the_robot_is_closer_than_the_escape_radius(bridge):
+    _parallel_obstacle(bridge, nearest_m=0.30)  # already inside 0.36: stay put
+    bridge._on_timer()
+    assert not bridge._last_status.startswith("path_valid")
+    assert not _events(bridge, "global_path_fallback")
+    assert "escape:" not in _events(bridge, "global_path_fallback_rejected")[0]["reason"]  # never attempted
+
+
+def test_normal_margin_is_preferred_over_the_escape_tier(bridge):
+    _parallel_obstacle(bridge, nearest_m=0.60)  # everything fits at the normal radius
+    bridge._on_timer()
+    assert bridge._last_status.startswith("path_valid global_fallback")
+    assert "tier=normal" in bridge._last_status
+
+
+def test_narrow_passage_that_only_fits_the_reduced_radius_is_driven_in_the_escape_tier(bridge):
+    _narrow_passage(bridge, wall_y=-0.40)  # 0.83 m gap: fits a 0.36 m radius, not 0.50 m
+    bridge.arc_planner_fallback = False
+    bridge._on_timer()
+    assert bridge._last_status.startswith("path_valid global_fallback")
+    assert "tier=escape" in bridge._last_status
+    assert abs(_events(bridge, "global_path_fallback")[0]["lateral_shift_m"]) <= 0.07  # centre line -0.04..+0.07 m is free
+
+
+def test_escape_radius_adapts_to_how_close_the_robot_already_is(bridge):
+    _parallel_obstacle(bridge, nearest_m=0.345)  # between the 0.33 floor and the 0.36 cap
+    bridge._on_timer()
+    assert bridge._last_status.startswith("path_valid global_fallback")
+    event = _events(bridge, "global_path_fallback")[0]
+    assert event["tier"] == "escape"
+    assert 0.33 <= event["footprint_radius_m"] <= 0.345  # follows the robot's clearance, not a fixed 0.36
+
+
+def test_escape_never_goes_below_the_body_radius_floor(bridge):
+    _parallel_obstacle(bridge, nearest_m=0.32)  # closer than the 0.33 body circle: do not drive
+    bridge._on_timer()
+    assert not bridge._last_status.startswith("path_valid")
+    assert not _events(bridge, "global_path_fallback")
+
+
+def test_escape_paths_do_not_get_closer_to_the_obstacle_than_the_robot_already_is(bridge):
+    # obstacle 0.35 m to the side now, but only 0.30 m away further ahead: moving on would
+    # be closer than the start, so the adaptive radius (>= 0.35) must reject that path.
+    def cost(points, radius, weight=1.0):
+        for x, y in points:
+            nearest = 0.35 if x < 0.2 else 0.30
+            if radius > nearest:
+                return 1.0
+        return 0.0
+    bridge.map_provider.path_collision_cost = cost
+    bridge.map_collision = False
+    _model_rejects_everything(bridge)
+    bridge._request_route = lambda: False
+    bridge._on_timer()
+    assert not bridge._last_status.startswith("path_valid global_fallback")

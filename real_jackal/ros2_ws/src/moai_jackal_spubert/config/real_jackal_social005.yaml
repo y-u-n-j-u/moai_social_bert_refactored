@@ -50,6 +50,12 @@ real_jackal_spubert_bridge:
     arc_max_curvature: 1.6
     arc_curvature_step: 0.1
     arc_target_distance_m: 2.0
+    # Start-direction offsets below the tracker's 0.95 rad rotate-in-place angle: curve while driving.
+    arc_heading_offsets_rad: [0.0, 0.4, -0.4, 0.8, -0.8]
+    # Last keep-moving tier when nothing fits at robot_radius+margin (0.44 m).
+    escape_footprint_radius_m: 0.36
+    # escape radius adapts to the robot's current clearance, never below this floor (body diagonal radius).
+    escape_floor_radius_m: 0.33
 
     robot_radius: 0.34
     # 0.16 -> 0.10 (09-30): with robot_radius 0.34 the 0.50m footprint left only
@@ -107,8 +113,10 @@ safe_path_tracker:
     # or slow it; anything inside 0.38 m in the sector is still an emergency stop.
     obstacle_stop_distance: 0.45
     obstacle_slow_distance: 1.00
-    obstacle_corridor_half_width: 0.42
-    obstacle_hard_stop_distance: 0.38
+    # corridor = body half width 0.215 + 0.125; hard stop sits inside the body's circumscribed
+    # radius (0.33) but beyond the front face (0.25) so passing a box corner is not a stop.
+    obstacle_corridor_half_width: 0.34
+    obstacle_hard_stop_distance: 0.30
     forward_scan_half_angle: 0.70
     human_stop_distance: 0.90
     rotate_in_place_angle: 0.95
