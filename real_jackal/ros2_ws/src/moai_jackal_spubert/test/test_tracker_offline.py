@@ -390,3 +390,123 @@ def test_turn_speed_floor_never_overrides_the_obstacle_stop(tracker):
     tracker._control_tick()
     assert_zero(tracker)
     assert record(tracker)["status"].startswith("obstacle_too_close")
+
+
+def test_slow_down_ignores_an_obstacle_the_path_is_turning_away_from(tracker):
+    use_corridor_rule(tracker)
+    tracker.rotate_in_place_angle = 1.35
+    tracker.minimum_turn_speed = 0.08
+    tracker.motion_enabled = True
+    tracker._on_path(sideways_path(0.9))            # path veers ~52 deg left
+    scan_with_point(tracker, 0.70, -0.05)           # obstacle straight ahead, inside the slow range
+    tracker.slow_along_travel_direction = False
+    tracker._control_tick()
+    old_v = record(tracker)["target_command"]["v"]
+    tracker.slow_along_travel_direction = True
+    tracker._control_tick()
+    new_v = record(tracker)["target_command"]["v"]
+    assert new_v > old_v * 1.5 and new_v >= 0.08    # no longer crawls past something it is leaving behind
+
+
+def test_slow_down_still_applies_to_an_obstacle_in_the_direction_of_travel(tracker):
+    use_corridor_rule(tracker)
+    tracker.rotate_in_place_angle = 1.35
+    tracker.minimum_turn_speed = 0.08
+    tracker.slow_along_travel_direction = True
+    tracker.motion_enabled = True
+    tracker._on_path(sideways_path(0.9))            # veering left ~52 deg
+    # obstacle 0.75 m away exactly along the travel direction (left-forward)
+    scan_with_point(tracker, 0.75 * math.cos(0.9), 0.75 * math.sin(0.9))
+    tracker._control_tick()
+    slowed = record(tracker)["target_command"]["v"]
+    scan_with_point(tracker, 5.0, 0.0)
+    tracker._control_tick()
+    clear = record(tracker)["target_command"]["v"]
+    assert slowed < clear * 0.6
+
+
+def enable_avoidance(tracker):
+    tracker.avoidance = tracker.avoidance.__class__(
+        lookahead_m=3.0, half_width_m=0.75, gain=0.5, max_rate=0.4)
+
+
+def test_avoidance_is_off_by_default(tracker):
+    assert tracker.avoidance.gain == 0.0
+
+
+def test_avoidance_curves_away_from_an_obstacle_the_straight_path_runs_into(tracker):
+    tracker.motion_enabled = True
+    tracker._on_odom(NS(header=header(), pose=NS(pose=pose(0.39, 0.0)), twist=NS(twist=Twist())))  # on the path
+    scan_with_point(tracker, 1.5, 0.35)             # box ahead-left, path is straight
+    tracker._control_tick()
+    plain = record(tracker)["target_command"]["w"]
+    enable_avoidance(tracker)
+    tracker._control_tick()
+    steered = record(tracker)["target_command"]["w"]
+    assert steered < plain - 0.12                    # now turns right, away from it
+    scan_with_point(tracker, 1.5, -0.35)
+    tracker._control_tick()
+    assert record(tracker)["target_command"]["w"] > plain + 0.12  # mirrored
+
+
+def test_avoidance_ignores_a_far_obstacle_and_does_not_touch_the_stop_rules(tracker):
+    use_corridor_rule(tracker)
+    tracker.motion_enabled = True
+    scan_with_point(tracker, 3.6, 0.3)
+    tracker._control_tick()
+    plain = record(tracker)["target_command"]["w"]
+    enable_avoidance(tracker)
+    tracker._control_tick()
+    assert math.isclose(record(tracker)["target_command"]["w"], plain, abs_tol=1e-9)  # beyond 3 m
+    scan_with_point(tracker, 0.40, 0.0)             # still an obstacle stop, steering or not
+    tracker._control_tick()
+    assert_zero(tracker)
+
+
+def enable_gap(tracker):
+    tracker.gap = tracker.gap.__class__(min_gap_m=0.85)
+
+
+def test_gap_is_off_by_default(tracker):
+    assert not tracker.gap.active
+
+
+def test_gap_heads_for_the_open_side_even_if_the_path_leads_into_the_obstacle_side(tracker):
+    tracker.motion_enabled = True
+    tracker._on_odom(NS(header=header(), pose=NS(pose=pose(0.39, 0.0)), twist=NS(twist=Twist())))
+    # wall of returns: box face on the axis (right-leaning) with the opening on the left
+    step = 0.01
+    count = int(2 * math.pi / step) + 1
+    ranges = [math.inf] * count
+
+    def put(x, y):
+        idx = round((math.atan2(y, x) + math.pi) / step)
+        ranges[idx] = min(ranges[idx], math.hypot(x, y))
+    for k in range(30):
+        put(2.0, -0.8 + 0.04 * k)          # box face y -0.8 .. +0.36
+    for k in range(40):
+        put(0.5 + 0.07 * k, -1.2)          # right wall
+        put(0.5 + 0.07 * k, 1.0)           # left wall (opening 0.36 .. 1.0 is only 0.64: too narrow)
+    tracker._on_scan(NS(header=header("base_link"), ranges=ranges, angle_min=-math.pi, angle_increment=step))
+    enable_gap(tracker)
+    tracker._control_tick()
+    assert "gap=" not in tracker._last_status      # opening too narrow (0.64 m): the gap is not used
+    # now widen the left opening: move the left wall out to 1.4 m
+    ranges = [math.inf] * count
+    for k in range(30):
+        put(2.0, -0.8 + 0.04 * k)
+    for k in range(40):
+        put(0.5 + 0.07 * k, -1.2)
+        put(0.5 + 0.07 * k, 1.4)
+    tracker._on_scan(NS(header=header("base_link"), ranges=ranges, angle_min=-math.pi, angle_increment=step))
+    tracker._control_tick()
+    assert record(tracker)["target_command"]["w"] > 0.15 and "gap=" in tracker._last_status
+
+
+def test_gap_does_not_change_the_obstacle_stop(tracker):
+    use_corridor_rule(tracker)
+    tracker.motion_enabled = True
+    enable_gap(tracker)
+    scan_with_point(tracker, 0.40, 0.0)
+    tracker._control_tick()
+    assert_zero(tracker)

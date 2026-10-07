@@ -48,3 +48,14 @@ def test_geometry_helpers():
     assert cs.continuity_cost(STRAIGHT, None, 6) == 0.0
     assert math.isclose(cs.heading_deviation((0, 0), 0.0, LEFT), math.atan2(0.4, 0.04), abs_tol=1e-6)
     assert cs.heading_deviation((0, 0), math.pi / 2, [(1, 0)] * 5) == math.pi / 2
+
+
+def test_extra_costs_prefer_the_roomier_path_even_with_selection_otherwise_off():
+    straight = [(0.5 * (i + 1), 0.0) for i in range(6)]
+    detour = [(0.5 * (i + 1), 0.1 * (i + 1)) for i in range(6)]
+    off = cs.SelectionConfig(rank_weight=0.0, continuity_weight=0.0, heading_weight=0.0, heading_limit_rad=0.0)
+    assert cs.choose_candidate([straight, detour], (0.0, 0.0), 0.0, None, 99.0, off) == 0
+    assert cs.choose_candidate([straight, detour], (0.0, 0.0), 0.0, None, 99.0, off,
+                            extra_costs=[1.5, 0.0]) == 1
+    assert cs.choose_candidate([straight, detour], (0.0, 0.0), 0.0, None, 99.0, off,
+                            extra_costs=[0.0, 0.0]) == 0

@@ -373,23 +373,29 @@ def corridor_obstacle_distance(
     angle_min: float,
     angle_increment: float,
     half_width: float,
+    axis_angle: float = 0.0,
 ) -> float:
-    """Distance ahead to the nearest scan point inside the straight-ahead corridor.
+    """Distance to the nearest scan point inside the corridor along ``axis_angle``.
 
-    The corridor is the strip ``0 < x`` and ``|y| <= half_width`` in the scan frame
-    (x forward, y left), i.e. what the robot body sweeps when driving straight.
-    Points beside it (a box edge in a narrow passage) do not count. Returns inf
-    when the corridor is clear.
+    With ``axis_angle=0`` the corridor is the strip ``0 < x`` and ``|y| <= half_width`` in
+    the scan frame (x forward, y left), i.e. what the robot body sweeps when driving
+    straight. A non-zero axis (rad, left positive) tilts the corridor toward the direction
+    the robot is about to travel, so an obstacle straight ahead does not count while the
+    path turns away from it. Points beside the corridor do not count. Returns inf when the
+    corridor is clear.
     """
     nearest = math.inf
     angle = float(angle_min)
     width = abs(float(half_width))
+    cos_a, sin_a = math.cos(float(axis_angle)), math.sin(float(axis_angle))
     for value in ranges:
         r = float(value)
         if math.isfinite(r) and r > 0.0:
             a = normalize_angle(angle)
-            x = r * math.cos(a)
-            if x > 0.0 and abs(r * math.sin(a)) <= width and x < nearest:
+            px, py = r * math.cos(a), r * math.sin(a)
+            x = px * cos_a + py * sin_a          # along the travel axis
+            y = -px * sin_a + py * cos_a         # across it
+            if x > 0.0 and abs(y) <= width and x < nearest:
                 nearest = x
         angle += float(angle_increment)
     return nearest

@@ -24,6 +24,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 from .navigation_core import (
     same_frame_id,
+    interpolate_polyline,
     transform_xy,
     validate_candidate_path,
     yaw_from_quaternion,
@@ -37,7 +38,8 @@ from .guided_spubert_runtime import (
 )
 from .rolling_laser_map import RollingLaserMapProvider
 from .arc_planner import arc_cost, arc_points, curvature_fan
-from .candidate_select import SelectionConfig, choose_candidate
+from .candidate_select import SelectionConfig, choose_candidate, continuity_cost, heading_deviation
+from .frame_smoothing import is_large_jump, slew_transform
 from .route_fallback import lateral_offsets, route_prefix_points, shift_path_laterally
 from .collision_diagnostics import collision_evidence, header_evidence
 from .tracker_diagnostics import diagnostic_json
@@ -149,6 +151,15 @@ class RealJackalSpubertBridgeNode(Node):
         self.global_fallback_min_safe_length_m = float(
             self.declare_parameter("global_fallback_min_safe_length_m", 0.8).value
         )
+        # While a fallback is running, the route-prefix and the arc alternate when each is
+        # valid on and off. Keep the one that continues the path being driven, and switch only
+        # if the other is clearly closer to it (m of mean offset over its first points).
+        self.fallback_switch_margin_m = float(
+            self.declare_parameter("fallback_switch_margin_m", 0.10).value
+        )
+        self.fallback_switch_window_s = float(
+            self.declare_parameter("fallback_switch_window_s", 3.0).value
+        )
         self.global_fallback_max_sec = float(
             self.declare_parameter("global_fallback_max_sec", 20.0).value
         )
@@ -183,6 +194,8 @@ class RealJackalSpubertBridgeNode(Node):
         # Default offsets stay below the tracker's rotate-in-place angle (0.95 rad)
         # so avoidance is a curve driven at speed, not stop-pivot-go. 1.2 rad would
         # make the tracker zero the forward speed and turn on the spot.
+        self.arc_curvature_weight = float(self.declare_parameter("arc_curvature_weight", 0.15).value)
+        self.arc_heading_weight = float(self.declare_parameter("arc_heading_weight", 0.25).value)
         self.arc_heading_offsets = tuple(
             float(v) for v in self.declare_parameter(
                 "arc_heading_offsets_rad", [0.0, 0.4, -0.4, 0.8, -0.8]
@@ -205,6 +218,41 @@ class RealJackalSpubertBridgeNode(Node):
         # relative to the path published a moment ago, or leaves the robot heading
         # sharply, is avoided: the tracker otherwise chases a target that flips between
         # left and right and ends up stopping to turn (2026-10-06 field run).
+        # When the only valid model path swings sharply away from the robot heading (the
+        # tracker would then pivot toward whatever side it points to, even toward an
+        # obstacle), try the smoother fallback chain first and use the model path only if
+        # no fallback path with a gentler start exists. 0/False keeps the old behaviour.
+        # map->odom is applied to the route and goal through a rate limiter. AMCL keeps
+        # correcting it by 0.2-0.7 m while driving, which used to slide the whole route
+        # sideways in odom and made the tracker steer after it (a dominant source of the
+        # left/right zigzag in the 2026-10-07 runs). 0 = off (use the latest transform).
+        self.map_to_odom_slew_m_s = float(self.declare_parameter("map_to_odom_slew_m_s", 0.0).value)
+        self.map_to_odom_slew_rad_s = float(self.declare_parameter("map_to_odom_slew_rad_s", 0.05).value)
+        self.map_to_odom_jump_reject_m = float(self.declare_parameter("map_to_odom_jump_reject_m", 3.0).value)
+        self.map_to_odom_jump_accept_s = float(self.declare_parameter("map_to_odom_jump_accept_s", 3.0).value)
+        self._applied_m2o = None
+        self._applied_m2o_t = 0.0
+        self._applied_m2o_target = None
+        self._applied_m2o_goal_generation = None
+        self._m2o_jump_since_s = None
+        # Path retention: while the remainder of the path published a moment ago is still
+        # valid (re-checked against the fresh map and pedestrians), keep it instead of
+        # switching to whatever candidate this cycle produced. Candidate/planner flips every
+        # ~1 s were the other half of the left/right zigzag. 0 = off.
+        self.path_retention_max_age_s = float(self.declare_parameter("path_retention_max_age_s", 0.0).value)
+        self.path_retention_min_points = int(self.declare_parameter("path_retention_min_points", 5).value)
+        self._last_published_label = ""
+        # Soft margin ("results first" heuristic): prefer paths that keep a comfortable distance
+        # from obstacles and start the detour early. A path is only *valid* at the footprint
+        # radius (0.44 m); without a preference the planner hugs obstacles at that minimum and
+        # swerves at the last moment. 0 = off (binary valid/invalid as before).
+        self.soft_margin_m = float(self.declare_parameter("soft_margin_m", 0.0).value)
+        self.soft_margin_weight = float(self.declare_parameter("soft_margin_weight", 1.5).value)
+        self.soft_margin_trigger_m = float(self.declare_parameter("soft_margin_trigger_m", 0.75).value)
+        self.soft_margin_min_gain_m = float(self.declare_parameter("soft_margin_min_gain_m", 0.12).value)
+        self.prefer_smooth_fallback = bool(
+            self.declare_parameter("prefer_smooth_fallback", False).value
+        )
         self.selection_config = SelectionConfig(
             rank_weight=float(self.declare_parameter("selection_rank_weight", 0.0).value),
             continuity_weight=float(self.declare_parameter("selection_continuity_weight", 0.0).value),
@@ -480,6 +528,7 @@ class RealJackalSpubertBridgeNode(Node):
             self._request_route()
 
         robot_x, robot_y, robot_yaw, odom_frame = robot
+        self._update_applied_transform(self._now_s(), odom_frame)
         goal_xy = self._pose_in_frame(self._goal, odom_frame)
         if goal_xy is None:
             self._hold("goal_transform_unavailable")
@@ -664,14 +713,28 @@ class RealJackalSpubertBridgeNode(Node):
             if valid:
                 valid_entries.append((result, check))
 
+        retained = self._retained_candidate(
+            robot_x, robot_y, goal_xy, footprint_radius,
+            {key: list(value) for key, value in self._human_histories.items()}, now,
+        )
         if valid_entries:
+            paths = [list(entry[0].path_world) for entry in valid_entries]
+            if retained is not None:
+                paths = [retained[0], *paths]
+            extra = [self._soft_margin_penalty(path, footprint_radius) for path in paths]
             chosen_index = choose_candidate(
-                [list(entry[0].path_world) for entry in valid_entries],
-                (robot_x, robot_y), robot_yaw,
+                paths, (robot_x, robot_y), robot_yaw,
                 self._last_published_path, now - self._last_published_s,
-                self.selection_config,
+                self.selection_config, extra_costs=extra,
             )
-            selected, selected_check = valid_entries[chosen_index]
+            if retained is not None and chosen_index == 0:
+                if self._proactive_replacement(retained[0], route, goal_xy, robot_x, robot_y,
+                                               robot_yaw, odom_frame, now, footprint_radius):
+                    return
+                self._publish_retained(retained, odom_frame, goal_xy, robot_x, robot_y, now, attempts)
+                return
+            offset = 1 if retained is not None else 0
+            selected, selected_check = valid_entries[chosen_index - offset]
 
         debug_result = selected or (candidates[0] if candidates else None)
         self._publish_markers(
@@ -686,6 +749,9 @@ class RealJackalSpubertBridgeNode(Node):
             self._publish_collision_markers(odom_frame, attempts)
             self._record("prediction", {"valid": False, "reason": reason, "attempts": attempts,
                                         "collision_context": collision_context})
+            if retained is not None:
+                self._publish_retained(retained, odom_frame, goal_xy, robot_x, robot_y, now, attempts)
+                return
             if self._try_global_path_fallback(
                 f"all_candidates_rejected:{reason}", route, goal_xy, robot_x, robot_y,
                 robot_yaw, odom_frame, now,
@@ -696,6 +762,26 @@ class RealJackalSpubertBridgeNode(Node):
             )
             return
 
+        if self._proactive_replacement(list(selected.path_world), route, goal_xy, robot_x, robot_y,
+                                       robot_yaw, odom_frame, now, footprint_radius):
+            return
+        if (
+            self.prefer_smooth_fallback
+            and self.selection_config.heading_limit_rad > 0.0
+            and heading_deviation((robot_x, robot_y), robot_yaw, selected.path_world)
+            > self.selection_config.heading_limit_rad
+        ):
+            sharp = heading_deviation((robot_x, robot_y), robot_yaw, selected.path_world)
+            if self._try_global_path_fallback(
+                "sharp_model_path", route, goal_xy, robot_x, robot_y, robot_yaw, odom_frame, now,
+                max_heading_dev=self.selection_config.heading_limit_rad,
+            ):
+                self._record_throttled("model_path_replaced_by_smoother_fallback", {
+                    "model_rank": int(selected.candidate_rank),
+                    "model_heading_deviation_rad": sharp,
+                    "limit_rad": self.selection_config.heading_limit_rad,
+                }, now)
+                return
         self._blocked_since_s = None
         self._recovery_active = False
         self._global_fallback_since_s = None
@@ -703,6 +789,8 @@ class RealJackalSpubertBridgeNode(Node):
         self.path_pub.publish(path_message)
         self._last_published_path = [(robot_x, robot_y), *[tuple(p) for p in selected.path_world]]
         self._last_published_s = now
+        self._last_published_label = f"MODEL rank {selected.candidate_rank}/{len(candidates)}"
+        self._publish_source_label(odom_frame, robot_x, robot_y, f"EXECUTED: {self._last_published_label}")
         self.goal_pub.publish(self._point_pose(odom_frame, goal_xy))
         self._publish_collision_markers(odom_frame, attempts)
         self._status(
@@ -793,6 +881,55 @@ class RealJackalSpubertBridgeNode(Node):
         self.global_path_pub.publish(transformed)
         return points
 
+    def _lookup_map_to_odom(self, target_frame: str):
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                target_frame, "map", Time(), timeout=Duration(seconds=0.10)
+            )
+        except TransformException:
+            return None
+        t, q = transform.transform.translation, transform.transform.rotation
+        return (float(t.x), float(t.y), yaw_from_quaternion(q.x, q.y, q.z, q.w))
+
+    def _update_applied_transform(self, now: float, target_frame: str) -> None:
+        """Advance the rate-limited map->target transform used for the route and goal."""
+        if self.map_to_odom_slew_m_s <= 0.0:
+            self._applied_m2o = None
+            return
+        latest = self._lookup_map_to_odom(target_frame)
+        if latest is None:
+            return
+        previous = self._applied_m2o
+        if (
+            previous is None
+            or self._applied_m2o_target != target_frame
+            or self._applied_m2o_goal_generation != self._goal_generation
+        ):
+            # A new goal (or first use) starts from the current best estimate.
+            self._applied_m2o, self._applied_m2o_t = latest, now
+            self._applied_m2o_target = target_frame
+            self._applied_m2o_goal_generation = self._goal_generation
+            self._m2o_jump_since_s = None
+            return
+        if is_large_jump(previous, latest, self.map_to_odom_jump_reject_m):
+            if self._m2o_jump_since_s is None:
+                self._m2o_jump_since_s = now
+            if now - self._m2o_jump_since_s < self.map_to_odom_jump_accept_s:
+                self._record_throttled("map_to_odom_jump_held", {
+                    "applied": list(previous), "latest": list(latest),
+                }, now)
+                return
+            self._record("map_to_odom_jump_accepted", {"applied": list(previous), "latest": list(latest)})
+            self._applied_m2o, self._applied_m2o_t = latest, now
+            self._m2o_jump_since_s = None
+            return
+        self._m2o_jump_since_s = None
+        self._applied_m2o = slew_transform(
+            previous, latest, now - self._applied_m2o_t,
+            self.map_to_odom_slew_m_s, self.map_to_odom_slew_rad_s,
+        )
+        self._applied_m2o_t = now
+
     def _pose_in_frame(self, pose: PoseStamped, target_frame: str):
         return self._xy_in_frame(
             (pose.pose.position.x, pose.pose.position.y),
@@ -803,6 +940,13 @@ class RealJackalSpubertBridgeNode(Node):
     def _xy_in_frame(self, point: XY, source_frame: str, target_frame: str):
         if not source_frame or source_frame == target_frame:
             return float(point[0]), float(point[1])
+        if (
+            self._applied_m2o is not None
+            and source_frame == "map"
+            and target_frame == self._applied_m2o_target
+        ):
+            tx, ty, yaw = self._applied_m2o
+            return transform_xy(point, (tx, ty), yaw)
         try:
             transform = self.tf_buffer.lookup_transform(
                 target_frame,
@@ -876,13 +1020,15 @@ class RealJackalSpubertBridgeNode(Node):
                 marker.pose.position.y = float(point[1])
                 marker.pose.position.z = 0.10
                 marker.pose.orientation.w = 1.0
-                marker.scale.x = marker.scale.y = marker.scale.z = 0.16
                 safe = index < len(result.candidate_safe_mask) and result.candidate_safe_mask[index]
+                # Rejected goal samples stay visible but small and faint: the layer is for
+                # debugging and 20 full-size red spheres drown the paths that matter.
+                marker.scale.x = marker.scale.y = marker.scale.z = 0.16 if safe else 0.07
                 marker.color = ColorRGBA(
                     r=0.10 if safe else 0.90,
                     g=0.75 if safe else 0.15,
                     b=0.35 if safe else 0.10,
-                    a=0.90,
+                    a=0.90 if safe else 0.30,
                 )
                 array.markers.append(marker)
             array.markers.append(
@@ -896,6 +1042,29 @@ class RealJackalSpubertBridgeNode(Node):
                 )
             )
         self.marker_pub.publish(array)
+
+    def _publish_source_label(self, frame_id: str, robot_x: float, robot_y: float, text: str) -> None:
+        """Always-on text above the robot saying which planner produced the executed path."""
+        try:
+            array = MarkerArray()
+            label = Marker()
+            label.header.frame_id = frame_id
+            label.header.stamp = self.get_clock().now().to_msg()
+            label.ns = "executed_source"
+            label.id = 900
+            label.type = Marker.TEXT_VIEW_FACING
+            label.action = Marker.ADD
+            label.pose.position.x, label.pose.position.y = float(robot_x), float(robot_y)
+            label.pose.position.z = 1.0
+            label.pose.orientation.w = 1.0
+            label.scale.z = 0.22
+            label.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0)
+            label.text = text
+            label.lifetime = Duration(seconds=1.5).to_msg()
+            array.markers.append(label)
+            self.marker_pub.publish(array)
+        except Exception as exc:
+            self.get_logger().warning(f"Source label failed: {exc}", throttle_duration_sec=5.0)
 
     def _publish_collision_markers(self, frame_id: str, attempts: list) -> None:
         """Bounded, expiring markers on a separate topic; never alter control."""
@@ -983,6 +1152,90 @@ class RealJackalSpubertBridgeNode(Node):
         message.pose.orientation.w = 1.0
         return message
 
+    def _path_clearance(self, points, base_radius: float) -> float:
+        """Largest tested radius in [base_radius, soft_margin_m] that the path keeps free."""
+        top = self.soft_margin_m
+        if top <= base_radius + 1e-6 or not points:
+            return top
+        dense = interpolate_polyline(list(points), 0.1)
+        clearance = base_radius
+        for step in range(1, 5):
+            radius = base_radius + (top - base_radius) * step / 4.0
+            if self.map_provider.path_collision_cost(dense, radius=radius, weight=1.0) > 0.0:
+                break
+            clearance = radius
+        return clearance
+
+    def _soft_margin_penalty(self, points, base_radius: float) -> float:
+        top = self.soft_margin_m
+        if top <= base_radius + 1e-6:
+            return 0.0
+        clearance = self._path_clearance(points, base_radius)
+        return self.soft_margin_weight * (top - clearance) / (top - base_radius)
+
+    def _proactive_replacement(self, path, route, goal_xy, robot_x, robot_y, robot_yaw,
+                               odom_frame, now, footprint_radius) -> bool:
+        """Swap a valid but tight path for a gentler route-prefix detour, before it is forced."""
+        if self.soft_margin_m <= footprint_radius + 1e-6 or not route:
+            return False
+        clearance = self._path_clearance(path, footprint_radius)
+        if clearance >= self.soft_margin_trigger_m:
+            return False
+        return self._try_global_path_fallback(
+            "proactive_soft_margin", route, goal_xy, robot_x, robot_y, robot_yaw, odom_frame, now,
+            require_clearance=min(clearance + self.soft_margin_min_gain_m, self.soft_margin_m),
+        )
+
+    def _retained_candidate(self, robot_x, robot_y, goal_xy, footprint_radius, human_histories, now):
+        """Remainder of the last published path if it is fresh, near the robot and still valid.
+
+        Returns (points, check) or None. Re-validated every cycle with the same checks as any
+        candidate, so a pedestrian or obstacle that appeared since makes it drop out.
+        """
+        previous = self._last_published_path
+        if (
+            self.path_retention_max_age_s <= 0.0
+            or not previous
+            or now - self._last_published_s > self.path_retention_max_age_s
+        ):
+            return None
+        nearest, nearest_d = 0, math.inf
+        for index, (px, py) in enumerate(previous):
+            d = math.hypot(px - robot_x, py - robot_y)
+            if d < nearest_d:
+                nearest, nearest_d = index, d
+        remaining = [tuple(point) for point in previous[nearest + 1:]]
+        if nearest_d > 0.35 or len(remaining) < self.path_retention_min_points:
+            return None
+        length = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(remaining, remaining[1:]))
+        if length < 0.6:
+            return None
+        check = validate_candidate_path(
+            current=(robot_x, robot_y), path=remaining, final_goal=goal_xy,
+            map_provider=self.map_provider, footprint_radius=footprint_radius,
+            prediction_dt=self.prediction_dt, maximum_model_speed=self.maximum_model_speed,
+            maximum_step_ratio=self.maximum_step_ratio, minimum_goal_progress=self.minimum_goal_progress,
+            human_histories=human_histories, human_sample_dt=self.prediction_dt,
+            minimum_human_center_distance=self.minimum_human_center_distance,
+            human_radius=self.human_radius, human_safety_margin=self.human_safety_margin,
+        )
+        return (remaining, check) if check.valid else None
+
+    def _publish_retained(self, retained, odom_frame, goal_xy, robot_x, robot_y, now, attempts) -> None:
+        points, check = retained
+        self._blocked_since_s = None
+        self._recovery_active = False
+        self.path_pub.publish(self._path_message(odom_frame, points))
+        self.goal_pub.publish(self._point_pose(odom_frame, goal_xy))
+        self._publish_collision_markers(odom_frame, attempts)
+        label = f"{self._last_published_label or 'previous path'} (held)"
+        self._status(f"path_valid retained points={len(points)} human_min={check.minimum_human_distance_m:.3f}")
+        self._publish_source_label(odom_frame, robot_x, robot_y, f"EXECUTED: {label}")
+        self._record_throttled("path_retained", {
+            "from": self._last_published_label, "age_s": now - self._last_published_s,
+            "points": len(points),
+        }, now, period_s=1.0)
+
     def _record_throttled(self, event: str, payload: dict, now: float, period_s: float = 2.0) -> None:
         if now - self._throttled_record_s.get(event, -math.inf) < period_s:
             return
@@ -999,8 +1252,13 @@ class RealJackalSpubertBridgeNode(Node):
         robot_yaw: float,
         odom_frame: str,
         now: float,
+        max_heading_dev: Optional[float] = None,
+        require_clearance: Optional[float] = None,
     ) -> bool:
         """Publish a validated fallback path (route prefix, else arc); False = hold.
+
+        With ``max_heading_dev`` a path whose start leaves the robot heading by more than
+        that many radians is not accepted (used to replace a sharp model path).
 
         Uses validate_candidate_path unchanged, so footprint, pedestrian and
         goal-progress rules are identical to those applied to model output.
@@ -1031,7 +1289,7 @@ class RealJackalSpubertBridgeNode(Node):
         tier = "normal"
         found, last_reason = self._find_fallback_path(
             points, route, goal_xy, robot_x, robot_y, robot_yaw, footprint_radius,
-            human_histories, count, spacing, minimum_points,
+            human_histories, count, spacing, minimum_points, now=now,
         )
         escape_radius = (
             self._adaptive_escape_radius(robot_x, robot_y, footprint_radius)
@@ -1043,7 +1301,7 @@ class RealJackalSpubertBridgeNode(Node):
             # than deadlock because the robot already sits inside the 0.44 m margin.
             found, escape_reason = self._find_fallback_path(
                 points, route, goal_xy, robot_x, robot_y, robot_yaw, escape_radius,
-                human_histories, count, spacing, minimum_points,
+                human_histories, count, spacing, minimum_points, now=now,
             )
             if found is not None:
                 tier = "escape"
@@ -1058,6 +1316,17 @@ class RealJackalSpubertBridgeNode(Node):
             }, now)
             return False
         chosen, chosen_shift, check, source, chosen_curvature, chosen_heading = found
+        if require_clearance is not None and (
+            source != "route_prefix"
+            or self._path_clearance(chosen, footprint_radius if tier == "normal" else escape_radius)
+            < require_clearance
+        ):
+            return False
+        if (
+            max_heading_dev is not None
+            and heading_deviation((robot_x, robot_y), robot_yaw, chosen) > max_heading_dev
+        ):
+            return False
         if self._global_fallback_since_s is None:
             self._global_fallback_since_s = now
         self._global_fallback_last_s = now
@@ -1066,11 +1335,14 @@ class RealJackalSpubertBridgeNode(Node):
         self.path_pub.publish(self._path_message(odom_frame, chosen))
         self._last_published_path = [(robot_x, robot_y), *[tuple(p) for p in chosen]]
         self._last_published_s = now
+        self._last_published_label = f"FALLBACK {source}" + ("" if tier == "normal" else f" ({tier})")
+        self._publish_source_label(odom_frame, robot_x, robot_y, f"EXECUTED: {self._last_published_label}")
         self.goal_pub.publish(self._point_pose(odom_frame, goal_xy))
         self._status(
             f"path_valid global_fallback source={source} tier={tier}{'' if tier == 'normal' else f'({escape_radius:.2f}m)'} points={len(chosen)}/{len(points) or len(chosen)} "
             f"shift={chosen_shift:+.2f} curvature={chosen_curvature or 0.0:+.2f} "
-            f"heading={chosen_heading or 0.0:+.2f} human_min={check.minimum_human_distance_m:.3f}"
+            f"heading={chosen_heading or 0.0:+.2f} human_min={check.minimum_human_distance_m:.3f} "
+            f"trigger={reason}"
         )
         self._record("global_path_fallback", {
             "trigger": reason,
@@ -1106,6 +1378,7 @@ class RealJackalSpubertBridgeNode(Node):
         count: int,
         spacing: float,
         minimum_points: int,
+        now: Optional[float] = None,
     ):
         """Best validated route-prefix (slid sideways) or arc at ``footprint_radius``.
 
@@ -1117,51 +1390,110 @@ class RealJackalSpubertBridgeNode(Node):
         last_reason = "prefix_too_short"
         keep_options = sorted({len(points), max(minimum_points, (len(points) * 3) // 4), minimum_points},
                               reverse=True)
-        for shift in (lateral_offsets(
-            self.global_fallback_max_shift_m, self.global_fallback_shift_step_m
-        ) if points else []):
-            shifted = shift_path_laterally(
-                points, (robot_x, robot_y), shift, self.global_fallback_taper_m
+
+        def _validate(candidate):
+            return validate_candidate_path(
+                current=(robot_x, robot_y),
+                path=candidate,
+                final_goal=goal_xy,
+                map_provider=self.map_provider,
+                footprint_radius=footprint_radius,
+                prediction_dt=self.prediction_dt,
+                maximum_model_speed=self.maximum_model_speed,
+                maximum_step_ratio=self.maximum_step_ratio,
+                minimum_goal_progress=self.minimum_goal_progress,
+                human_histories=human_histories,
+                human_sample_dt=self.prediction_dt,
+                minimum_human_center_distance=self.minimum_human_center_distance,
+                human_radius=self.human_radius,
+                human_safety_margin=self.human_safety_margin,
             )
-            if shifted is None:
-                continue
-            for keep in keep_options:
-                if chosen is not None and keep <= len(chosen):
-                    break  # cannot beat the prefix already found
-                candidate = shifted[:keep]
-                attempt = validate_candidate_path(
-                    current=(robot_x, robot_y),
-                    path=candidate,
-                    final_goal=goal_xy,
-                    map_provider=self.map_provider,
-                    footprint_radius=footprint_radius,
-                    prediction_dt=self.prediction_dt,
-                    maximum_model_speed=self.maximum_model_speed,
-                    maximum_step_ratio=self.maximum_step_ratio,
-                    minimum_goal_progress=self.minimum_goal_progress,
-                    human_histories=human_histories,
-                    human_sample_dt=self.prediction_dt,
-                    minimum_human_center_distance=self.minimum_human_center_distance,
-                    human_radius=self.human_radius,
-                    human_safety_margin=self.human_safety_margin,
+
+        soft = self.soft_margin_m > footprint_radius + 1e-6
+        if points and soft:
+            # Clearance-aware: among all valid shifts take the one with the best balance of
+            # distance kept from obstacles, sideways move and usable length (not simply the
+            # smallest valid shift, which hugs the obstacle at the minimum legal distance).
+            span = max(self.soft_margin_m - footprint_radius, 1e-6)
+            best = None
+            for shift in lateral_offsets(
+                self.global_fallback_max_shift_m, self.global_fallback_shift_step_m
+            ):
+                shifted = shift_path_laterally(
+                    points, (robot_x, robot_y), shift, self.global_fallback_taper_m
                 )
-                if attempt.valid:
-                    chosen, chosen_shift, check = candidate, shift, attempt
-                    break
-                if shift == 0.0:
-                    last_reason = attempt.reason
-            if chosen is not None and len(chosen) == len(points):
-                break  # full-length prefix at the smallest shift: cannot improve
-        if chosen is not None:
-            return (chosen, chosen_shift, check, "route_prefix", None, None), last_reason
-        if self.arc_planner_fallback:
+                if shifted is None:
+                    continue
+                for keep in keep_options:
+                    candidate = shifted[:keep]
+                    attempt = _validate(candidate)
+                    if attempt.valid:
+                        # Judge the clearance of the whole shifted prefix, not the truncated
+                        # one: cutting a path short just before an obstacle must not hide it.
+                        clearance = self._path_clearance(shifted, footprint_radius)
+                        cost = (
+                            self.soft_margin_weight * (self.soft_margin_m - clearance) / span
+                            + 0.5 * abs(shift)
+                            + 0.4 * (len(points) - keep) / max(len(points), 1)
+                        )
+                        if best is None or cost < best[0]:
+                            best = (cost, candidate, shift, attempt)
+                        break  # longest valid length for this shift
+                    if shift == 0.0 and keep == keep_options[0]:
+                        last_reason = attempt.reason
+            if best is not None:
+                chosen, chosen_shift, check = best[1], best[2], best[3]
+        else:
+            for shift in (lateral_offsets(
+                self.global_fallback_max_shift_m, self.global_fallback_shift_step_m
+            ) if points else []):
+                shifted = shift_path_laterally(
+                    points, (robot_x, robot_y), shift, self.global_fallback_taper_m
+                )
+                if shifted is None:
+                    continue
+                for keep in keep_options:
+                    if chosen is not None and keep <= len(chosen):
+                        break  # cannot beat the prefix already found
+                    candidate = shifted[:keep]
+                    attempt = _validate(candidate)
+                    if attempt.valid:
+                        chosen, chosen_shift, check = candidate, shift, attempt
+                        break
+                    if shift == 0.0:
+                        last_reason = attempt.reason
+                if chosen is not None and len(chosen) == len(points):
+                    break  # full-length prefix at the smallest shift: cannot improve
+        prefix = (
+            (chosen, chosen_shift, check, "route_prefix", None, None) if chosen is not None else None
+        )
+        # An arc is also computed when the arc was just driven, so the two can be compared.
+        arc_was_driven = (
+            now is not None
+            and self._last_published_label.startswith("FALLBACK arc")
+            and now - self._last_published_s <= self.fallback_switch_window_s
+        )
+        arc_found = None
+        if self.arc_planner_fallback and (prefix is None or arc_was_driven):
             arc = self._select_arc_path(
                 route, goal_xy, robot_x, robot_y, robot_yaw, footprint_radius,
                 human_histories, count,
             )
             if arc is not None:
                 pts, curvature, arc_check, heading = arc
-                return (pts, 0.0, arc_check, "arc", curvature, heading), last_reason
+                arc_found = (pts, 0.0, arc_check, "arc", curvature, heading)
+        if prefix is not None and arc_found is not None:
+            previous = self._last_published_path
+            if (
+                continuity_cost(arc_found[0], previous, 4) + self.fallback_switch_margin_m
+                < continuity_cost(prefix[0], previous, 4)
+            ):
+                return arc_found, last_reason
+            return prefix, last_reason
+        if prefix is not None:
+            return prefix, last_reason
+        if arc_found is not None:
+            return arc_found, last_reason
         return None, last_reason
 
     def _select_arc_path(
@@ -1198,7 +1530,9 @@ class RealJackalSpubertBridgeNode(Node):
                     if pts is None:
                         continue
                     cost = arc_cost(pts[-1], target, curvature, length, maximum_length,
-                                    heading_offset=heading_offset)
+                                    heading_offset=heading_offset,
+                                    curvature_weight=self.arc_curvature_weight,
+                                    heading_weight=self.arc_heading_weight)
                     if cost >= best_cost:
                         continue  # cannot beat the best valid arc: skip the costly check
                     check = validate_candidate_path(

@@ -40,27 +40,44 @@ real_jackal_spubert_bridge:
 
     # Follow a safe prefix of the Nav2 path when every SPU-BERT candidate is rejected.
     global_path_fallback: true
-    global_fallback_length_m: 1.5
+    # 3 m of route and a 1.5 m ramp: the sideways avoidance move is spread out, so a 0.8 m detour
+    # needs ~28 deg of heading change instead of ~63 deg with a 0.4 m ramp.
+    global_fallback_length_m: 3.0
     global_fallback_min_safe_length_m: 0.8
     global_fallback_max_sec: 60.0
-    global_fallback_max_shift_m: 0.30
-    global_fallback_shift_step_m: 0.03
-    global_fallback_taper_m: 0.40
+    global_fallback_max_shift_m: 0.90
+    global_fallback_shift_step_m: 0.05
+    global_fallback_taper_m: 1.50
     arc_planner_fallback: true
-    arc_max_curvature: 1.6
+    arc_max_curvature: 1.2
+    arc_curvature_weight: 0.35
+    arc_heading_weight: 0.60
     arc_curvature_step: 0.1
-    arc_target_distance_m: 2.0
+    arc_target_distance_m: 3.0
     # Start-direction offsets below the tracker's 0.95 rad rotate-in-place angle: curve while driving.
-    arc_heading_offsets_rad: [0.0, 0.4, -0.4, 0.8, -0.8]
+    arc_heading_offsets_rad: [0.0, 0.3, -0.3, 0.6, -0.6]
     # Last keep-moving tier when nothing fits at robot_radius+margin (0.44 m).
     escape_footprint_radius_m: 0.36
     # escape radius adapts to the robot's current clearance, never below this floor (body diagonal radius).
     escape_floor_radius_m: 0.33
     # Candidate choice (bridge): avoid flipping left/right between cycles and sharp swerves.
     selection_rank_weight: 0.15
-    selection_continuity_weight: 2.0
+    selection_continuity_weight: 3.0
     selection_heading_weight: 0.3
-    selection_heading_limit_rad: 0.9
+    selection_heading_limit_rad: 0.6
+    # replace a sharp-swerving model path by a gentler fallback path when one exists
+    prefer_smooth_fallback: true
+    # soft margin: prefer >=0.9 m from obstacles; detour early when a valid path is tighter than 0.75 m
+    soft_margin_m: 0.90
+    soft_margin_weight: 1.5
+    soft_margin_trigger_m: 0.75
+    soft_margin_min_gain_m: 0.12
+    # keep the previous path while its remainder is still valid (<= 2 s): fewer left/right switches
+    path_retention_max_age_s: 2.0
+    path_retention_min_points: 5
+    # follow AMCL's map->odom corrections at <= 0.10 m/s (route/goal no longer jump with each correction)
+    map_to_odom_slew_m_s: 0.10
+    map_to_odom_slew_rad_s: 0.05
 
     robot_radius: 0.34
     # 0.16 -> 0.10 (09-30): with robot_radius 0.34 the 0.50m footprint left only
@@ -102,12 +119,12 @@ safe_path_tracker:
     motion_enabled: false
     require_tracks_heartbeat: true
     control_rate_hz: 10.0
-    lookahead_distance: 0.70
+    lookahead_distance: 1.00
     goal_tolerance: 0.50
     maximum_linear_speed: 0.25
     maximum_angular_speed: 0.55
     maximum_linear_acceleration: 0.35
-    maximum_angular_acceleration: 1.20
+    maximum_angular_acceleration: 0.60
     path_timeout_sec: 1.20
     odom_timeout_sec: 0.50
     scan_timeout_sec: 0.50
@@ -122,10 +139,24 @@ safe_path_tracker:
     # radius (0.33) but beyond the front face (0.25) so passing a box corner is not a stop.
     obstacle_corridor_half_width: 0.34
     obstacle_hard_stop_distance: 0.30
+    # slow down for obstacles along the direction of travel (not straight ahead) while turning away
+    slow_along_travel_direction: true
+    # continuous steering away from obstacles in the way (rad/s at an obstacle touching the robot)
+    avoidance_gain: 0.50
+    avoidance_max_rate: 0.40
+    avoidance_lookahead_m: 3.0
+    avoidance_half_width_m: 0.75
+    # follow-the-gap: with an obstacle on the straight line (within 3 m), head for the side that
+    # has an opening of at least 0.85 m (closed on both sides by obstacle/wall); 0 = off
+    gap_min_width_m: 0.85
+    gap_horizon_m: 3.5
+    gap_block_horizon_m: 3.0
+    gap_edge_margin_m: 0.65
+    gap_straight_half_width_m: 0.60
     forward_scan_half_angle: 0.70
     human_stop_distance: 0.90
     # Pivot only for a really large heading error; below it keep >= minimum_turn_speed and
     # drive a curve. Obstacle slow-down (stop 0.45 m / slow 1.0 m) still scales this down.
     rotate_in_place_angle: 1.35
     minimum_turn_speed: 0.08
-    angular_gain: 1.60
+    angular_gain: 1.00

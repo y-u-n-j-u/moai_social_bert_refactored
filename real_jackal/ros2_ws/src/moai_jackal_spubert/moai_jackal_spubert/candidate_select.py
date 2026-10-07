@@ -72,6 +72,7 @@ def choose_candidate(
     previous: Optional[Sequence[XY]],
     previous_age_s: float,
     config: SelectionConfig,
+    extra_costs: Optional[Sequence[float]] = None,
 ) -> int:
     """Index into ``paths`` (given in model-rank order) of the candidate to publish.
 
@@ -79,7 +80,10 @@ def choose_candidate(
     """
     if not paths:
         raise ValueError("no candidates")
-    if not config.active or len(paths) == 1:
+    extra = list(extra_costs) if extra_costs is not None else [0.0] * len(paths)
+    if len(extra) != len(paths):
+        raise ValueError("extra_costs must match paths")
+    if len(paths) == 1 or not (config.active or any(c > 0.0 for c in extra)):
         return 0
     usable = list(range(len(paths)))
     if config.heading_limit_rad > 0.0:
@@ -93,6 +97,7 @@ def choose_candidate(
             config.rank_weight * i
             + config.continuity_weight * continuity_cost(paths[i], use_previous, config.lookahead_points)
             + config.heading_weight * heading_deviation(robot, yaw, paths[i])
+            + extra[i]
         )
         if cost < best_cost - 1e-12:
             best, best_cost = i, cost

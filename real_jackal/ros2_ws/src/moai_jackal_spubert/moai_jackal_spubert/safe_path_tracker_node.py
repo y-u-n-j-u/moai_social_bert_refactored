@@ -26,6 +26,9 @@ from .navigation_core import (
     same_frame_id,
     yaw_from_quaternion,
 )
+from .obstacle_steering import (
+    GapConfig, SteeringConfig, avoidance_steering, combine_with_path_turn, gap_heading,
+)
 from .tracker_diagnostics import StopEpisode, diagnostic_json
 
 
@@ -94,6 +97,28 @@ class SafePathTrackerNode(Node):
         )
         self.obstacle_hard_stop_distance = float(
             self.declare_parameter("obstacle_hard_stop_distance", 0.0).value
+        )
+        # Continuous sideways steering away from obstacles ahead (0 gain = off). It is added to the
+        # path-following turn so the robot curves around an obstacle from a distance.
+        self.avoidance = SteeringConfig(
+            lookahead_m=float(self.declare_parameter("avoidance_lookahead_m", 3.0).value),
+            half_width_m=float(self.declare_parameter("avoidance_half_width_m", 0.75).value),
+            gain=float(self.declare_parameter("avoidance_gain", 0.0).value),
+            max_rate=float(self.declare_parameter("avoidance_max_rate", 0.40).value),
+        )
+        # Follow-the-gap (0 min width = off): when something blocks the straight line, head for the
+        # side of it that has room to pass instead of following a path that may lead into a dead end.
+        self.gap = GapConfig(
+            horizon_m=float(self.declare_parameter("gap_horizon_m", 3.5).value),
+            block_horizon_m=float(self.declare_parameter("gap_block_horizon_m", 3.0).value),
+            min_gap_m=float(self.declare_parameter("gap_min_width_m", 0.0).value),
+            edge_margin_m=float(self.declare_parameter("gap_edge_margin_m", 0.65).value),
+            straight_half_m=float(self.declare_parameter("gap_straight_half_width_m", 0.60).value),
+        )
+        self._avoid_side = 0
+        self._avoid_side_s = -1e9
+        self.slow_along_travel_direction = bool(
+            self.declare_parameter("slow_along_travel_direction", False).value
         )
         self.human_stop_distance = float(
             self.declare_parameter("human_stop_distance", 0.90).value
@@ -336,21 +361,61 @@ class SafePathTrackerNode(Node):
             self._stop("path_endpoint_reached")
             return
         heading_error = normalize_angle(math.atan2(target[1] - robot_y, target[0] - robot_x) - robot_yaw)
+        gap_heading_used = None
+        if self.gap.active:
+            gap = gap_heading(
+                self._scan.ranges, self._scan.angle_min, self._scan.angle_increment, self.gap,
+                prefer_side=self._avoid_side if now - self._avoid_side_s < 2.0 else 0,
+            )
+            if gap.blocked and gap.heading is not None:
+                heading_error = gap.heading
+                gap_heading_used = gap.heading
+                self._avoid_side, self._avoid_side_s = gap.side, now
         angular = clamp(
             self.angular_gain * heading_error,
             -self.maximum_angular_speed,
             self.maximum_angular_speed,
         )
+        avoid_rate = 0.0
+        if (self.avoidance.active and gap_heading_used is None
+                and abs(heading_error) < self.rotate_in_place_angle):
+            # an obstacle dead ahead: keep last side for a while, else go to the side the path leans
+            if now - self._avoid_side_s < 1.5 and self._avoid_side != 0:
+                prefer = self._avoid_side
+            else:
+                prefer = 1 if heading_error >= 0.0 else -1
+            steering = avoidance_steering(
+                self._scan.ranges, self._scan.angle_min, self._scan.angle_increment,
+                self.avoidance, prefer_side=prefer,
+            )
+            if steering.side != 0:
+                self._avoid_side, self._avoid_side_s = steering.side, now
+                combined = clamp(
+                    combine_with_path_turn(angular, steering),
+                    -self.maximum_angular_speed, self.maximum_angular_speed,
+                )
+                avoid_rate = combined - angular
+                angular = combined
         if abs(heading_error) >= self.rotate_in_place_angle:
             linear = 0.0
         else:
             linear = self.maximum_linear_speed * max(math.cos(heading_error), 0.0)
             if self.minimum_turn_speed > 0.0:
                 linear = max(linear, min(self.minimum_turn_speed, self.maximum_linear_speed))
-        if minimum_obstacle < self.obstacle_slow_distance:
+        slow_obstacle = minimum_obstacle
+        if self.obstacle_corridor_half_width > 0.0 and self.slow_along_travel_direction:
+            # Slow for what lies in the direction the robot is going to move, not for an
+            # obstacle straight ahead that the path is already turning away from (the stop
+            # checks above still use the straight-ahead corridor and the sector hard stop).
+            slow_obstacle = corridor_obstacle_distance(
+                self._scan.ranges, self._scan.angle_min, self._scan.angle_increment,
+                self.obstacle_corridor_half_width,
+                axis_angle=clamp(heading_error, -0.9, 0.9),
+            )
+        if slow_obstacle < self.obstacle_slow_distance:
             denominator = max(self.obstacle_slow_distance - self.obstacle_stop_distance, 1e-3)
             linear *= clamp(
-                (minimum_obstacle - self.obstacle_stop_distance) / denominator,
+                (slow_obstacle - self.obstacle_stop_distance) / denominator,
                 0.0,
                 1.0,
             )
@@ -364,6 +429,8 @@ class SafePathTrackerNode(Node):
         status = (
             f"tracking v={linear:.2f} w={angular:.2f} "
             f"obstacle={minimum_obstacle:.2f} human={self._minimum_human_distance:.2f}"
+            f"{f' avoid={avoid_rate:+.2f}' if avoid_rate else ''}"
+            f"{f' gap={gap_heading_used:+.2f}' if gap_heading_used is not None else ''}"
         )
         self._status(status)
         self._emit_diagnostics(status, linear, angular, stopped=False)

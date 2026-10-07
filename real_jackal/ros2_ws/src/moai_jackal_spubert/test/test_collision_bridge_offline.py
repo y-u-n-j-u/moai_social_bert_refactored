@@ -621,3 +621,189 @@ def test_sharp_swerve_is_skipped_when_a_straighter_valid_candidate_exists(bridge
     bridge._on_timer()
     assert bridge.path_pub.messages[-1].poses == straight
     assert _predictions(bridge)[0]["selected_rank"] == 1  # logged as the rank actually used
+
+
+# --- sharp model path -> gentler fallback; always-on executed-source label ---
+
+def _only_a_sharp_left_swerve(bridge):
+    swerve = [(0.02 * (i + 1), 0.1 * (i + 1)) for i in range(12)]  # ~80 deg left, short forward travel
+    bridge._runtime.candidates = [NS(selected_goal_valid=True, trajectory_map_safe=True,
+                                     execution_valid=True, path_world=swerve,
+                                     candidate_rank=3, candidate_index=13)]
+    bridge.map_collision = False
+    bridge.selection_config = type(bridge.selection_config)(heading_limit_rad=0.9)
+    return swerve
+
+
+def test_default_keeps_a_sharp_model_path_even_if_a_gentler_fallback_exists(bridge):
+    swerve = _only_a_sharp_left_swerve(bridge)
+    bridge._on_timer()
+    assert bridge.path_pub.messages[-1].poses == swerve
+
+
+def test_sharp_model_path_is_replaced_by_a_gentler_fallback_when_enabled(bridge):
+    swerve = _only_a_sharp_left_swerve(bridge)
+    bridge.prefer_smooth_fallback = True
+    bridge._on_timer()
+    path = bridge.path_pub.messages[-1].poses
+    assert path != swerve and len(path) >= 7
+    assert bridge._last_status.startswith("path_valid global_fallback")
+    event = _events(bridge, "model_path_replaced_by_smoother_fallback")[0]
+    assert event["model_rank"] == 3 and event["model_heading_deviation_rad"] > 0.9
+
+
+def test_sharp_model_path_is_still_used_when_no_gentler_fallback_exists(bridge):
+    swerve = _only_a_sharp_left_swerve(bridge)
+    bridge.prefer_smooth_fallback = True
+
+    def cost(points, radius, weight=1.0):  # forward travel beyond 0.35 m is blocked
+        return 1.0 if any(x > 0.35 for x, _ in points) else 0.0
+    bridge.map_provider.path_collision_cost = cost
+    bridge._on_timer()
+    assert bridge.path_pub.messages[-1].poses == swerve  # better than stopping
+    assert not _events(bridge, "model_path_replaced_by_smoother_fallback")
+
+
+def _labels(bridge):
+    return [m.text for arr in bridge.marker_pub.messages for m in arr.markers
+            if getattr(m, "ns", "") == "executed_source"]
+
+
+def test_executed_source_label_names_the_planner_that_drove(bridge):
+    bridge.map_collision = False
+    bridge._on_timer()
+    assert _labels(bridge)[-1].startswith("EXECUTED: MODEL rank")
+    for result in bridge._runtime.candidates:
+        result.selected_goal_valid = False
+    bridge.now_s += 1.0
+    bridge._odom_stamp_s = bridge._scan_stamp_s = bridge._tracks_stamp_s = bridge.now_s
+    bridge._on_timer()
+    assert _labels(bridge)[-1].startswith("EXECUTED: FALLBACK route_prefix")
+
+
+# --- map->odom is followed at a bounded rate ---------------------------------
+
+def test_route_transform_follows_amcl_corrections_at_the_rate_limit(bridge):
+    bridge.map_to_odom_slew_m_s = 0.10
+    latest = [(10.0, 0.0, 0.0)]
+    bridge._lookup_map_to_odom = lambda target: latest[0]
+    xy = type(bridge)._xy_in_frame
+    bridge._update_applied_transform(100.0, "odom")                # first use: take the latest
+    assert xy(bridge, (1.0, 0.0), "map", "odom") == pytest.approx((11.0, 0.0))
+    latest[0] = (10.0, -0.6, 0.0)                                  # AMCL shifts the estimate 0.6 m sideways
+    bridge._update_applied_transform(101.0, "odom")                # 1 s later: only 0.1 m followed
+    assert xy(bridge, (1.0, 0.0), "map", "odom")[1] == pytest.approx(-0.1)
+    bridge._update_applied_transform(107.0, "odom")                # after 6 s it has arrived
+    assert xy(bridge, (1.0, 0.0), "map", "odom")[1] == pytest.approx(-0.6)
+
+
+def test_a_new_goal_restarts_from_the_current_estimate(bridge):
+    bridge.map_to_odom_slew_m_s = 0.10
+    latest = [(10.0, 0.0, 0.0)]
+    bridge._lookup_map_to_odom = lambda target: latest[0]
+    bridge._update_applied_transform(100.0, "odom")
+    latest[0] = (10.0, -0.6, 0.0)
+    bridge._goal_generation += 1
+    bridge._update_applied_transform(100.5, "odom")
+    assert type(bridge)._xy_in_frame(bridge, (0.0, 0.0), "map", "odom")[1] == pytest.approx(-0.6)
+
+
+def test_a_huge_jump_is_held_for_a_while_and_then_accepted(bridge):
+    bridge.map_to_odom_slew_m_s = 0.10
+    latest = [(10.0, 0.0, 0.0)]
+    bridge._lookup_map_to_odom = lambda target: latest[0]
+    bridge._update_applied_transform(100.0, "odom")
+    latest[0] = (39.0, 0.0, 0.0)                                   # AMCL glitch of 29 m
+    bridge._update_applied_transform(101.0, "odom")
+    assert type(bridge)._xy_in_frame(bridge, (0.0, 0.0), "map", "odom")[0] == pytest.approx(10.0)
+    assert _events(bridge, "map_to_odom_jump_held")
+    bridge._update_applied_transform(104.5, "odom")                # persistent: a real relocalisation
+    assert type(bridge)._xy_in_frame(bridge, (0.0, 0.0), "map", "odom")[0] == pytest.approx(39.0)
+    assert _events(bridge, "map_to_odom_jump_accepted")
+
+
+def test_slew_off_keeps_using_the_live_transform(bridge):
+    bridge._lookup_map_to_odom = lambda target: (10.0, 0.0, 0.0)
+    bridge._update_applied_transform(100.0, "odom")
+    assert bridge._applied_m2o is None
+
+
+# --- path retention ------------------------------------------------------------
+
+def _two_candidate_sets(bridge):
+    a = [(0.2 * (i + 1), 0.0) for i in range(12)]
+    b = [(0.2 * (i + 1), 0.15 * (i + 1) * 0.5) for i in range(12)]   # drifts to the left, still valid
+    def cands(path, rank):
+        return [NS(selected_goal_valid=True, trajectory_map_safe=True, execution_valid=True,
+                   path_world=path, candidate_rank=rank, candidate_index=10 + rank)]
+    return a, b, cands
+
+
+def _enable_retention(bridge):
+    bridge.path_retention_max_age_s = 2.0
+    bridge.selection_config = type(bridge.selection_config)(
+        rank_weight=0.15, continuity_weight=3.0, heading_weight=0.3, heading_limit_rad=0.6)
+    bridge.map_collision = False
+
+
+def _advance(bridge, seconds):
+    bridge.now_s += seconds
+    bridge._odom_stamp_s = bridge._scan_stamp_s = bridge._tracks_stamp_s = bridge.now_s
+
+
+def test_default_has_no_retention_and_follows_every_new_candidate(bridge):
+    a, b, cands = _two_candidate_sets(bridge)
+    bridge.map_collision = False
+    bridge._runtime.candidates = cands(a, 0); bridge._on_timer()
+    _advance(bridge, 1.0)
+    bridge._runtime.candidates = cands(b, 0); bridge._on_timer()
+    assert bridge.path_pub.messages[-1].poses == b
+
+
+def test_a_still_valid_previous_path_is_held_instead_of_switching(bridge):
+    a, b, cands = _two_candidate_sets(bridge)
+    _enable_retention(bridge)
+    bridge._runtime.candidates = cands(a, 0); bridge._on_timer()
+    assert bridge.path_pub.messages[-1].poses == a
+    _advance(bridge, 0.8)
+    bridge._runtime.candidates = cands(b, 0); bridge._on_timer()
+    assert bridge.path_pub.messages[-1].poses == a            # held, not switched to b
+    assert bridge._last_status.startswith("path_valid retained")
+    assert _labels(bridge)[-1] == "EXECUTED: MODEL rank 0/1 (held)"   # still says who made it
+    assert _events(bridge, "path_retained")
+
+
+def test_retention_ends_after_the_age_limit(bridge):
+    a, b, cands = _two_candidate_sets(bridge)
+    _enable_retention(bridge)
+    bridge._runtime.candidates = cands(a, 0); bridge._on_timer()
+    _advance(bridge, 2.5)
+    bridge._runtime.candidates = cands(b, 0); bridge._on_timer()
+    assert bridge.path_pub.messages[-1].poses == b
+
+
+def test_retained_path_is_dropped_when_it_is_no_longer_safe(bridge):
+    a, b, cands = _two_candidate_sets(bridge)
+    _enable_retention(bridge)
+    bridge._runtime.candidates = cands(a, 0); bridge._on_timer()
+    _advance(bridge, 0.8)
+
+    def cost(points, radius, weight=1.0):  # a new obstacle sits on the held path only
+        return 1.0 if any(abs(y) < 0.05 and x > 0.5 for x, y in points) else 0.0
+    bridge.map_provider.path_collision_cost = cost
+    bridge._runtime.candidates = cands(b, 0); bridge._on_timer()
+    assert bridge.path_pub.messages[-1].poses == b
+    assert not bridge._last_status.startswith("path_valid retained")
+
+
+def test_retained_path_keeps_the_robot_moving_when_every_new_candidate_is_rejected(bridge):
+    a, b, cands = _two_candidate_sets(bridge)
+    _enable_retention(bridge)
+    bridge._runtime.candidates = cands(a, 0); bridge._on_timer()
+    _advance(bridge, 0.8)
+    for result in bridge._runtime.candidates:
+        result.selected_goal_valid = False
+    bridge._on_timer()
+    assert bridge.path_pub.messages[-1].poses == a
+    assert bridge._last_status.startswith("path_valid retained")
+    assert not _events(bridge, "global_path_fallback")

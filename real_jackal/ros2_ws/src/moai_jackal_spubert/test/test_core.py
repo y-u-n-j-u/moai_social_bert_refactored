@@ -179,3 +179,16 @@ def test_candidate_validation_rejects_predicted_human_conflict():
     )
     assert not check.valid
     assert check.reason == "predicted_human_clearance"
+
+
+def test_corridor_obstacle_distance_can_follow_the_travel_direction():
+    from moai_jackal_spubert.navigation_core import corridor_obstacle_distance as cod
+    inc = 2 * math.pi / 720
+    ranges = [math.inf] * 721
+    ranges[round(math.pi / inc)] = 1.0  # one return straight ahead (angle 0) at 1.0 m
+    assert cod(ranges, -math.pi, inc, 0.34) == pytest.approx(1.0)                 # default axis: seen
+    assert cod(ranges, -math.pi, inc, 0.34, axis_angle=math.radians(50)) == math.inf   # path turned away: not in the way
+    ranges = [math.inf] * 721
+    ranges[round((math.radians(50) + math.pi) / inc)] = 1.0   # a return 50 deg to the left
+    assert cod(ranges, -math.pi, inc, 0.34) == math.inf
+    assert cod(ranges, -math.pi, inc, 0.34, axis_angle=math.radians(50)) == pytest.approx(1.0, abs=0.02)

@@ -81,3 +81,15 @@ def test_offsets_are_ordered_nearest_to_centre_first():
     assert lateral_offsets(0.0, 0.03) == [0.0]
     assert lateral_offsets(-1.0, 0.03) == [0.0]
     assert lateral_offsets(0.3, 0.0) == [0.0]
+
+
+def test_longer_ramp_spreads_the_sideways_move_and_halves_the_heading_change():
+    route = [(0.25 * (i + 1), 0.0) for i in range(12)]   # 3 m straight prefix
+
+    def max_heading_change(taper):
+        pts = shift_path_laterally(route, (0.0, 0.0), 0.8, taper_m=taper)
+        chain = [(0.0, 0.0), *pts]
+        return max(abs(math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))) for a, b in zip(chain, chain[1:]))
+
+    sharp, gentle = max_heading_change(0.4), max_heading_change(1.5)
+    assert sharp > 55 and gentle < 32 and gentle < 0.55 * sharp
