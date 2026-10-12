@@ -34,12 +34,14 @@ from .guided_spubert_runtime import (
     GuidedSpubertRuntime,
     adaptive_guidance_point_along_path,
     lateral_guidance_point,
+    route_offset_guidance_point,
     sample_polyline,
 )
 from .rolling_laser_map import RollingLaserMapProvider
 from .arc_planner import arc_cost, arc_points, curvature_fan
 from .candidate_select import SelectionConfig, choose_candidate, continuity_cost, heading_deviation
 from .frame_smoothing import is_large_jump, slew_transform
+from .guidance_stabilizer import StabilizerConfig, stabilize as stabilize_guidance
 from .route_fallback import lateral_offsets, route_prefix_points, shift_path_laterally
 from .collision_diagnostics import collision_evidence, header_evidence
 from .tracker_diagnostics import diagnostic_json
@@ -250,6 +252,29 @@ class RealJackalSpubertBridgeNode(Node):
         self.soft_margin_weight = float(self.declare_parameter("soft_margin_weight", 1.5).value)
         self.soft_margin_trigger_m = float(self.declare_parameter("soft_margin_trigger_m", 0.75).value)
         self.soft_margin_min_gain_m = float(self.declare_parameter("soft_margin_min_gain_m", 0.12).value)
+        # Display only (RViz): draw rejected goal samples and a rejected model path? The rejections stay in
+        # the logs and the rosbag either way, and the EXECUTED source label is always drawn.
+        self.show_rejected_markers = bool(self.declare_parameter("show_rejected_markers", True).value)
+        # Display only: draw just the safe goal samples within this distance of the yellow guidance point
+        # (0 = draw all of them). Nothing about the sampling or the validation changes.
+        self.candidate_marker_radius_m = float(
+            self.declare_parameter("candidate_marker_radius_m", 0.0).value
+        )
+        # "always": the EXECUTED source label is drawn all the time. "fallback_only": it is drawn only while a
+        # fallback path (not a model path) is the one being executed. It is never removed entirely.
+        self.source_label_mode = str(self.declare_parameter("source_label_mode", "always").value)
+        # Guidance point (GP): prefer a point that clears obstacles by this much (0 = off), and keep it from jumping
+        # back / sideways between cycles. Both only choose among points the unchanged safety search accepts.
+        self.guidance_comfort_radius_m = float(self.declare_parameter("guidance_comfort_radius_m", 0.0).value)
+        self.guidance_comfort_min_lookahead_m = float(
+            self.declare_parameter("guidance_comfort_min_lookahead_m", 1.5).value
+        )
+        self.guidance_stabilizer = StabilizerConfig(
+            max_step_m=float(self.declare_parameter("guidance_max_step_m", 0.0).value),
+            backtrack_m=float(self.declare_parameter("guidance_backtrack_m", 0.3).value),
+        )
+        self.guidance_max_lookahead_m = float(self.declare_parameter("guidance_max_lookahead_m", 0.0).value)
+        self._last_guidance: Optional[XY] = None
         self.prefer_smooth_fallback = bool(
             self.declare_parameter("prefer_smooth_fallback", False).value
         )
@@ -453,6 +478,7 @@ class RealJackalSpubertBridgeNode(Node):
         self._last_route_request_s = -math.inf
         self._blocked_since_s = None
         self._recovery_active = False
+        self._last_guidance = None  # a new goal starts a new guidance history
         self._status("new_goal_waiting_for_route")
         if self.require_global_path:
             self._request_route()
@@ -590,17 +616,37 @@ class RealJackalSpubertBridgeNode(Node):
                 dense, radius=footprint_radius, weight=1.0
             ) <= 0.0
 
+        def comfortable_path(points: Sequence[XY]) -> bool:
+            dense = sample_polyline(points, max_spacing=spacing)
+            return self.map_provider.path_collision_cost(
+                dense, radius=self.guidance_comfort_radius_m, weight=1.0
+            ) <= 0.0
+
         try:
             if self.use_adaptive_guidance:
                 guidance = adaptive_guidance_point_along_path(
                     route,
                     current=(robot_x, robot_y),
                     final_goal=goal_xy,
-                    max_radius=self.guidance_radius,
+                    max_radius=(
+                        min(self.guidance_radius, self.guidance_max_lookahead_m)
+                        if self.guidance_max_lookahead_m > 0.0 else self.guidance_radius
+                    ),
                     min_radius=self.guidance_min_distance,
                     probe_step=self.guidance_probe_step,
                     is_direct_path_safe=direct_path_safe,
+                    is_comfortable_path=(
+                        comfortable_path if self.guidance_comfort_radius_m > footprint_radius else None
+                    ),
+                    comfort_min_radius=self.guidance_comfort_min_lookahead_m,
                 )
+                if self.guidance_stabilizer.active:
+                    guidance = stabilize_guidance(
+                        self._last_guidance, guidance, route,
+                        lambda point: direct_path_safe([(robot_x, robot_y), point]),
+                        self.guidance_stabilizer,
+                    )
+                self._last_guidance = guidance
             else:
                 from .guided_spubert_runtime import guidance_point_along_path
 
@@ -621,6 +667,10 @@ class RealJackalSpubertBridgeNode(Node):
             # candidate (field-tested 2026-09-29: resolved 3 consecutive
             # otherwise-stuck cycles).
             detour = lateral_guidance_point((robot_x, robot_y), robot_yaw, direct_path_safe)
+            if detour is None:
+                detour = self._relaxed_guidance(
+                    route, goal_xy, robot_x, robot_y, robot_yaw, footprint_radius, spacing
+                )
             if detour is None:
                 self._record_throttled("lateral_detour_failed", {
                     "reason": "no_lateral_point_passed_footprint_check",
@@ -1021,6 +1071,14 @@ class RealJackalSpubertBridgeNode(Node):
                 marker.pose.position.z = 0.10
                 marker.pose.orientation.w = 1.0
                 safe = index < len(result.candidate_safe_mask) and result.candidate_safe_mask[index]
+                if not safe and not self.show_rejected_markers:
+                    continue
+                if (
+                    self.candidate_marker_radius_m > 0.0
+                    and math.hypot(float(point[0]) - guidance[0], float(point[1]) - guidance[1])
+                    > self.candidate_marker_radius_m
+                ):
+                    continue
                 # Rejected goal samples stay visible but small and faint: the layer is for
                 # debugging and 20 full-size red spheres drown the paths that matter.
                 marker.scale.x = marker.scale.y = marker.scale.z = 0.16 if safe else 0.07
@@ -1031,20 +1089,23 @@ class RealJackalSpubertBridgeNode(Node):
                     a=0.90 if safe else 0.30,
                 )
                 array.markers.append(marker)
-            array.markers.append(
-                self._line_marker(
-                    frame_id,
-                    "selected_tgp",
-                    3,
-                    result.path_world,
-                    (0.10, 0.35, 0.95, 1.0) if valid else (0.90, 0.10, 0.10, 1.0),
-                    0.10,
+            if valid or self.show_rejected_markers:
+                array.markers.append(
+                    self._line_marker(
+                        frame_id,
+                        "selected_tgp",
+                        3,
+                        result.path_world,
+                        (0.10, 0.35, 0.95, 1.0) if valid else (0.90, 0.10, 0.10, 1.0),
+                        0.10,
+                    )
                 )
-            )
         self.marker_pub.publish(array)
 
     def _publish_source_label(self, frame_id: str, robot_x: float, robot_y: float, text: str) -> None:
-        """Always-on text above the robot saying which planner produced the executed path."""
+        """Text above the robot saying which planner produced the executed path."""
+        if self.source_label_mode == "fallback_only" and "FALLBACK" not in text:
+            return
         try:
             array = MarkerArray()
             label = Marker()
@@ -1057,9 +1118,10 @@ class RealJackalSpubertBridgeNode(Node):
             label.pose.position.x, label.pose.position.y = float(robot_x), float(robot_y)
             label.pose.position.z = 1.0
             label.pose.orientation.w = 1.0
-            label.scale.z = 0.22
+            label.scale.z = 0.12 if self.source_label_mode == "fallback_only" else 0.22
             label.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0)
-            label.text = text
+            # fallback_only: a short but standard abbreviation, small yet legible (FB = fallback)
+            label.text = "FB" if self.source_label_mode == "fallback_only" else text
             label.lifetime = Duration(seconds=1.5).to_msg()
             array.markers.append(label)
             self.marker_pub.publish(array)
@@ -1594,6 +1656,48 @@ class RealJackalSpubertBridgeNode(Node):
             ) <= 0.0:
                 return radius
             radius = round(radius - 0.01, 6)
+        return None
+
+    def _relaxed_guidance(self, route, goal_xy, robot_x, robot_y, robot_yaw, footprint_radius, spacing):
+        """Last guidance attempts before a fallback: points beside the route, then the same at the escape radius.
+
+        The straight-line safety check is the same one, only the candidates (and, for the escape stage, the radius
+        used when the robot already sits inside the normal margin) change. Returns a point or None.
+        """
+        current = (robot_x, robot_y)
+        stages = [("route_offset", footprint_radius)]
+        escape = self._adaptive_escape_radius(robot_x, robot_y, footprint_radius)
+        if escape is not None:
+            stages.append(("escape", escape))
+        for name, radius in stages:
+            def safe(points, radius=radius):
+                dense = sample_polyline(points, max_spacing=spacing)
+                return self.map_provider.path_collision_cost(dense, radius=radius, weight=1.0) <= 0.0
+
+            def comfy(points):
+                dense = sample_polyline(points, max_spacing=spacing)
+                return self.map_provider.path_collision_cost(
+                    dense, radius=self.guidance_comfort_radius_m, weight=1.0
+                ) <= 0.0
+
+            comfortable = comfy if self.guidance_comfort_radius_m > radius else None
+            point = route_offset_guidance_point(
+                route, current, goal_xy, safe, is_comfortable_path=comfortable
+            )
+            if point is None and name == "escape":
+                try:
+                    point = adaptive_guidance_point_along_path(
+                        route, current=current, final_goal=goal_xy, max_radius=self.guidance_radius,
+                        min_radius=self.guidance_min_distance, probe_step=self.guidance_probe_step,
+                        is_direct_path_safe=safe,
+                    )
+                except ValueError:
+                    point = lateral_guidance_point(current, robot_yaw, safe)
+            if point is not None:
+                self._record_throttled("guidance_relaxed", {
+                    "stage": name, "radius_m": radius, "robot": [robot_x, robot_y], "guidance": list(point),
+                }, self._now_s() if hasattr(self, "_now_s") else 0.0)
+                return point
         return None
 
     def _clearance_probe(self, robot_x: float, robot_y: float) -> dict:

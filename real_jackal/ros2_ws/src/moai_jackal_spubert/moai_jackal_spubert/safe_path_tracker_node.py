@@ -114,6 +114,8 @@ class SafePathTrackerNode(Node):
             min_gap_m=float(self.declare_parameter("gap_min_width_m", 0.0).value),
             edge_margin_m=float(self.declare_parameter("gap_edge_margin_m", 0.65).value),
             straight_half_m=float(self.declare_parameter("gap_straight_half_width_m", 0.60).value),
+            switch_penalty_m=float(self.declare_parameter("gap_switch_penalty_m", 2.0).value),
+            max_heading_rad=float(self.declare_parameter("gap_max_heading_rad", 0.5).value),
         )
         self._avoid_side = 0
         self._avoid_side_s = -1e9

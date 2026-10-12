@@ -28,6 +28,13 @@ real_jackal_spubert_bridge:
     route_refresh_period_sec: 2.0
     guidance_radius: 8.0
     adaptive_guidance: true
+    # 10-12: the GP hugged obstacles and jumped back/sideways (box seen -> farthest safe point gets nearer)
+    guidance_comfort_radius_m: 0.65
+    # 10-12: with guidance_radius 8 m the GP sat 7-8 m ahead when the way was clear and 0.4 m when it was not
+    guidance_max_lookahead_m: 4.0
+    guidance_comfort_min_lookahead_m: 1.5
+    guidance_max_step_m: 0.8
+    guidance_backtrack_m: 0.3
     adaptive_guidance_min_distance: 2.0
     adaptive_guidance_probe_step: 0.5
 
@@ -67,6 +74,12 @@ real_jackal_spubert_bridge:
     selection_heading_limit_rad: 0.6
     # replace a sharp-swerving model path by a gentler fallback path when one exists
     prefer_smooth_fallback: true
+    # RViz only: do not draw rejected goal samples / a rejected model path (still in logs and the rosbag)
+    show_rejected_markers: false
+    # RViz only: draw the EXECUTED label only while a fallback path is the one executed (model paths: no text)
+    source_label_mode: fallback_only
+    # RViz only: draw only the goal samples within 1.0 m of the yellow guidance point
+    candidate_marker_radius_m: 1.0
     # soft margin: prefer >=0.9 m from obstacles; detour early when a valid path is tighter than 0.75 m
     soft_margin_m: 0.90
     soft_margin_weight: 1.5
@@ -90,7 +103,8 @@ real_jackal_spubert_bridge:
     maximum_model_speed: 1.50
     maximum_step_ratio: 1.50
     minimum_goal_progress: 0.10
-    goal_tolerance: 0.50
+    # 10-12: the robot passed 0.65 m beside the clicked goal, missed the 0.50 m radius, ended 1 m away and had to turn back
+    goal_tolerance: 0.70
 
     rolling_map_size_m: 24.0
     rolling_map_resolution: 0.10
@@ -120,7 +134,7 @@ safe_path_tracker:
     require_tracks_heartbeat: true
     control_rate_hz: 10.0
     lookahead_distance: 1.00
-    goal_tolerance: 0.50
+    goal_tolerance: 0.70
     maximum_linear_speed: 0.25
     maximum_angular_speed: 0.55
     maximum_linear_acceleration: 0.35
@@ -156,6 +170,9 @@ safe_path_tracker:
     gap_block_horizon_m: 3.0
     gap_edge_margin_m: 0.65
     gap_straight_half_width_m: 0.60
+    # 10-12: a box near the middle made the side flip and the heading saturate; commit to a side, cap the turn at 0.5 rad
+    gap_switch_penalty_m: 2.0
+    gap_max_heading_rad: 0.5
     forward_scan_half_angle: 0.70
     human_stop_distance: 0.90
     # Pivot only for a really large heading error; below it keep >= minimum_turn_speed and

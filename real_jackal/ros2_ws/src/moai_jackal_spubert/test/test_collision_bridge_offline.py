@@ -54,6 +54,7 @@ def bridge(monkeypatch):
             "GuidedInferenceResult": NS, "GuidedSpubertRuntime": Runtime,
             "adaptive_guidance_point_along_path": lambda *a, **kw: (2.0, 0.0),
             "lateral_guidance_point": lambda *a, **kw: None,
+            "route_offset_guidance_point": lambda *a, **kw: None,
             "sample_polyline": lambda points, **kw: points},
     }
     for name, attrs in modules.items():

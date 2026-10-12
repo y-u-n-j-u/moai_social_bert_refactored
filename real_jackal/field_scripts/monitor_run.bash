@@ -2,8 +2,10 @@
 # Gate + arm + supervised drive. Auto-disarm on: FAST-LIVO memory, odom blow-up, localization jump, bridge error, contact range.
 source /root/jackal_runtime/scripts/jackal_ros_env.bash >/dev/null
 source /root/moai_stability_ws/install/setup.bash
-R=$(readlink -f /root/jackal_logs/fallback_test_latest); L=$(ls -t $R/spubert_real_*.log | head -1)
+R=$(readlink -f /root/jackal_logs/drive_latest); L=$(ls -t $R/spubert_real_*.log | head -1)
 disarm() { timeout 20 ros2 service call /spu_bert/enable_motion std_srvs/srv/SetBool "{data: false}" 2>&1 | grep -o "success=[A-Za-z]*.*"; }
+# Ctrl+C, closing the terminal or a kill must not leave the robot armed without a supervisor.
+trap 'echo; echo "SIGNAL -> DISARM"; disarm; exit 130' INT TERM HUP
 state() { grep bridge $L | grep -E "path_valid|hold:|recovery_sweep" | tail -1 | sed -E "s/.*\]: //" | cut -c1-120; }
 mo() { timeout 3 ros2 run tf2_ros tf2_echo map odom 2>&1 | grep -m1 Translation | grep -o "\[.*\]" | tr -d "[],"; }
 amcl() { timeout 8 ros2 topic echo /amcl_pose --once 2>&1 | python3 -c '

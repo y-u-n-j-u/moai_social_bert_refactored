@@ -95,7 +95,10 @@ class GapConfig:
     min_gap_m: float = 0.85       # narrowest opening worth driving through
     edge_margin_m: float = 0.65   # keep this far from both edges of the opening when it is wide enough
     bin_m: float = 0.05
-    switch_penalty_m: float = 0.5  # reluctance to change to the other side of the obstacle
+    switch_penalty_m: float = 2.0  # reluctance to change to the other side of the obstacle (commit to a side)
+    width_bonus: float = 0.3       # a wider opening is worth this many metres of lateral offset per metre of width
+    max_heading_rad: float = 0.5   # never ask for more than this turn: a large heading error cuts the speed and the
+                                   # robot ends up turning almost in place
 
     @property
     def active(self) -> bool:
@@ -158,11 +161,15 @@ def gap_heading(
         lo2, hi2 = lo + config.edge_margin_m, hi - config.edge_margin_m
         y_t = (lo + hi) / 2.0 if lo2 > hi2 else min(max(0.0, lo2), hi2)
         side = 1 if y_t > 0 else -1 if y_t < 0 else (prefer_side or 1)
-        cost = abs(y_t) + (config.switch_penalty_m if prefer_side and side != prefer_side else 0.0)
+        cost = (abs(y_t) - config.width_bonus * min(width, 2.0)
+                + (config.switch_penalty_m if prefer_side and side != prefer_side else 0.0))
         if best is None or cost < best[0]:
             best = (cost, y_t, width, side)
     if best is None:
         return GapResult(True, None, 0, 0.0, 0.0, near)
     _, y_t, width, side = best
     aim_x = min(max(near * 0.7, 1.0), 2.5)
-    return GapResult(True, math.atan2(y_t, aim_x), side, y_t, width, near)
+    heading = math.atan2(y_t, aim_x)
+    if config.max_heading_rad > 0.0:
+        heading = max(-config.max_heading_rad, min(config.max_heading_rad, heading))
+    return GapResult(True, heading, side, y_t, width, near)

@@ -163,8 +163,15 @@ def adaptive_guidance_point_along_path(
     is_direct_path_safe: Callable[[Sequence[XY]], bool],
     min_radius: float = 2.0,
     probe_step: float = 0.5,
+    is_comfortable_path: Optional[Callable[[Sequence[XY]], bool]] = None,
+    comfort_min_radius: float = 1.5,
 ) -> XY:
-    """Choose the farthest directly footprint-safe route point within a limit."""
+    """Choose the farthest directly footprint-safe route point within a limit.
+
+    With ``is_comfortable_path`` (the same check at a larger clearance) a point that passes it and is at least
+    ``comfort_min_radius`` ahead wins over a farther one that only just clears the footprint: the guidance point
+    then stays away from the obstacle instead of hugging it.
+    """
     maximum = max(float(max_radius), 0.0)
     step = float(probe_step)
     if not math.isfinite(step) or step <= 0.0:
@@ -182,6 +189,7 @@ def adaptive_guidance_point_along_path(
 
     best_safe: Optional[XY] = None
     best_preferred: Optional[XY] = None
+    best_comfortable: Optional[XY] = None
     for lookahead in probe_distances:
         candidate = guidance_point_along_path(
             path,
@@ -194,7 +202,15 @@ def adaptive_guidance_point_along_path(
         best_safe = candidate
         if lookahead + 1e-8 >= preferred_minimum:
             best_preferred = candidate
+        if (
+            is_comfortable_path is not None
+            and lookahead + 1e-8 >= comfort_min_radius
+            and is_comfortable_path([current, candidate])
+        ):
+            best_comfortable = candidate
 
+    if best_comfortable is not None:
+        return best_comfortable
     if best_preferred is not None:
         return best_preferred
     if best_safe is not None:
@@ -245,6 +261,45 @@ def lateral_guidance_point(
                 if offset < best_offset:
                     best_offset = offset
                     best = point
+        if best is not None:
+            return best
+    return None
+
+
+def route_offset_guidance_point(
+    path: Sequence[XY],
+    current: XY,
+    final_goal: XY,
+    is_direct_path_safe: Callable[[Sequence[XY]], bool],
+    lookaheads: Sequence[float] = (3.0, 2.5, 2.0, 1.5),
+    offsets: Sequence[float] = (0.4, 0.6, 0.8, 1.0, 1.3),
+    is_comfortable_path: Optional[Callable[[Sequence[XY]], bool]] = None,
+) -> Optional[XY]:
+    """Route points pushed sideways: used when no point ON the route has a clear straight line to it.
+
+    A live obstacle on the route (the Nav2 plan only knows the static map) blocks every route point behind it,
+    but the space beside the route is often free. For each lookahead (farthest first) try the route point shifted
+    left/right by growing offsets; a comfortable one wins, then the smallest offset.
+    """
+    for lookahead in lookaheads:
+        base = guidance_point_along_path(path, current=current, final_goal=final_goal, radius=lookahead)
+        ahead = guidance_point_along_path(path, current=current, final_goal=final_goal, radius=lookahead + 0.3)
+        dx, dy = ahead[0] - base[0], ahead[1] - base[1]
+        norm = math.hypot(dx, dy)
+        if norm < 1e-6:
+            continue
+        nx, ny = -dy / norm, dx / norm
+        best: Optional[XY] = None
+        best_key = None
+        for offset in offsets:
+            for sign in (1.0, -1.0):
+                point = (base[0] + sign * offset * nx, base[1] + sign * offset * ny)
+                if not is_direct_path_safe([current, point]):
+                    continue
+                comfy = is_comfortable_path is not None and is_comfortable_path([current, point])
+                key = (0 if comfy else 1, offset)
+                if best_key is None or key < best_key:
+                    best, best_key = point, key
         if best is not None:
             return best
     return None

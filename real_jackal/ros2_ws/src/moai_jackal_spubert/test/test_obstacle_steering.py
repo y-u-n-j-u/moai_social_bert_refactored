@@ -125,3 +125,21 @@ def test_remembered_side_is_kept_when_both_sides_are_passable():
     left = os_.gap_heading(s, A0, DA, wide, prefer_side=1)
     right = os_.gap_heading(s, A0, DA, wide, prefer_side=-1)
     assert left.side == 1 and right.side == -1
+
+
+def test_heading_is_capped_so_the_robot_keeps_rolling():
+    # the opening is far to the left (y_t large) and the obstacle is close: uncapped this asks for > 0.5 rad
+    rel = [(1.0, -0.6 + 0.04 * i) for i in range(20)] + [(x / 10.0, -1.4) for x in range(5, 35)]
+    rel += [(x / 10.0, 2.2) for x in range(5, 35)]
+    g = os_.gap_heading(scan(rel, corridor_half=9.0), A0, DA, os_.GapConfig(view_half_m=3.0))
+    free = os_.gap_heading(scan(rel, corridor_half=9.0), A0, DA, os_.GapConfig(view_half_m=3.0, max_heading_rad=0.0))
+    assert g.heading is not None and abs(free.heading) > 0.5 and abs(g.heading) <= 0.5 + 1e-9
+
+
+def test_committed_side_is_kept_even_when_the_other_opening_is_wider():
+    pts = [(2.0, -0.4 + 0.04 * i) for i in range(20)] + [(x / 10.0, -1.2) for x in range(5, 35)]
+    pts += [(x / 10.0, 2.4) for x in range(5, 35)]          # left opening 0.4 .. 2.4 (wide), right 1.2 .. 0.4 (narrow, 0.8)
+    cfg = os_.GapConfig(view_half_m=3.0, min_gap_m=0.75)
+    s = scan(pts, corridor_half=9.0)
+    assert os_.gap_heading(s, A0, DA, cfg, prefer_side=0).side == 1
+    assert os_.gap_heading(s, A0, DA, cfg, prefer_side=-1).side == -1       # kept: the right side is still passable
