@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Accumulate the robot's travelled odom positions into a Path for RViz (display only).
 
-A drive is recorded from the moment the tracker leaves the disarmed state until it is disarmed again
-(goal reached, e-stop, auto-disarm). The finished line stays on screen; it is cleared when the next
+A drive is recorded from the moment the tracker leaves the stopped state until it is stopped again
+(goal reached, e-stop, auto-stop). The finished line stays on screen; it is cleared when the next
 drive starts, when a new goal is set, or when odom jumps (LIO restart).
 """
 import math
@@ -14,7 +14,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 
 
-IDLE_STATES = ("disarmed", "goal_reached_disarmed")
+IDLE_STATES = ("stopped", "goal_reached_stopped")
 
 
 def is_idle(status: str) -> bool:

@@ -127,10 +127,10 @@ def assert_zero(tracker):
     assert command.linear.x == command.angular.z == 0.0
 
 
-def test_startup_stays_disarmed_and_safety_defaults_unchanged(tracker):
+def test_startup_stays_stopped_and_safety_defaults_unchanged(tracker):
     tracker._control_tick()
     assert_zero(tracker)
-    assert record(tracker)["status"] == "disarmed"
+    assert record(tracker)["status"] == "stopped"
     assert not record(tracker)["motion_enabled"]
     assert tracker.cmd_vel_topic == "/spu_bert/cmd_vel_dryrun"
     assert tracker.obstacle_stop_distance == 0.75
@@ -139,7 +139,7 @@ def test_startup_stays_disarmed_and_safety_defaults_unchanged(tracker):
 
 
 def test_real_control_uses_forward_projection_and_reports_limited_command(tracker):
-    tracker.motion_enabled = True  # Only this in-memory test instance is armed.
+    tracker.motion_enabled = True  # Only this in-memory test instance is enabled.
     tracker._control_tick()
     data = record(tracker)
     assert data["lookahead"]["target"] == pytest.approx([1.09, 0.0])
@@ -195,7 +195,7 @@ def test_freshness_guards_still_stop(tracker, field, reason):
 @pytest.mark.parametrize("case, reason", [
     ("human", "human_too_close"), ("obstacle", "obstacle_too_close"),
     ("scan_frame", "scan_frame_mismatch"), ("tracks_frame", "tracks_frame_mismatch"),
-    ("path_frame", "frame_mismatch"), ("goal", "goal_reached_disarmed"),
+    ("path_frame", "frame_mismatch"), ("goal", "goal_reached_stopped"),
     ("pose_nan", "invalid_robot_pose"), ("degenerate", "path_has_no_lookahead"),
     ("endpoint", "path_endpoint_reached"),
     ("past_endpoint", "path_endpoint_reached"),

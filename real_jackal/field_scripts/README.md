@@ -1,10 +1,10 @@
 # Field scripts (run inside the Jackal container, /root/)
 
-- `monitor_run.bash` - gate + arm + supervised drive. Refuses to arm unless AMCL has converged
+- `monitor_run.bash` - gate + run + supervised drive. Refuses to run unless AMCL has converged
   (x std <= 0.60 m, y std <= 0.20 m, yaw <= 10 deg) and a rosbag recorder is running (starts one if not).
-  Auto-disarms on FAST-LIVO memory > 2000 MB, odom > 80 m, map->odom shift > 1 m, bridge ERROR,
+  Auto-stops on FAST-LIVO memory > 2000 MB, odom > 80 m, map->odom shift > 1 m, bridge ERROR,
   obstacle < 0.26 m, or when the monitor ends for any reason other than goal arrival.
-  Never pipe its output into `head` (SIGPIPE ends it while armed).
+  Never pipe its output into `head` (SIGPIPE ends it while running).
 - `start_bag3.bash` - rosbag of the topics needed to analyse a run. Do not open the live .db3 while recording
   (SQLite "database is locked" kills the recorder); stop it with SIGINT first.
 - `odom_trail.py` - display only: accumulates `/aft_mapped_to_init` into `/spu_bert/odom_trail` (a Path) so RViz can show where the

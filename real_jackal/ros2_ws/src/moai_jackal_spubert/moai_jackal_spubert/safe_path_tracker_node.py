@@ -174,10 +174,10 @@ class SafePathTrackerNode(Node):
 
         if self.motion_enabled:
             self.get_logger().warning(
-                "motion_enabled was true at startup. For outdoor testing, start disarmed and arm "
+                "motion_enabled was true at startup. For outdoor testing, start stopped and run "
                 "only after the monitor checklist passes."
             )
-        self._status("disarmed" if not self.motion_enabled else "armed_waiting_for_inputs")
+        self._status("stopped" if not self.motion_enabled else "run_waiting_for_inputs")
 
     def _string_param(self, name: str, default: str) -> str:
         return str(self.declare_parameter(name, default).value)
@@ -256,19 +256,19 @@ class SafePathTrackerNode(Node):
             self.motion_enabled = True
             self._stop_episode.finish(self._now_s())
             response.success = True
-            response.message = "Motion armed. Keep the physical E-stop operator ready."
-            self._status("armed_waiting_for_fresh_path")
+            response.message = "Motion running. Keep the physical E-stop operator ready."
+            self._status("run_waiting_for_fresh_path")
             return response
         self.motion_enabled = False
         self._emergency_latched = False
-        self._stop("disarmed")
+        self._stop("stopped")
         response.success = True
-        response.message = "Motion disarmed and emergency latch reset."
+        response.message = "Motion stopped and emergency latch reset."
         return response
 
     def _control_tick(self) -> None:
         if not self.motion_enabled:
-            self._stop("disarmed")
+            self._stop("stopped")
             return
         now = self._now_s()
         if self._odom is None or now - self._odom_stamp_s > self.odom_timeout:
@@ -327,7 +327,7 @@ class SafePathTrackerNode(Node):
         )
         if goal_distance <= self.goal_tolerance:
             self.motion_enabled = False
-            self._stop("goal_reached_disarmed")
+            self._stop("goal_reached_stopped")
             return
 
         front_ranges = finite_ranges_in_sector(

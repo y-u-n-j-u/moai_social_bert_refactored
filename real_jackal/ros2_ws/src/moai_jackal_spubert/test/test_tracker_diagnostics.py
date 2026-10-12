@@ -23,7 +23,7 @@ def test_first_stop_reason_survives_followup_status_and_is_saved_on_resume():
 
 def test_clock_reset_never_produces_negative_stop_duration():
     episode = StopEpisode()
-    episode.observe("disarmed", 10, True)
-    assert episode.observe("disarmed", 1, True)["duration_s"] == 0
+    episode.observe("stopped", 10, True)
+    assert episode.observe("stopped", 1, True)["duration_s"] == 0
     episode.finish(0)
     assert episode.last_completed["duration_s"] == 0

@@ -66,4 +66,4 @@ if (( failures > 0 )); then
   echo "PREFLIGHT FAIL: $failures required checks failed"
   exit 1
 fi
-echo "PREFLIGHT PASS: keep motion disarmed and run the monitor test next"
+echo "PREFLIGHT PASS: keep motion stopped and run the monitor test next"

@@ -54,7 +54,7 @@ class RealJackalSpubertBridgeNode(Node):
     """Adapt the real Jackal sensor topics to the guided SPU-BERT runtime.
 
     This node only publishes paths. Wheel commands are deliberately handled by
-    the separately armed safety tracker.
+    the separately started safety tracker.
     """
 
     def __init__(self) -> None:
@@ -403,10 +403,10 @@ class RealJackalSpubertBridgeNode(Node):
                 f"node=({self.obs_len},{self.pred_len}) "
                 f"model=({self._runtime.obs_len},{self._runtime.pred_len})"
             )
-        self._status("ready_disarmed_path_output_only")
+        self._status("ready_stopped_path_output_only")
         self.get_logger().info(
             "Real Jackal SPU-BERT bridge ready; this node publishes paths only. "
-            "Use the separately armed safe_path_tracker for wheel commands."
+            "Use the separately started safe_path_tracker for wheel commands."
         )
 
     def _string_param(self, name: str, default: str) -> str:

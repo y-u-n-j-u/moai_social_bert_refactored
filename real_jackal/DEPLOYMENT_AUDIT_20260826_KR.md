@@ -58,8 +58,8 @@
 - `/scan`의 `+inf`를 열린 자유 공간으로 처리하는 rolling occupancy map
 - 추론 실패, TF 실패, global path 부재, stale sensor에서 빈 경로를 발행하는 fail-closed 동작
 - 경로/odom/scan/보행자 heartbeat watchdog과 전방 LiDAR emergency stop
-- 제어 기본 출력 `/spu_bert/cmd_vel_dryrun`, 시작 시 항상 disarm
-- 명시적인 `SetBool` 서비스로만 motion arm
+- 제어 기본 출력 `/spu_bert/cmd_vel_dryrun`, 시작 시 항상 stop
+- 명시적인 `SetBool` 서비스로만 motion run
 - 동료 Docker를 base로 하고 최신 모델과 실차 패키지를 덮는 재현 가능한 overlay 이미지
 
 ## 아직 실제 장비에서 확인해야 하는 것

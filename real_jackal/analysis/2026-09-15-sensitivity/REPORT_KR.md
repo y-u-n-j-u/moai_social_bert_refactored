@@ -18,7 +18,7 @@
 20:53:28 녹화 시점의 과거 raw scan을 복원한 것이 아니다.
 
 - 기존 프로젝트 컨테이너에서 35초간 `/spu_bert/debug_rolling_map`, `/aft_mapped_to_init`을 구독.
-- 맵 32개, odom 376개, 관련 prediction 로그 37개 수집. 속도 발행, arm, 파라미터 변경,
+- 맵 32개, odom 376개, 관련 prediction 로그 37개 수집. 속도 발행, run, 파라미터 변경,
   서비스 호출, 노드/daemon 재시작 없이 임시 파일만 생성했다.
 - prediction의 `map_update_stamp_ns..stamp_ns` 구간 안에 있고 frame, 해상도, 원점, 크기가
   맞는 맵이 **유일할 때만** 연결했다. 32회 연결, 5회는 맵 누락/모호성으로 제외했다.

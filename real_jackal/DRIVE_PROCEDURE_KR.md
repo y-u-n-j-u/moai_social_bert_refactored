@@ -29,7 +29,7 @@ terminator 창 하나가 10칸으로 나뉘어 열린다. **각 칸에는 명령
 | 6 | STATUS | 부하, FAST-LIVO, 프로세스, 브릿지/트래커 최근 줄 |
 | 7 | CHECK | AMCL 안정화와 수치, 자칼 연결, 센서 주파수, 부하 점검 |
 | 8 | RUN (!!) | **로봇이 움직인다.** AMCL을 다시 확인하고 rosbag을 시작한 뒤 주행 |
-| 9 | STOP | 즉시 정지(disarm) |
+| 9 | STOP | 즉시 정지(stop) |
 | 10 | AFTER | 주행 후 rosbag 정상 종료 |
 
 옵션: `--only 이름`(한 칸만, 이름은 host sensors nav rviz trail status check run stop after), `--dry-run`(열지 않고 확인).
@@ -103,7 +103,7 @@ terminator 창 하나가 10칸으로 나뉘어 열린다. **각 칸에는 명령
    ```
    스크립트가 AMCL을 한 번 더 확인하고, rosbag을 시작하고, 주행을 시작해서 목표에 도달하면 `GOAL REACHED`를 찍고 끝난다.
    자동 정지 조건: FAST-LIVO 메모리 2000MB 초과, odom 80m 초과, map→odom 이동 1m 초과(`LOCALIZATION JUMP`), 브릿지 에러, 장애물 0.26m 미만.
-   **`Ctrl+C`나 터미널 닫기도 자동으로 disarm한다**(`trap`). 출력을 `| head`로 넘기면 SIGPIPE로 감시가 죽으므로 하지 않는다.
+   **`Ctrl+C`나 터미널 닫기도 자동으로 stop한다**(`trap`). 출력을 `| head`로 넘기면 SIGPIPE로 감시가 죽으므로 하지 않는다.
 8. 이상하면 즉시:
    ```bash
    [컨테이너] ros2 service call /spu_bert/enable_motion std_srvs/srv/SetBool "{data: false}"
@@ -168,10 +168,10 @@ terminator 창 하나가 10칸으로 나뉘어 열린다. **각 칸에는 명령
 | 10칸 대신 평범한 terminator만 뜬다 | 이미 떠 있는 terminator가 새 창을 가로챔. 스크립트는 `--no-dbus`로 독립 프로세스를 띄운다 |
 | 주행이 멈췄다 갔다 한다 | (1) 컴퓨터 과부하: LIO 재시작, RViz 닫기 (2) 경로 만료 시간이 너무 짧음: 현재 2.5초 |
 | FAST-LIVO CPU가 250%를 넘는다 | 지도가 커짐. LIO를 재시작한다 |
-| 감시 스크립트가 `NOT ARMING - AMCL not converged` | 포즈를 다시 찍고 RC로 1~2m 움직인다 |
+| 감시 스크립트가 `NOT STARTING - AMCL not converged` | 포즈를 다시 찍고 RC로 1~2m 움직인다 |
 | 브릿지가 `waiting_for_goal` | goal이 없다. `2D Goal Pose`를 찍는다(브릿지를 재시작하면 항상 필요) |
 | `hold:adaptive_guidance_failed` | 안내점을 못 찾음(장애물이 코앞). 로봇을 조금 뒤로 빼거나 박스 위치를 확인한다 |
-| `LOCALIZATION JUMP > 1 m -> DISARM` | AMCL이 1m 넘게 튀어서 자동 정지. 포즈를 다시 찍고 처음부터 |
+| `LOCALIZATION JUMP > 1 m -> STOP` | AMCL이 1m 넘게 튀어서 자동 정지. 포즈를 다시 찍고 처음부터 |
 | rosbag이 비었거나 깨졌다 | 기록 중에 파일을 열었거나 종료 전에 컨테이너를 끈 경우. `SIGINT`로 종료한 뒤에만 연다 |
 | `pkill -f '패턴'`을 쳤더니 내 셸이 종료된다 | 패턴이 내 명령줄에도 있어서 자기 자신이 걸린다. `pkill -f '[p]attern'`처럼 대괄호를 쓰거나 pid로 종료한다 |
 

@@ -16,13 +16,13 @@ MID-360 + RealSense
   -> Nav2 ComputePathToPose global path
   -> Adaptive GP + SPU-BERT
   -> /spu_bert/predicted_path
-  -> disarmed safety tracker
-  -> 명시적으로 arm한 경우에만 Jackal cmd_vel
+  -> stopped safety tracker
+  -> 명시적으로 run한 경우에만 Jackal cmd_vel
 ```
 
 모델이 유효한 경로를 만들지 못하거나 센서/TF가 stale이면 속도 0을 발행한다.
-단, 일반적인 센서 stale·장애물 정지는 latch되지 않으므로 조건이 회복되면 arm
-상태에서 자동 재개할 수 있다. 지속 정지는 반드시 disarm 또는 물리 E-stop을 사용한다.
+단, 일반적인 센서 stale·장애물 정지는 latch되지 않으므로 조건이 회복되면 run
+상태에서 자동 재개할 수 있다. 지속 정지는 반드시 stop 또는 물리 E-stop을 사용한다.
 
 ## 0. 중요 안전 규칙
 
@@ -433,14 +433,14 @@ ros2 topic echo /spu_bert/tracker_status
 
 `runtime_status`가 `path_valid...`이고 RViz 경로가 안전해야 한다.
 
-launch는 항상 disarm으로 시작하므로 계산된 비영 속도를 확인하려면 dry-run만
-명시적으로 arm해야 한다. 먼저 실제 구동 subscriber가 연결되지 않았는지 확인한다.
+launch는 항상 stop으로 시작하므로 계산된 비영 속도를 확인하려면 dry-run만
+명시적으로 run해야 한다. 먼저 실제 구동 subscriber가 연결되지 않았는지 확인한다.
 
 ```bash
 ros2 topic info /spu_bert/cmd_vel_dryrun --verbose
 ```
 
-확인 후 dry-run arm:
+확인 후 dry-run 시작:
 
 ```bash
 ros2 service call /spu_bert/enable_motion \
@@ -449,7 +449,7 @@ ros2 service call /spu_bert/enable_motion \
 ros2 topic echo /spu_bert/cmd_vel_dryrun
 ```
 
-검증 후 disarm:
+검증 후 stop:
 
 ```bash
 ros2 service call /spu_bert/enable_motion \
@@ -492,7 +492,7 @@ dry-run launch를 `Ctrl-C`로 완전히 종료한 후 실제 cmd_vel 토픽을 �
 
 MCU motor feedback/command endpoint와 E-stop 토픽도 확인한다. `preflight` 중에는
 E-stop이 눌린 상태여도 통과하며, 실제 launch 후 실행하는 `ready`에서는 해제 상태를
-요구한다. 그 외 항목이 하나라도 실패하면 arm하지 않는다.
+요구한다. 그 외 항목이 하나라도 실패하면 run하지 않는다.
 
 ```bash
 ros2 topic list -t | grep cmd_vel
@@ -508,7 +508,7 @@ ros2 topic info "$CAPSTONE_CMD_TOPIC" --verbose
 - 실제 Jackal `twist_mux` subscriber와 downstream platform controller/MCU 존재
 - 경쟁 publisher 없음
 
-실제 출력 launch도 항상 disarm으로 시작한다.
+실제 출력 launch도 항상 stop으로 시작한다.
 
 ```bash
 ros2 launch moai_jackal_spubert real_jackal_spubert.launch.py \
@@ -519,9 +519,9 @@ ros2 launch moai_jackal_spubert real_jackal_spubert.launch.py \
 ```
 
 RViz에서 goal을 다시 지정하고 `path_valid` 및 경로 안전성을 확인한다. 물리 E-stop
-담당자와 바퀴를 띄운 상태에서만 arm한다.
+담당자와 바퀴를 띄운 상태에서만 run한다.
 
-launch가 disarm 상태로 뜬 뒤 publisher/subscriber가 정확히 하나씩인지 다시 확인한다.
+launch가 stop 상태로 뜬 뒤 publisher/subscriber가 정확히 하나씩인지 다시 확인한다.
 
 ```bash
 /root/jackal_runtime/scripts/verify_jackal_link.bash ready
@@ -532,7 +532,7 @@ ros2 service call /spu_bert/enable_motion \
   std_srvs/srv/SetBool "{data: true}"
 ```
 
-즉시 disarm:
+즉시 stop:
 
 ```bash
 ros2 service call /spu_bert/enable_motion \
@@ -546,7 +546,7 @@ ros2 topic pub --once /spu_bert/emergency_stop \
   std_msgs/msg/Bool "{data: true}"
 ```
 
-emergency stop은 latch된다. 다시 arm하려면 먼저 `SetBool false`로 latch를 reset한 뒤
+emergency stop은 latch된다. 다시 run하려면 먼저 `SetBool false`로 latch를 reset한 뒤
 `SetBool true`를 호출한다.
 
 시험 순서는 다음과 같이 단계적으로 올린다.
