@@ -16,7 +16,7 @@
 set -euo pipefail
 
 CONTAINER="${CONTAINER_NAME:-moai_jackal_spubert}"
-IMAGE="${IMAGE:-drive-1007}"
+IMAGE="${IMAGE:-drive-1012}"
 REPO="${CAPSTONE_REPO:-$HOME/capstone_navi}"
 STAB="${STABILITY_REPO:-$HOME/capstone_navi_stability_20260916}"
 ONLY=""
