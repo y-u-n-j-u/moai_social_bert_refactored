@@ -91,7 +91,7 @@ tab_script run     "8 RUN (!!)" container \
   "bash /root/monitor_run.bash" 0
 tab_script stop    "9 STOP" container \
   "Press Enter to stop the robot immediately (safe to run any time)." \
-  'ros2 service call /spu_bert/enable_motion std_srvs/srv/SetBool "{data: false}"' 0
+  'echo "$(date +%F_%T) $(date +%s) STOP pane (pane 9): Enter pressed by the user, tty=$(tty)" >> /root/jackal_logs/stop_reasons.log; ros2 service call /spu_bert/enable_motion std_srvs/srv/SetBool "{data: false}"' 0
 tab_script after   "10 AFTER THE RUN" container \
   "Stop the rosbag cleanly (never open a live bag), then analyse it." \
   'pkill -INT -f "ros2 bag reco[r]d"; sleep 5; ls -dt /root/jackal_logs/drive_latest/bag_[0-9]* | grep -v "\.log" | head -3' 0

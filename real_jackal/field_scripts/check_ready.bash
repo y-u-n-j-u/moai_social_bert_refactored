@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run inside the container (docker exec -i ... bash -s < check_ready.bash): everything worth looking at before a drive.
-# Read-only for the robot: it never starts a drive, it only settles AMCL and reports.
+# Read-only for the robot: it never starts or stops a drive; it only settles AMCL (no-motion updates) and reports.
 source /root/jackal_runtime/scripts/jackal_ros_env.bash >/dev/null
 source /root/moai_stability_ws/install/setup.bash
 echo "settling AMCL (8 no-motion updates)..."
@@ -13,7 +13,9 @@ if len(v) < 36:
 sx, sy, sw = math.sqrt(v[0]), math.sqrt(v[7]), math.degrees(math.sqrt(v[35]))
 ok = sx <= 0.6 and sy <= 0.2 and sw <= 10
 print("AMCL std  x=%.3f m  y=%.3f m  yaw=%.1f deg  ->  %s (need x<=0.60 y<=0.20 yaw<=10)" % (sx, sy, sw, "PASS" if ok else "FAIL - redo 2D Pose Estimate and move 1-2 m by RC"))'
-echo "motion: $(timeout 20 ros2 service call /spu_bert/enable_motion std_srvs/srv/SetBool "{data: false}" 2>&1 | grep -o "Motion [a-z]*")"
+# READ-ONLY: this script must never send a stop. (An earlier version asked "is the robot stopped?" by calling
+# enable_motion=false, which stops a running robot - 2026-10-16 05:15:34, 6 s after RUN.)
+echo "tracker: $(timeout 4 ros2 topic echo /spu_bert/tracker_status --once --field data 2>/dev/null | head -1 | cut -c1-60)   (stopped / run_waiting_for_fresh_path / tracking ...)"
 echo "robot link: $(timeout 150 /root/jackal_runtime/scripts/verify_jackal_link.bash ready 2>&1 | grep -E "^\[FAIL|PASSED|FAILED" | tr "\n" " ")"
 for t in /aft_mapped_to_init /scan; do echo "$t: $(timeout 8 ros2 topic hz $t --window 10 2>&1 | grep -m1 "average rate" || echo NO-DATA)"; done
 R=$(readlink -f /root/jackal_logs/drive_latest)
