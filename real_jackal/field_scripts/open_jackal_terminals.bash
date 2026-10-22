@@ -10,6 +10,7 @@
 #   open_jackal_terminals.bash                 # one terminator window, 10 panes (left: set-up, right: drive)
 #   open_jackal_terminals.bash --only status   # a single terminal (names below)
 #   open_jackal_terminals.bash --dry-run       # print what would be opened
+#   open_jackal_terminals.bash --ped           # pedestrian PERCEPTION test (robot stands still, low load): 7 panes
 #   CONTAINER_NAME=moai_jackal_spubert open_jackal_terminals.bash
 #
 # Pane names: host sensors nav rviz trail | status check run stop after
@@ -21,10 +22,12 @@ REPO="${CAPSTONE_REPO:-$HOME/capstone_navi}"
 STAB="${STABILITY_REPO:-$HOME/capstone_navi_stability_20260916}"
 ONLY=""
 DRY=0
+PED=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --only) shift; ONLY="${1:-}" ;;
     --dry-run) DRY=1 ;;
+    --ped) PED=1 ;;
     -h|--help) sed -n 2,20p "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
@@ -96,7 +99,29 @@ tab_script after   "10 AFTER THE RUN" container \
   "Stop the rosbag cleanly (never open a live bag), then analyse it." \
   'pkill -INT -f "ros2 bag reco[r]d"; sleep 5; ls -dt /root/jackal_logs/drive_latest/bag_[0-9]* | grep -v "\.log" | head -3' 0
 
+PED_STATUS='while true; do clear; date; uptime | sed "s/.*load/load/"; echo "--- top CPU:"; ps -eo pcpu,rss,args --sort=-pcpu | head -7 | cut -c1-110; echo "--- GPU:"; nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader 2>/dev/null || echo "(nvidia-smi not available here)"; source /root/jackal_runtime/scripts/jackal_ros_env.bash >/dev/null 2>&1; echo "--- tracks now:"; timeout 3 ros2 topic echo /ped_tracking --once --field tracks 2>/dev/null | grep -c "^- id" | sed "s/^/ pedestrians tracked: /"; sleep 2; done'
+CP_PED="for f in start_ped_test.bash start_bag_ped.bash ped_overlay.py real_jackal_ped.rviz; do docker cp $REPO/real_jackal/field_scripts/\$f $CONTAINER:/root/\$f; done"
+tab_script pedsensors "2 PED SENSORS (lidar + camera + YOLO + tracker)" host \
+  "Perception only - no FAST-LIVO/Nav2/bridge, the robot cannot move. Copies the new scripts into the container first." \
+  "$CP_PED; docker exec -it $CONTAINER bash --noprofile --norc /root/start_ped_test.bash" 0
+tab_script pedrviz "3 PED RVIZ (light)" host \
+  "Pedestrian view: raw lidar, 3D boxes, tracks, rings (1.2 m reject / 0.9 m stop), predicted positions. Camera image displays are off - tick them in RViz when needed." \
+  "docker exec -it $CONTAINER bash --noprofile --norc -c 'source /root/jackal_runtime/scripts/jackal_ros_env.bash >/dev/null; source /root/moai_stability_ws/install/setup.bash; LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe rviz2 -d /root/real_jackal_ped.rviz'" 0
+tab_script pedstatus "4 PED STATUS (read-only)" container \
+  "Runs by itself: load, top processes, GPU, number of tracked pedestrians." \
+  "$PED_STATUS" 1
+tab_script pedbag "5 PED RECORD" host \
+  "Start a rosbag of this test (tracks, detections, lidar, compressed camera). Stop it in pane 6." \
+  "$CP_PED; docker exec -i $CONTAINER bash --noprofile --norc /root/start_bag_ped.bash" 0
+tab_script pedafter "6 PED STOP RECORDING" container \
+  "Stop the rosbag cleanly (never open a live bag)." \
+  'pkill -INT -f "ros2 bag reco[r]d"; sleep 5; ls -dt /root/jackal_logs/drive_latest/bag_[0-9]* | grep -v "\.log" | head -3' 0
+tab_script pedkill "7 KILL ALL" host \
+  "Stops every process of the test (the container stays)." \
+  "$REPO/real_jackal/field_scripts/kill_all.sh" 0
+
 ALL="host sensors nav rviz trail status check run stop after"
+if [ "$PED" = 1 ]; then ALL="host pedsensors pedrviz pedstatus pedbag pedafter pedkill"; fi
 LIST="${ONLY:-$ALL}"
 for n in $LIST; do [ -f "$DIR/$n.sh" ] || { echo "unknown pane: $n (choose from: $ALL)" >&2; exit 2; }; done
 
@@ -110,7 +135,8 @@ import sys
 d, names = sys.argv[1], sys.argv[2:]
 import os
 TW, TH = int(os.environ['TERM_W']), int(os.environ['TERM_H'])
-cols = [names[:5], names[5:]] if len(names) > 5 else [names]
+half = (len(names) + 1) // 2
+cols = [names[:half], names[half:]] if len(names) > 5 else [names]
 out = ["[global_config]", "[keybindings]", "[profiles]", "  [[default]]", "[layouts]", "  [[jackal]]",
        "    [[[window0]]]", "      type = Window", '      parent = ""', f"      size = {TW}, {TH}", "      position = 0:0"]
 
@@ -146,7 +172,8 @@ else:
 open(d + "/terminator.conf", "w").write("\n".join(out) + "\n")
 PY
 # --no-dbus: an already running terminator would take the new window over and ignore our layout file
-CMD=(env GDK_BACKEND=x11 terminator --no-dbus -g "$DIR/terminator.conf" -l jackal -T "Jackal drive")
+# GTK_IM_MODULE=ibus: without it GTK talks to ibus through XIM and Ctrl+Shift+V (paste) can be swallowed by the Korean input method
+CMD=(env GDK_BACKEND=x11 GTK_IM_MODULE=ibus terminator --no-dbus -g "$DIR/terminator.conf" -l jackal -T "Jackal drive")
 if [ $DRY -eq 1 ]; then echo "${CMD[*]}"; echo "(dry run - layout in $DIR/terminator.conf)"; exit 0; fi
 "${CMD[@]}" >/dev/null 2>&1 &
 echo "opened: $LIST   (scripts in $DIR)"
