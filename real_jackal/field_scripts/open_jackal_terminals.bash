@@ -17,7 +17,7 @@
 set -euo pipefail
 
 CONTAINER="${CONTAINER_NAME:-moai_jackal_spubert}"
-IMAGE="${IMAGE:-drive-1012}"
+IMAGE="${IMAGE:-drive-1022}"
 REPO="${CAPSTONE_REPO:-$HOME/capstone_navi}"
 STAB="${STABILITY_REPO:-$HOME/capstone_navi_stability_20260916}"
 ONLY=""
@@ -89,9 +89,9 @@ tab_script status  "6 STATUS (read-only)" container \
 tab_script check   "7 CHECK before the run" host \
   "Settles AMCL, shows AMCL std, robot link, sensor rates, load. Run it after the goal is set (and RViz closed if it lags)." \
   "docker exec -i $CONTAINER bash --noprofile --norc -s < $REPO/real_jackal/field_scripts/check_ready.bash" 0
-tab_script run     "8 RUN (!!)" container \
-  "!!! THE ROBOT WILL DRIVE after this. Only press Enter when the e-stop operator is ready and AMCL has converged." \
-  "bash /root/monitor_run.bash" 0
+tab_script run     "8 RUN (!!)" host \
+  "!!! THE ROBOT WILL DRIVE after this. Only press Enter when the e-stop operator is ready. (Copies the repo's monitor_run.bash and start_bag3.bash into the container first, so an old copy in the image is never used.)" \
+  "for f in monitor_run.bash start_bag3.bash; do docker cp $REPO/real_jackal/field_scripts/\$f $CONTAINER:/root/\$f; done; docker exec -it $CONTAINER bash --noprofile --norc /root/monitor_run.bash" 0
 tab_script stop    "9 STOP" container \
   "Press Enter to stop the robot immediately (safe to run any time)." \
   'echo "$(date +%F_%T) $(date +%s) STOP pane (pane 9): Enter pressed by the user, tty=$(tty)" >> /root/jackal_logs/stop_reasons.log; ros2 service call /spu_bert/enable_motion std_srvs/srv/SetBool "{data: false}"' 0

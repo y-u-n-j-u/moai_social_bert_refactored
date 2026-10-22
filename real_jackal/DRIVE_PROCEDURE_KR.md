@@ -48,11 +48,11 @@ terminator 창 하나가 10칸으로 나뉘어 열린다. **각 칸에는 명령
    ```bash
    [호스트]  xhost +SI:localuser:root
    ```
-4. 컨테이너를 실행한다(이미지 이름은 최신 `drive-NNNN`, 현재 `drive-1012`).
+4. 컨테이너를 실행한다(이미지 이름은 최신 `drive-NNNN`, 현재 `drive-1022`).
    ```bash
    [호스트]  cd ~/capstone_navi_stability_20260916 && \
      CAPSTONE_CALIB=$HOME/capstone_navi/spu_deploy_docker/context/calib \
-     IMAGE=drive-1012 CONTAINER_NAME=moai_jackal_spubert MOAI_ENABLE_GUI=1 \
+     IMAGE=drive-1022 CONTAINER_NAME=moai_jackal_spubert MOAI_ENABLE_GUI=1 \
      ./real_jackal/docker/run_stability_container.bash
    ```
    - 경로를 `…`처럼 줄여 쓰면 `Calibration directory must contain …` 에러가 난다. 위 전체 경로를 그대로 쓴다.
@@ -183,7 +183,7 @@ terminator 창 하나가 10칸으로 나뉘어 열린다. **각 칸에는 명령
 
 ## 10. 이름 정리
 
-컨테이너 `moai_jackal_spubert`, 이미지 `drive-1012`(최신), `drive-1007`, `moai-jackal-spubert:drive-1006` 등, 로그 링크 `drive_latest`.
+컨테이너 `moai_jackal_spubert`, 이미지 `drive-1022`(최신, 보행자 시험 스크립트와 최신 `monitor_run.bash` 포함), `drive-1012`, `drive-1007`, `moai-jackal-spubert:drive-1006` 등, 로그 링크 `drive_latest`.
 (이전에 쓰던 다른 이름의 이미지와 링크는 같은 것에 새 이름표를 붙인 것이다. 옛 로그 링크가 남아 있어도 스크립트는 쓰지 않는다.)
 
 ## 11. 보행자 인식 시험 (0단계: 로봇 정지, 인식만, 2026-10-22)
