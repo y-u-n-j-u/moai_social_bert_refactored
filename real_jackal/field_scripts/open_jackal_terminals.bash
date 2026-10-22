@@ -111,7 +111,7 @@ tab_script pedstatus "4 PED STATUS (read-only)" container \
   "Runs by itself: load, top processes, GPU, number of tracked pedestrians." \
   "$PED_STATUS" 1
 tab_script pedbag "5 PED RECORD" host \
-  "Start a rosbag of this test (tracks, detections, lidar, compressed camera). Stop it in pane 6." \
+  "Start a rosbag of this test (tracks, detections, lidar, raw camera ~1 GB per minute). Stop it in pane 6." \
   "$CP_PED; docker exec -i $CONTAINER bash --noprofile --norc /root/start_bag_ped.bash" 0
 tab_script pedafter "6 PED STOP RECORDING" container \
   "Stop the rosbag cleanly (never open a live bag)." \
