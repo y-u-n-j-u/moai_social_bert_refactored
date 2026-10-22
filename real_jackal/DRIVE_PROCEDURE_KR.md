@@ -185,3 +185,22 @@ terminator 창 하나가 10칸으로 나뉘어 열린다. **각 칸에는 명령
 
 컨테이너 `moai_jackal_spubert`, 이미지 `drive-1012`(최신), `drive-1007`, `moai-jackal-spubert:drive-1006` 등, 로그 링크 `drive_latest`.
 (이전에 쓰던 다른 이름의 이미지와 링크는 같은 것에 새 이름표를 붙인 것이다. 옛 로그 링크가 남아 있어도 스크립트는 쓰지 않는다.)
+
+## 11. 보행자 인식 시험 (0단계: 로봇 정지, 인식만, 2026-10-22)
+
+로봇을 움직이는 노드(트래커, 브릿지)와 FAST-LIVO, Nav2는 올리지 않는다. 부하가 거의 없다(load 약 1).
+
+```bash
+[호스트]  xhost +SI:localuser:root          # 재부팅 후 한 번. 빠지면 RViz가 안 뜬다("Authorization required")
+[호스트]  ~/capstone_navi/real_jackal/field_scripts/open_jackal_terminals.bash --ped
+```
+7칸: 1 HOST(네트워크 sudo + 컨테이너, 이미 켜져 있으면 건너뜀) / **2 PED SENSORS**(라이다, 카메라, YOLO, 3D 투영, 추적기, 표시 노드. 약 1분) / **3 PED RVIZ** / 4 PED STATUS(자동) / **5 PED RECORD**(한 번만) / 6 PED STOP RECORDING / 7 KILL ALL.
+
+- 기록은 **카메라 원본 영상 포함, 약 1.1GB/분**이다(압축 영상 토픽이 이 환경에 없다). 기록 중인 파일은 열지 않는다. 5번을 두 번 눌러도 두 번째는 건너뛴다.
+- 분석: 6번으로 기록을 끝낸 뒤 Claude에게 "분석해줘". 거리별 YOLO 검출, 3D 위치의 라이다 점 지지, 추적 ID/속도, 오검출을 계산한다.
+- RViz 표시: 3D 박스와 추적, **빨간 원 1.2m**(후보 경로 탈락 거리), **주황 원 0.9m**(트래커 정지 거리), 하늘색 4.8초 예측선, 라벨 `id v 추적기 / 브릿지`.
+- 정리: `~/capstone_navi/real_jackal/field_scripts/kill_all.sh`.
+
+### 0단계 결과 (짧은 기록 1개, 사람이 보인 시간 약 11초)
+- 잘 됨: YOLO 점수 0.91~0.97, 매 프레임 검출, 3D 위치 손실 없음, 추적 위치에 라이다 점 있음(24개 중 20개), 사람이 없는 구간 오검출 0건, 보이는 동안 ID 유지.
+- 문제: 사람이 아주 가까워지거나 시야를 벗어나면 추적이 **유령**이 된다(실제 0.5~1.2m인데 추적 3.3~4.2m, 속도 2.41m/s). 가까울 때 속도 추정이 흔들린다. 3m 넘는 거리 데이터는 아직 없다.

@@ -5,6 +5,8 @@
 source /root/jackal_runtime/scripts/jackal_ros_env.bash || exit 1
 source /root/moai_stability_ws/install/setup.bash
 RUN=$(readlink -f /root/jackal_logs/drive_latest); G=$(date +%H%M%S)
+# pressing the pane twice must not start a second recorder (it saved the same data twice, 2.7 GB for one test)
+if pgrep -f "ros2 bag reco[r]d" > /dev/null; then echo "already recording - nothing started"; exit 0; fi
 setsid nohup ros2 bag record -o "$RUN/bag_$G" /tf /tf_static /aft_mapped_to_init /livox/lidar \
   /camera/camera/color/image_raw /camera/camera/color/camera_info \
   /ped_yolo/detections2d /ped_detection /ped_tracking /ped_traces > "$RUN/bag_$G.log" 2>&1 < /dev/null &
