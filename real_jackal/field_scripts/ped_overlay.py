@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """Display only: show what the planner sees of each tracked pedestrian (never publishes anything the robot uses).
 
-For every track on /ped_tracking it draws, in the frame of the Tracks message:
-  * a red ring with the radius at which a candidate path is REJECTED (minimum_human_center_distance, 1.20 m)
-  * an orange ring with the radius of the tracker's hard STOP (human_stop_distance, 0.90 m)
-  * the predicted positions over the next 4.8 s (12 x 0.4 s) with the SAME constant-velocity estimate the bridge's
-    path validation uses (displacement over the last 4 samples of a 0.4 s history), and a label
-    "id  v_tracker / v_bridge" so the two speed estimates can be compared.
+For every track on /ped_tracking it draws
+  * a red ring with the radius at which a candidate path is REJECTED (minimum_human_center_distance, 1.20 m), in the frame of the Tracks message
+  * an orange ring with the radius of the tracker's hard STOP (human_stop_distance, 0.90 m), same frame
+  * a label "id  v" with the tracker's speed
+  * the TRAIL the person has walked (magenta line in the map frame, like the robot's odom trail), kept trail_seconds
+    after the last sample of that id
+No prediction is drawn: SPU-BERT only takes the pedestrian histories as input and outputs the robot path.
 """
 import math
 from collections import deque
+
+import tf2_ros
 
 import rclpy
 from geometry_msgs.msg import Point
@@ -46,6 +49,13 @@ class PedOverlay(Node):
         self.dt = float(p("sample_dt", 0.4).value)
         self.steps = int(p("pred_steps", 12).value)
         self.obs_len = int(p("obs_len", 8).value)
+        self.trail_frame = p("trail_frame", "map").value
+        self.trail_seconds = float(p("trail_seconds", 60.0).value)
+        self.trail_dt = float(p("trail_dt", 0.2).value)
+        self.trails = {}
+        self.trail_seen = {}
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.histories = {}
         self.latest = {}
         self.frame = "base_link"
@@ -54,6 +64,7 @@ class PedOverlay(Node):
         self.create_subscription(Tracks, self.tracks_topic, self.on_tracks, qos_profile_sensor_data)
         self.create_timer(self.dt, self.sample)        # the bridge samples its histories the same way
         self.create_timer(0.2, self.draw)
+        self.create_timer(self.trail_dt, self.sample_trail)
 
     def on_tracks(self, msg):
         self.frame = msg.header.frame_id or self.frame
@@ -68,6 +79,24 @@ class PedOverlay(Node):
             self.histories.setdefault(tid, deque(maxlen=self.obs_len)).append((x, y))
         for tid in set(self.histories) - set(self.latest):
             self.histories.pop(tid, None)
+
+    def sample_trail(self):
+        """Append every tracked position, transformed to the trail frame, to that id's trail."""
+        try:
+            tf = self.tf_buffer.lookup_transform(self.trail_frame, self.frame, rclpy.time.Time())
+        except Exception:
+            return
+        t, q = tf.transform.translation, tf.transform.rotation
+        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        c, sn = math.cos(yaw), math.sin(yaw)
+        now = self.get_clock().now().nanoseconds * 1e-9
+        for tid, (x, y, _) in self.latest.items():
+            trail = self.trails.setdefault(tid, deque(maxlen=int(self.trail_seconds / self.trail_dt)))
+            trail.append((t.x + c * x - sn * y, t.y + sn * x + c * y))
+            self.trail_seen[tid] = now
+        for tid in [i for i, seen in self.trail_seen.items() if now - seen > 5.0]:
+            self.trails.pop(tid, None)
+            self.trail_seen.pop(tid, None)
 
     @staticmethod
     def marker(ns, mid, kind, color, scale, frame):
@@ -94,25 +123,21 @@ class PedOverlay(Node):
         clear.action = Marker.DELETEALL
         array.markers.append(clear)
         for tid, (x, y, v_tracker) in self.latest.items():
-            hist = list(self.histories.get(tid, []))
-            vx, vy = estimate_velocity(hist, self.dt)
             array.markers.append(self.ring("reject_1.2m", tid, x, y, self.reject_m, (1.0, 0.1, 0.1, 0.9), self.frame))
             array.markers.append(self.ring("stop_0.9m", tid, x, y, self.stop_m, (1.0, 0.55, 0.0, 0.9), self.frame))
-            line = self.marker("prediction", tid, Marker.LINE_STRIP, (0.1, 0.8, 1.0, 0.95), 0.05, self.frame)
-            line.scale.y = line.scale.z = 0.0
-            for k in range(0, self.steps + 1):
-                line.points.append(Point(x=x + vx * k * self.dt, y=y + vy * k * self.dt, z=0.1))
-            array.markers.append(line)
-            for k in (3, 6, 9, 12):               # 1.2 s, 2.4 s, 3.6 s, 4.8 s
-                if k <= self.steps:
-                    s = self.marker("prediction_pts", tid * 100 + k, Marker.SPHERE, (0.1, 0.8, 1.0, 0.9 - 0.15 * k / 3), 0.14, self.frame)
-                    s.pose.position.x, s.pose.position.y, s.pose.position.z = x + vx * k * self.dt, y + vy * k * self.dt, 0.1
-                    array.markers.append(s)
             label = self.marker("label", tid, Marker.TEXT_VIEW_FACING, (1.0, 1.0, 1.0, 1.0), 0.16, self.frame)
             label.scale.x = label.scale.y = 0.0
             label.pose.position.x, label.pose.position.y, label.pose.position.z = x, y, 1.1
-            label.text = "id %d  v %.2f / %.2f m/s" % (tid, v_tracker, math.hypot(vx, vy))
+            label.text = "id %d  v %.2f m/s" % (tid, v_tracker)
             array.markers.append(label)
+        for tid, trail in self.trails.items():
+            if len(trail) < 2:
+                continue
+            line = self.marker("trail", tid, Marker.LINE_STRIP, (0.9, 0.2, 0.9, 0.95), 0.06, self.trail_frame)
+            line.scale.y = line.scale.z = 0.0
+            line.lifetime.sec, line.lifetime.nanosec = 1, 0
+            line.points = [Point(x=px, y=py, z=0.08) for px, py in trail]
+            array.markers.append(line)
         self.pub.publish(array)
 
 

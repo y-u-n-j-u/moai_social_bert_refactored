@@ -42,6 +42,21 @@ Visualization Manager:
       Update Topic: /map_updates
       Use Timestamp: false
       Value: true
+    - Alpha: 0.35
+      Class: rviz_default_plugins/Map
+      Color Scheme: costmap
+      Draw Behind: false
+      Enabled: true
+      Name: LiDAR Rolling Map
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /spu_bert/debug_rolling_map
+      Update Topic: ""
+      Use Timestamp: false
+      Value: true
     - Alpha: 1
       Class: rviz_default_plugins/LaserScan
       Color: 255; 255; 255
@@ -302,7 +317,7 @@ Visualization Manager:
         Value: /nav2/pedestrian_figures
       Value: true
     - Class: rviz_default_plugins/MarkerArray
-      Enabled: true
+      Enabled: false
       Name: Pedestrian traces (NEW)
       Namespaces:
         bbox: true
@@ -313,6 +328,104 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /nav2/pedestrian_traces
+      Value: true
+    - Alpha: 0.8
+      Buffer Length: 1
+      Class: rviz_default_plugins/Path
+      Color: 0; 180; 90
+      Enabled: false
+      Head Diameter: 0.3
+      Head Length: 0.2
+      Length: 0.3
+      Line Style: Lines
+      Line Width: 0.05
+      Name: Nav2 Global Path
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0.03
+      Pose Color: 0; 180; 90
+      Pose Style: None
+      Radius: 0.03
+      Shaft Diameter: 0.1
+      Shaft Length: 0.1
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /spu_bert/global_path_odom
+      Value: true
+    - Alpha: 1
+      Buffer Length: 1
+      Class: rviz_default_plugins/Path
+      Color: 40; 200; 90
+      Enabled: true
+      Head Diameter: 0.35
+      Head Length: 0.25
+      Length: 0.3
+      Line Style: Lines
+      Line Width: 0.2
+      Name: Final TGP (12 steps)
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0.10
+      Pose Color: 255; 80; 80
+      Pose Style: None
+      Radius: 0.04
+      Shaft Diameter: 0.1
+      Shaft Length: 0.1
+      Topic:
+        Depth: 10
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /spu_bert/predicted_path
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Adaptive GP and MGP Candidates
+      Namespaces:
+        global_route: false
+        selected_tgp: false
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /spu_bert/runtime_markers
+      Value: true
+    - Alpha: 1
+      Axes Length: 0.5
+      Axes Radius: 0.1
+      Class: rviz_default_plugins/Pose
+      Color: 255; 190; 0
+      Enabled: true
+      Head Length: 0.3
+      Head Radius: 0.15
+      Name: Final Goal
+      Shaft Length: 0.7
+      Shaft Radius: 0.05
+      Shape: Arrow
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /spu_bert/final_goal_odom
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: false
+      Name: Collision Check Centers (red-magenta)
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /spu_bert/collision_markers
       Value: true
   Enabled: true
   Global Options:
@@ -360,25 +473,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 34.827999114990234
+      Distance: 10
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
-        Stereo Focal Distance: 1
+        Stereo Focal Distance: 10
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 3.9558091163635254
-        Y: -2.7231667041778564
-        Z: 0.00480117229744792
+        X: 0
+        Y: 0
+        Z: 0
       Focal Shape Fixed Size: false
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
-      Near Clip Distance: 0.009999999776482582
+      Near Clip Distance: 10
       Pitch: 1.5697963237762451
-      Target Frame: <Fixed Frame>
+      Target Frame: base_link
       Value: Orbit (rviz)
-      Yaw: 2.5150065422058105
+      Yaw: 3.14159
     Saved: ~
 Window Geometry:
   Camera Image:
