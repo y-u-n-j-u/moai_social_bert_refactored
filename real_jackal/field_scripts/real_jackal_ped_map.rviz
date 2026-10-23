@@ -202,7 +202,8 @@ Visualization Manager:
       Enabled: true
       Name: 3D Detections
       Namespaces:
-        {}
+        bbox: true
+        info: false
       Topic:
         Depth: 5
         Durability Policy: Volatile

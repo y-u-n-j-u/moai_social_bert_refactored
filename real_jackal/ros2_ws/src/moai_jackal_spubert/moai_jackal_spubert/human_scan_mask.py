@@ -48,3 +48,30 @@ def human_slow_scale(distance_m: float, stop_m: float, slow_m: float) -> float:
     if slow_m <= stop_m or distance_m >= slow_m:
         return 1.0
     return min(max((distance_m - stop_m) / (slow_m - stop_m), 0.0), 1.0)
+
+
+class PeopleHold:
+    """Keep the last people for ``hold_s`` when the tracks vanish while a person was close.
+
+    A person who is lost inside ``range_m`` (left the camera view, a merged or split track) must not make the stop and
+    slow-down rules disappear at the very moment he is closest. Only an empty track list is bridged; any new track
+    replaces the held people at once. 0 = off.
+    """
+
+    def __init__(self, hold_s: float, range_m: float) -> None:
+        self.hold_s = float(hold_s)
+        self.range_m = float(range_m)
+        self._points: List[XY] = []
+        self._until = -math.inf
+
+    def update(self, now_s: float, points: Sequence[XY]) -> List[XY]:
+        points = list(points)
+        if points:
+            self._points = points
+            close = min(math.hypot(x, y) for x, y in points) <= self.range_m
+            self._until = now_s + self.hold_s if close and self.hold_s > 0.0 else -math.inf
+            return points
+        if now_s <= self._until:
+            return list(self._points)
+        self._points = []
+        return []

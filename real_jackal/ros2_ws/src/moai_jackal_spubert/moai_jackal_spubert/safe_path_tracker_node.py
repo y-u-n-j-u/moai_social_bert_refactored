@@ -26,7 +26,7 @@ from .navigation_core import (
     same_frame_id,
     yaw_from_quaternion,
 )
-from .human_scan_mask import human_slow_scale, mask_people_in_ranges, nearest_person_ahead
+from .human_scan_mask import PeopleHold, human_slow_scale, mask_people_in_ranges, nearest_person_ahead
 from .obstacle_steering import (
     GapConfig, SteeringConfig, avoidance_steering, combine_with_path_turn, gap_heading,
 )
@@ -134,6 +134,16 @@ class SafePathTrackerNode(Node):
         )
         self.human_slow_distance = float(
             self.declare_parameter("human_slow_distance", 0.0).value
+        )
+        # sector (half angle, rad) in which a person slows the robot: pi/2 reaches people approaching from the side;
+        # 0 = use forward_scan_half_angle
+        self.human_slow_half_angle_rad = float(
+            self.declare_parameter("human_slow_half_angle_rad", 0.0).value
+        )
+        # a person lost within human_hold_range_m is kept for human_hold_s (0 = off)
+        self._people_hold = PeopleHold(
+            float(self.declare_parameter("human_hold_s", 0.0).value),
+            float(self.declare_parameter("human_hold_range_m", 1.5).value),
         )
         self._human_points: list = []
         # display only: the scan with the tracked people left out, exactly what the stop / slow-down distances use
@@ -265,14 +275,12 @@ class SafePathTrackerNode(Node):
             self._minimum_human_distance = math.inf
             self._human_points = []
             return
-        distances = [
-            math.hypot(float(track.pose.position.x), float(track.pose.position.y))
-            for track in msg.tracks
-        ]
-        self._minimum_human_distance = min(distances, default=math.inf)
-        self._human_points = [
+        self._human_points = self._people_hold.update(self._tracks_stamp_s, [
             (float(track.pose.position.x), float(track.pose.position.y)) for track in msg.tracks
-        ]
+        ])
+        self._minimum_human_distance = min(
+            (math.hypot(x, y) for x, y in self._human_points), default=math.inf
+        )
 
     def _on_emergency_stop(self, msg: Bool) -> None:
         if bool(msg.data):
@@ -462,7 +470,9 @@ class SafePathTrackerNode(Node):
             )
         if self.human_slow_distance > self.human_stop_distance:
             linear *= human_slow_scale(
-                nearest_person_ahead(people, self.forward_scan_half_angle),
+                nearest_person_ahead(
+                    people, self.human_slow_half_angle_rad or self.forward_scan_half_angle,
+                ),
                 self.human_stop_distance, self.human_slow_distance,
             )
         self._tracking_debug = {

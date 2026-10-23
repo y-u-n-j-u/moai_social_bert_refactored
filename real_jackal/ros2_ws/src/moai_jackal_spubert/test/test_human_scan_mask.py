@@ -41,3 +41,29 @@ def test_human_slow_scale():
     assert abs(human_slow_scale(0.5, 0.3, 0.7) - 0.5) < 1e-9
     assert human_slow_scale(0.3, 0.3, 0.7) == 0.0
     assert human_slow_scale(0.4, 0.3, 0.0) == 1.0
+
+
+def test_nearest_person_ahead_wide_sector_sees_the_side():
+    side = [(0.5, 0.65)]                       # about 52 deg off the heading
+    assert math.isinf(nearest_person_ahead(side, 0.7))
+    assert nearest_person_ahead(side, 1.57) == math.hypot(0.5, 0.65)
+
+
+def test_people_hold_bridges_a_close_loss_only():
+    from moai_jackal_spubert.human_scan_mask import PeopleHold
+    hold = PeopleHold(1.0, 1.5)
+    assert hold.update(0.0, [(0.5, 0.6)]) == [(0.5, 0.6)]
+    assert hold.update(0.5, []) == [(0.5, 0.6)]          # lost while close: held
+    assert hold.update(1.2, []) == []                    # hold expired
+    assert hold.update(2.0, [(4.0, 0.0)]) == [(4.0, 0.0)]
+    assert hold.update(2.1, []) == []                    # lost while far: nothing held
+
+
+def test_people_hold_off_and_replaced_by_new_tracks():
+    from moai_jackal_spubert.human_scan_mask import PeopleHold
+    off = PeopleHold(0.0, 1.5)
+    off.update(0.0, [(0.5, 0.0)])
+    assert off.update(0.1, []) == []
+    hold = PeopleHold(1.0, 1.5)
+    hold.update(0.0, [(0.5, 0.0)])
+    assert hold.update(0.2, [(0.9, 0.1)]) == [(0.9, 0.1)]

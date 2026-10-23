@@ -182,6 +182,11 @@ safe_path_tracker:
     # them from human_slow_distance down to human_stop_distance (0 = off)
     human_scan_mask_radius_m: 0.50
     human_slow_distance: 0.70
+    # people slow the robot from every side up to this angle (rad; pi/2 = 90 deg, 0 = forward sector only)
+    human_slow_half_angle_rad: 1.57
+    # a person lost within human_hold_range_m stays in the stop / slow-down rules for human_hold_s (0 = off)
+    human_hold_s: 1.0
+    human_hold_range_m: 1.5
     # Pivot only for a really large heading error; below it keep >= minimum_turn_speed and
     # drive a curve. Obstacle slow-down (stop 0.45 m / slow 1.0 m) still scales this down.
     rotate_in_place_angle: 1.35
