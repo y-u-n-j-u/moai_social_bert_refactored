@@ -100,13 +100,13 @@ tab_script after   "10 AFTER THE RUN" container \
   'pkill -INT -f "ros2 bag reco[r]d"; sleep 5; ls -dt /root/jackal_logs/drive_latest/bag_[0-9]* | grep -v "\.log" | head -3' 0
 
 PED_STATUS='while true; do clear; date; uptime | sed "s/.*load/load/"; echo "--- top CPU:"; ps -eo pcpu,rss,args --sort=-pcpu | head -7 | cut -c1-110; echo "--- GPU:"; nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader 2>/dev/null || echo "(nvidia-smi not available here)"; source /root/jackal_runtime/scripts/jackal_ros_env.bash >/dev/null 2>&1; echo "--- tracks now:"; timeout 3 ros2 topic echo /ped_tracking --once --field tracks 2>/dev/null | grep -c "^- id" | sed "s/^/ pedestrians tracked: /"; sleep 2; done'
-CP_PED="for f in start_ped_test.bash start_bag_ped.bash ped_overlay.py real_jackal_ped.rviz; do docker cp $REPO/real_jackal/field_scripts/\$f $CONTAINER:/root/\$f; done"
+CP_PED="for f in start_ped_test.bash start_ped_map.bash start_bag_ped.bash ped_overlay.py real_jackal_ped.rviz real_jackal_ped_map.rviz rviz_retry.bash; do docker cp $REPO/real_jackal/field_scripts/\$f $CONTAINER:/root/\$f; done"
 tab_script pedsensors "2 PED SENSORS (lidar + camera + YOLO + tracker)" host \
   "Perception only - no FAST-LIVO/Nav2/bridge, the robot cannot move. Copies the new scripts into the container first." \
-  "$CP_PED; docker exec -it $CONTAINER bash --noprofile --norc /root/start_ped_test.bash" 0
+  "$CP_PED; docker exec -it $CONTAINER bash --noprofile --norc /root/start_ped_map.bash" 0
 tab_script pedrviz "3 PED RVIZ (light)" host \
-  "Pedestrian view: raw lidar, 3D boxes, tracks, rings (1.2 m reject / 0.9 m stop), predicted positions. Camera image displays are off - tick them in RViz when needed." \
-  "docker exec -it $CONTAINER bash --noprofile --norc -c 'source /root/jackal_runtime/scripts/jackal_ros_env.bash >/dev/null; source /root/moai_stability_ws/install/setup.bash; LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe rviz2 -d /root/real_jackal_ped.rviz'" 0
+  "Pedestrian view on the saved map (needs start_ped_map: pane 2). Closes any other RViz first and restarts it if it hangs." \
+  "docker cp $REPO/real_jackal/field_scripts/rviz_retry.bash $CONTAINER:/root/rviz_retry.bash; docker cp $REPO/real_jackal/field_scripts/real_jackal_ped_map.rviz $CONTAINER:/root/real_jackal_ped_map.rviz; docker exec -it $CONTAINER bash --noprofile --norc /root/rviz_retry.bash /root/real_jackal_ped_map.rviz" 0
 tab_script pedstatus "4 PED STATUS (read-only)" container \
   "Runs by itself: load, top processes, GPU, number of tracked pedestrians." \
   "$PED_STATUS" 1

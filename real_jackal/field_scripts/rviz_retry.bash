@@ -7,6 +7,9 @@ source /root/jackal_runtime/scripts/jackal_ros_env.bash >/dev/null 2>&1
 source /root/moai_stability_ws/install/setup.bash
 export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe
 CFG="${1:-/root/real_jackal_ped.rviz}"
+# Only ONE RViz at a time: close every RViz that is already running (a second one fights for the display and the topics).
+for P in $(pgrep -f "[r]viz2 -d" ); do kill "$P" 2>/dev/null; done; sleep 2
+for P in $(pgrep -f "[r]viz2 -d" ); do kill -9 "$P" 2>/dev/null; done
 R=$(readlink -f /root/jackal_logs/drive_latest)
 for try in 1 2 3 4 5 6 7 8; do
   START=$(date +%s)
