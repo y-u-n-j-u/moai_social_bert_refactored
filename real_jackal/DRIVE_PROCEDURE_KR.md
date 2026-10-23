@@ -204,3 +204,35 @@ terminator 창 하나가 10칸으로 나뉘어 열린다. **각 칸에는 명령
 ### 0단계 결과 (짧은 기록 1개, 사람이 보인 시간 약 11초)
 - 잘 됨: YOLO 점수 0.91~0.97, 매 프레임 검출, 3D 위치 손실 없음, 추적 위치에 라이다 점 있음(24개 중 20개), 사람이 없는 구간 오검출 0건, 보이는 동안 ID 유지.
 - 문제: 사람이 아주 가까워지거나 시야를 벗어나면 추적이 **유령**이 된다(실제 0.5~1.2m인데 추적 3.3~4.2m, 속도 2.41m/s). 가까울 때 속도 추정이 흔들린다. 3m 넘는 거리 데이터는 아직 없다.
+
+## 12. 보행자 규칙과 지도 위 표시 (2026-10-23, 이미지 `drive-1024`)
+
+이어서 하는 순서는 `jackal_conversation_logs`의 `worklogs/2026-10-23_pedestrian_map_view_and_first_drives_KR.md` 6절 TODO를 따른다.
+
+**시작 (이미지 `drive-1024`, 터미널 런처 기본값)**
+
+- 보행자 표시만 보기(로봇 못 움직임): `./open_jackal_terminals.bash --ped` → 2번 칸 `start_ped_map.bash`(LIO + `/scan` + Nav2 `world_map` + 인식, 브릿지 없음),
+  3번 칸 RViz(`rviz_retry.bash`, 다른 RViz를 먼저 닫고 하나만 띄움). `2D Pose Estimate`로 위치를 찍은 뒤 사람이 앞에 서면 지도 위에 보인다.
+- 주행: 평소 10칸(`./open_jackal_terminals.bash`). 3번 칸이 저장소의 `start_nav2_bridge.bash`와 설정 사본을 컨테이너로 복사해 **사람 전용 규칙이 켜진 설정**으로 브릿지를 올린다.
+- 건식(브릿지 출력만 `/spu_bert/cmd_vel_dryrun`): 브릿지를 `cmd_vel_topic:=/spu_bert/cmd_vel_dryrun`으로 올리면 로봇 `cmd_vel` 발행자가 0이다.
+
+**사람 규칙 (모두 `config/real_jackal_social005.yaml`, 코드 기본값은 꺼짐)**
+
+| 파라미터 | 값 | 뜻 |
+|---|---|---|
+| `minimum_human_center_distance` | 0.50m | 후보 경로 거부 반경(이전 1.20) |
+| `human_stop_distance` | 0.30m | 사람 정지(이전 0.90). 0.3m는 몸이 닿는 거리 |
+| `human_scan_mask_radius_m` | 0.50m | 추적된 사람 주변 스캔 점을 장애물 정지/감속 계산에서 제외(즉시 정지 섹터는 원본) |
+| `human_slow_distance`, `human_slow_half_angle_rad` | 0.70m, 1.57 | 사람 전용 감속, ±90° |
+| `human_hold_s`, `human_hold_range_m` | 1.0초, 1.5m | 1.5m 안에서 사라진 사람을 유지 |
+| `human_map_clear_radius_m`, `human_map_clear_max_cells` | 0.50m, 60 | 롤링 맵에서 사람 점유 셀을 free로(벽에 붙은 큰 덩어리는 제외) |
+
+장애물(벽/박스) 규칙은 그대로: 감속 시작 1.0m, 정지 0.45m, 즉시 정지 0.30m.
+
+**주의**
+
+- 목표는 초록 `2D Goal Pose`. 빨간 `2D Pose Estimate`를 누르면 AMCL 위치가 바뀐다(yaw가 정확히 0.000으로 찍히면 그 클릭). 움직임을 켜기 전에 `map→odom`이 이전 값인지 확인한다.
+- 브릿지를 다시 올리면 목표가 지워진다. 직전 목표는 `/spu_bert/final_goal_odom`을 map으로 바꿔 `/goal_pose`로 다시 넣을 수 있다.
+- 컨테이너 안에서 `pkill -f`나 `awk /패턴/`을 `bash -c`로 직접 쓰면 자기 자신을 종료시킨다. 스크립트 파일로 만들고 `[x]` 패턴을 쓴다.
+- 인식은 카메라 ±43°만 본다. 옆에서 접근하는 사람은 추적되지 않는다(다음 주 TODO 1번).
+- 주행 후 분석: 정지/회전량/경로 출처/사람 최소 거리를 이전 주행과 비교한다(기록에 롤링 맵, 사람 오버레이, `scan_nohuman`도 들어간다).

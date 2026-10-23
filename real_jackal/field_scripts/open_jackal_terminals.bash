@@ -17,7 +17,7 @@
 set -euo pipefail
 
 CONTAINER="${CONTAINER_NAME:-moai_jackal_spubert}"
-IMAGE="${IMAGE:-drive-1022}"
+IMAGE="${IMAGE:-drive-1024}"
 REPO="${CAPSTONE_REPO:-$HOME/capstone_navi}"
 STAB="${STABILITY_REPO:-$HOME/capstone_navi_stability_20260916}"
 ONLY=""
@@ -74,9 +74,9 @@ tab_script host    "1 HOST: network + container" host \
 tab_script sensors "2 SENSORS (lidar + LIO)" container \
   "Lidar driver, then LIO (FAST-LIVO, VIO off). Restart LIO about every hour (CPU grows)." \
   "bash /root/start_livox_only.bash && sleep 10 && bash /root/start_lio_fixed.bash" 0
-tab_script nav     "3 NAV2 + BRIDGE" container \
-  "Nav2 (map, AMCL, planner) and the bridge/tracker. Re-run the bridge part after a config change; goal must be set again." \
-  "bash /root/start_nav2_bridge.bash" 0
+tab_script nav     "3 NAV2 + BRIDGE" host \
+  "Nav2 (map, AMCL, planner) and the bridge/tracker with the people-only rules (config copy from the repo). Re-run after a config change; goal must be set again." \
+  "docker cp $REPO/real_jackal/field_scripts/start_nav2_bridge.bash $CONTAINER:/root/start_nav2_bridge.bash; docker cp $REPO/real_jackal/ros2_ws/src/moai_jackal_spubert/config/real_jackal_social005.yaml $CONTAINER:/root/real_jackal_social005_human05.yaml; docker exec -it $CONTAINER bash --noprofile --norc /root/start_nav2_bridge.bash" 0
 tab_script rviz    "4 RVIZ" container \
   "Recording layout. Close it before the run if the computer lags (software GL costs ~2 cores)." \
   "bash /root/start_rviz.bash" 0
