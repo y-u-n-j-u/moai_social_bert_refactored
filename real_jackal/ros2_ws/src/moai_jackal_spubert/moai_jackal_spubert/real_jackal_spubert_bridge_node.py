@@ -289,6 +289,10 @@ class RealJackalSpubertBridgeNode(Node):
         self.static_safety_margin = float(
             self.declare_parameter("static_safety_margin", 0.16).value
         )
+        # People are not walls: the occupied cells of a tracked person in the rolling map are turned back into free
+        # cells (0 = off). Only small blobs are cleared; a person merged with a wall or a box stays occupied.
+        self.human_map_clear_radius_m = float(self.declare_parameter("human_map_clear_radius_m", 0.0).value)
+        self.human_map_clear_max_cells = int(self.declare_parameter("human_map_clear_max_cells", 60).value)
         self.minimum_human_center_distance = float(
             self.declare_parameter("minimum_human_center_distance", 1.20).value
         )
@@ -591,6 +595,12 @@ class RealJackalSpubertBridgeNode(Node):
             range_max=self._latest_scan.range_max,
             free_ray_limit_m=self.free_ray_limit,
         )
+        people_cleared = 0
+        if self.human_map_clear_radius_m > 0.0 and map_update_s - self._tracks_stamp_s <= self.tracks_timeout:
+            people_cleared = self.map_provider.clear_people(
+                list(self._latest_humans.values()), self.human_map_clear_radius_m, self.human_map_clear_max_cells,
+            )
+        collision_context["people_cleared_cells"] = people_cleared
         collision_context["map_origin_xy"] = [self.map_provider.origin_x, self.map_provider.origin_y]
         collision_context["map_shape_cells"] = [self.map_provider.width, self.map_provider.height]
         self._publish_debug_map(odom_frame)

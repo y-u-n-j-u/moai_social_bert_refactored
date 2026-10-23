@@ -98,6 +98,9 @@ real_jackal_spubert_bridge:
     # lidar rolling map in odom (not AMCL), so it needn't absorb localization error.
     static_safety_margin: 0.10
     minimum_human_center_distance: 0.50
+    # people are not walls in the rolling map: clear a tracked person's occupied blob (radius, 0 = off); blobs merged with a wall stay
+    human_map_clear_radius_m: 0.50
+    human_map_clear_max_cells: 60
     human_radius: 0.35
     human_safety_margin: 0.20
     maximum_model_speed: 1.50
@@ -175,6 +178,10 @@ safe_path_tracker:
     gap_max_heading_rad: 0.5
     forward_scan_half_angle: 0.70
     human_stop_distance: 0.30
+    # people are not walls: leave tracked people out of the scan obstacle stop/slow distances (radius, 0 = off) and slow for
+    # them from human_slow_distance down to human_stop_distance (0 = off)
+    human_scan_mask_radius_m: 0.50
+    human_slow_distance: 0.70
     # Pivot only for a really large heading error; below it keep >= minimum_turn_speed and
     # drive a curve. Obstacle slow-down (stop 0.45 m / slow 1.0 m) still scales this down.
     rotate_in_place_angle: 1.35

@@ -149,6 +149,48 @@ class RollingLaserMapProvider:
                 self.grid[rows[unknown], cols[unknown]] = 1
         self.grid[original == 2] = 2
 
+    def clear_people(self, people: Sequence[Tuple[float, float]], radius_m: float, max_cells: int = 60) -> int:
+        """Turn the occupied cells of each person (within ``radius_m``) back into free cells; returns the cell count.
+
+        A person is a small blob; a wall is a long one. The blob is only cleared when the occupied cells connected to
+        it number at most ``max_cells``: a person standing against a wall (or a box) merges with it, stays occupied,
+        and is handled as before. Unknown cells (the shadow behind the person) are left alone.
+        """
+        if radius_m <= 0.0 or not people:
+            return 0
+        reach = int(math.ceil(radius_m / self.resolution))
+        cleared = 0
+        for px, py in people:
+            center = self._world_to_cell(float(px), float(py))
+            if center is None:
+                continue
+            seeds = [
+                (col, row)
+                for row in range(max(center[1] - reach, 0), min(center[1] + reach + 1, self.height))
+                for col in range(max(center[0] - reach, 0), min(center[0] + reach + 1, self.width))
+                if self.grid[row, col] == 2
+                and (col - center[0]) ** 2 + (row - center[1]) ** 2 <= (radius_m / self.resolution) ** 2
+            ]
+            if not seeds:
+                continue
+            seen = set(seeds)
+            stack = list(seeds)
+            while stack and len(seen) <= max_cells:
+                col, row = stack.pop()
+                for dc in (-1, 0, 1):
+                    for dr in (-1, 0, 1):
+                        c, r = col + dc, row + dr
+                        if (c, r) not in seen and 0 <= c < self.width and 0 <= r < self.height \
+                                and self.grid[r, c] == 2:
+                            seen.add((c, r))
+                            stack.append((c, r))
+            if len(seen) > max_cells:
+                continue
+            for col, row in seen:
+                self.grid[row, col] = 1
+            cleared += len(seen)
+        return cleared
+
     def _world_to_cell(self, x: float, y: float):
         col = int(math.floor((float(x) - self.origin_x) / self.resolution))
         row = int(math.floor((float(y) - self.origin_y) / self.resolution))

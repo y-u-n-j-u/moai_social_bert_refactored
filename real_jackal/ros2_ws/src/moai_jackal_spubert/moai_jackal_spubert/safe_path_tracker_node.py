@@ -26,6 +26,7 @@ from .navigation_core import (
     same_frame_id,
     yaw_from_quaternion,
 )
+from .human_scan_mask import human_slow_scale, mask_people_in_ranges, nearest_person_ahead
 from .obstacle_steering import (
     GapConfig, SteeringConfig, avoidance_steering, combine_with_path_turn, gap_heading,
 )
@@ -125,6 +126,18 @@ class SafePathTrackerNode(Node):
         self.human_stop_distance = float(
             self.declare_parameter("human_stop_distance", 0.90).value
         )
+        # People are not walls: scan points within this radius of a tracked person are left out of the obstacle
+        # stop / slow-down distances (0 = off), and people get their own slow-down that starts at human_slow_distance
+        # (0 = off). The sector hard stop keeps the raw scan and human_stop_distance still applies.
+        self.human_scan_mask_radius_m = float(
+            self.declare_parameter("human_scan_mask_radius_m", 0.0).value
+        )
+        self.human_slow_distance = float(
+            self.declare_parameter("human_slow_distance", 0.0).value
+        )
+        self._human_points: list = []
+        # display only: the scan with the tracked people left out, exactly what the stop / slow-down distances use
+        self._scan_nohuman_pub = self.create_publisher(LaserScan, "/spu_bert/scan_nohuman", qos_profile_sensor_data)
         self.rotate_in_place_angle = float(
             self.declare_parameter("rotate_in_place_angle", 0.95).value
         )
@@ -218,7 +231,23 @@ class SafePathTrackerNode(Node):
     def _on_goal(self, msg: PoseStamped) -> None:
         self._goal = msg
 
+    def _publish_scan_nohuman(self, msg: LaserScan) -> None:
+        """Display only: the scan with tracked people left out (what the stop / slow-down distances use)."""
+        fresh = self._now_s() - self._tracks_stamp_s <= self.tracks_timeout
+        shown = LaserScan()
+        shown.header = msg.header
+        for field in ("angle_min", "angle_max", "angle_increment", "time_increment", "scan_time",
+                      "range_min", "range_max"):
+            setattr(shown, field, getattr(msg, field))
+        shown.ranges = mask_people_in_ranges(
+            msg.ranges, msg.angle_min, msg.angle_increment,
+            self._human_points if fresh else [], self.human_scan_mask_radius_m,
+        )
+        self._scan_nohuman_pub.publish(shown)
+
     def _on_scan(self, msg: LaserScan) -> None:
+        if self.human_scan_mask_radius_m > 0.0:
+            self._publish_scan_nohuman(msg)
         self._scan = msg
         self._scan_stamp_s = self._now_s()
         self._latest_scan_frame = str(msg.header.frame_id)
@@ -234,12 +263,16 @@ class SafePathTrackerNode(Node):
         )
         if not self._tracks_frame_valid:
             self._minimum_human_distance = math.inf
+            self._human_points = []
             return
         distances = [
             math.hypot(float(track.pose.position.x), float(track.pose.position.y))
             for track in msg.tracks
         ]
         self._minimum_human_distance = min(distances, default=math.inf)
+        self._human_points = [
+            (float(track.pose.position.x), float(track.pose.position.y)) for track in msg.tracks
+        ]
 
     def _on_emergency_stop(self, msg: Bool) -> None:
         if bool(msg.data):
@@ -337,12 +370,18 @@ class SafePathTrackerNode(Node):
             self.forward_scan_half_angle,
         )
         minimum_obstacle = min(front_ranges, default=math.inf)
+        # tracked people are left out of the corridor stop / slow-down distances; stale tracks mask nothing
+        people = self._human_points if now - self._tracks_stamp_s <= self.tracks_timeout else []
+        obstacle_ranges = mask_people_in_ranges(
+            self._scan.ranges, self._scan.angle_min, self._scan.angle_increment,
+            people, self.human_scan_mask_radius_m,
+        )
         if self.obstacle_corridor_half_width > 0.0:
             if minimum_obstacle < self.obstacle_hard_stop_distance:
                 self._stop(f"obstacle_too_close:{minimum_obstacle:.2f}m")
                 return
             minimum_obstacle = corridor_obstacle_distance(
-                self._scan.ranges,
+                obstacle_ranges,
                 self._scan.angle_min,
                 self._scan.angle_increment,
                 self.obstacle_corridor_half_width,
@@ -410,7 +449,7 @@ class SafePathTrackerNode(Node):
             # obstacle straight ahead that the path is already turning away from (the stop
             # checks above still use the straight-ahead corridor and the sector hard stop).
             slow_obstacle = corridor_obstacle_distance(
-                self._scan.ranges, self._scan.angle_min, self._scan.angle_increment,
+                obstacle_ranges, self._scan.angle_min, self._scan.angle_increment,
                 self.obstacle_corridor_half_width,
                 axis_angle=clamp(heading_error, -0.9, 0.9),
             )
@@ -420,6 +459,11 @@ class SafePathTrackerNode(Node):
                 (slow_obstacle - self.obstacle_stop_distance) / denominator,
                 0.0,
                 1.0,
+            )
+        if self.human_slow_distance > self.human_stop_distance:
+            linear *= human_slow_scale(
+                nearest_person_ahead(people, self.forward_scan_half_angle),
+                self.human_stop_distance, self.human_slow_distance,
             )
         self._tracking_debug = {
             **asdict(result),
