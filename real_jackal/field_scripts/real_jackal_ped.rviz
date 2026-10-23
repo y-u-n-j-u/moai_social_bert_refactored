@@ -162,7 +162,7 @@ Visualization Manager:
         Value: /ped_detection_markers
       Value: false
     - Class: rviz_default_plugins/MarkerArray
-      Enabled: true
+      Enabled: false
       Name: Tracks
       Namespaces:
         bbox: true
@@ -187,7 +187,7 @@ Visualization Manager:
         Value: /viz_pred_trajs
       Value: true
     - Class: rviz_default_plugins/MarkerArray
-      Enabled: true
+      Enabled: false
       Name: Traces
       Namespaces:
         bbox: true
@@ -253,6 +253,32 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /ped_overlay
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Pedestrian figures (NEW)
+      Namespaces:
+        bbox: true
+        info: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /nav2/pedestrian_figures
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Pedestrian traces (NEW)
+      Namespaces:
+        bbox: true
+        info: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /nav2/pedestrian_traces
       Value: true
   Enabled: true
   Global Options:
