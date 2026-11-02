@@ -46,7 +46,7 @@ class PedOverlay(Node):
         self.out_topic = p("out_topic", "/ped_overlay").value
         self.reject_m = float(p("reject_radius_m", 0.50).value)
         self.stop_m = float(p("stop_radius_m", 0.30).value)
-        self.show_rings = bool(p("show_rings", True).value)
+        self.show_rings = bool(p("show_rings", False).value)
         self.dot_m = float(p("dot_size_m", 0.30).value)
         self.dt = float(p("sample_dt", 0.4).value)
         self.steps = int(p("pred_steps", 12).value)
