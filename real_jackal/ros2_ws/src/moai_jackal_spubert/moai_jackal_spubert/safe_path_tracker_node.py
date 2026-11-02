@@ -145,6 +145,9 @@ class SafePathTrackerNode(Node):
             float(self.declare_parameter("human_hold_s", 0.0).value),
             float(self.declare_parameter("human_hold_range_m", 1.5).value),
         )
+        self.human_scan_mask_hard_stop = bool(
+            self.declare_parameter("human_scan_mask_hard_stop", False).value
+        )
         self._human_points: list = []
         # display only: the scan with the tracked people left out, exactly what the stop / slow-down distances use
         self._scan_nohuman_pub = self.create_publisher(LaserScan, "/spu_bert/scan_nohuman", qos_profile_sensor_data)
@@ -371,19 +374,21 @@ class SafePathTrackerNode(Node):
             self._stop("goal_reached_stopped")
             return
 
-        front_ranges = finite_ranges_in_sector(
-            self._scan.ranges,
-            self._scan.angle_min,
-            self._scan.angle_increment,
-            self.forward_scan_half_angle,
-        )
-        minimum_obstacle = min(front_ranges, default=math.inf)
         # tracked people are left out of the corridor stop / slow-down distances; stale tracks mask nothing
         people = self._human_points if now - self._tracks_stamp_s <= self.tracks_timeout else []
         obstacle_ranges = mask_people_in_ranges(
             self._scan.ranges, self._scan.angle_min, self._scan.angle_increment,
             people, self.human_scan_mask_radius_m,
         )
+        # the sector hard stop keeps the raw scan (a person touching the robot stops it) unless the operator switched
+        # human_scan_mask_hard_stop on: then people do not stop the robot at all
+        front_ranges = finite_ranges_in_sector(
+            obstacle_ranges if self.human_scan_mask_hard_stop else self._scan.ranges,
+            self._scan.angle_min,
+            self._scan.angle_increment,
+            self.forward_scan_half_angle,
+        )
+        minimum_obstacle = min(front_ranges, default=math.inf)
         if self.obstacle_corridor_half_width > 0.0:
             if minimum_obstacle < self.obstacle_hard_stop_distance:
                 self._stop(f"obstacle_too_close:{minimum_obstacle:.2f}m")

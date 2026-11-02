@@ -67,3 +67,11 @@ def test_people_hold_off_and_replaced_by_new_tracks():
     hold = PeopleHold(1.0, 1.5)
     hold.update(0.0, [(0.5, 0.0)])
     assert hold.update(0.2, [(0.9, 0.1)]) == [(0.9, 0.1)]
+
+
+def test_hard_stop_sector_distance_with_and_without_the_people_mask():
+    from moai_jackal_spubert.navigation_core import finite_ranges_in_sector
+    ranges, a0, inc = scan_with((0.25, 0.0))             # a person's body 0.25 m in front, wall 5 m elsewhere
+    raw = min(finite_ranges_in_sector(ranges, a0, inc, 0.7))
+    masked = min(finite_ranges_in_sector(mask_people_in_ranges(ranges, a0, inc, [(0.35, 0.0)], 0.5), a0, inc, 0.7))
+    assert raw < 0.30 and masked == 5.0
