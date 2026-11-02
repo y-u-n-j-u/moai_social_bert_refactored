@@ -182,10 +182,13 @@ def validate_candidate_path(
         float(minimum_human_center_distance),
         float(footprint_radius) + float(human_radius) + float(human_safety_margin),
     )
+    # minimum_human_center_distance <= 0 switches the people check off: candidates are never rejected because of a person
+    # (the footprint + human radius + margin term above would otherwise keep ~1 m even when the setting is small).
+    check_humans = float(minimum_human_center_distance) > 0.0
     for step_index, robot_point in enumerate(path, start=1):
         horizon = step_index * float(prediction_dt)
         for history in human_histories.values():
-            if not history:
+            if not check_humans or not history:
                 continue
             vx, vy = estimate_velocity(history, human_sample_dt)
             hx = float(history[-1][0]) + vx * horizon

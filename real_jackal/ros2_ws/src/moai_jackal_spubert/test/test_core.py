@@ -192,3 +192,34 @@ def test_corridor_obstacle_distance_can_follow_the_travel_direction():
     ranges[round((math.radians(50) + math.pi) / inc)] = 1.0   # a return 50 deg to the left
     assert cod(ranges, -math.pi, inc, 0.34) == math.inf
     assert cod(ranges, -math.pi, inc, 0.34, axis_angle=math.radians(50)) == pytest.approx(1.0, abs=0.02)
+
+
+def test_people_never_reject_a_candidate_when_minimum_human_center_distance_is_zero():
+    class AlwaysFree:
+        resolution = 0.1
+
+        @staticmethod
+        def path_collision_cost(path, radius, weight):
+            del path, radius, weight
+            return 0.0
+
+    def check(minimum):
+        return validate_candidate_path(
+            current=(0.0, 0.0),
+            path=[(0.4, 0.0), (0.8, 0.0), (1.2, 0.0)],
+            final_goal=(5.0, 0.0),
+            map_provider=AlwaysFree(),
+            footprint_radius=0.5,
+            prediction_dt=0.4,
+            maximum_model_speed=2.0,
+            maximum_step_ratio=1.5,
+            minimum_goal_progress=0.1,
+            human_histories={7: [(1.2, 0.0), (1.2, 0.0), (1.2, 0.0)]},   # standing on the path
+            human_sample_dt=0.4,
+            minimum_human_center_distance=minimum,
+            human_radius=0.35,
+            human_safety_margin=0.2,
+        )
+
+    assert check(0.5).reason == "predicted_human_clearance"     # a small setting is still limited by footprint+human+margin
+    assert check(0.0).valid
