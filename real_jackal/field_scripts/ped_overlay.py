@@ -2,9 +2,9 @@
 """Display only: show what the planner sees of each tracked pedestrian (never publishes anything the robot uses).
 
 For every track on /ped_tracking it draws
-  * a red ring with the radius at which a candidate path is REJECTED (minimum_human_center_distance, 1.20 m), in the frame of the Tracks message
-  * an orange ring with the radius of the tracker's hard STOP (human_stop_distance, 0.90 m), same frame
-  * a label "id  v" with the tracker's speed
+  * (only with show_rings:=true) a red ring with the radius at which a candidate path is REJECTED (minimum_human_center_distance, 1.20 m), in the frame of the Tracks message
+  * (only with show_rings:=true) an orange ring with the radius of the tracker's hard STOP (human_stop_distance, 0.90 m), same frame
+  * a small magenta dot (dot_size_m, default 0.08 m) at each tracked person; no text
   * the TRAIL the person has walked (magenta line in the map frame, like the robot's odom trail), kept trail_seconds
     after the last sample of that id
 No prediction is drawn: SPU-BERT only takes the pedestrian histories as input and outputs the robot path.
@@ -46,6 +46,8 @@ class PedOverlay(Node):
         self.out_topic = p("out_topic", "/ped_overlay").value
         self.reject_m = float(p("reject_radius_m", 1.20).value)
         self.stop_m = float(p("stop_radius_m", 0.90).value)
+        self.show_rings = bool(p("show_rings", False).value)
+        self.dot_m = float(p("dot_size_m", 0.08).value)
         self.dt = float(p("sample_dt", 0.4).value)
         self.steps = int(p("pred_steps", 12).value)
         self.obs_len = int(p("obs_len", 8).value)
@@ -123,13 +125,12 @@ class PedOverlay(Node):
         clear.action = Marker.DELETEALL
         array.markers.append(clear)
         for tid, (x, y, v_tracker) in self.latest.items():
-            array.markers.append(self.ring("reject_1.2m", tid, x, y, self.reject_m, (1.0, 0.1, 0.1, 0.9), self.frame))
-            array.markers.append(self.ring("stop_0.9m", tid, x, y, self.stop_m, (1.0, 0.55, 0.0, 0.9), self.frame))
-            label = self.marker("label", tid, Marker.TEXT_VIEW_FACING, (1.0, 1.0, 1.0, 1.0), 0.16, self.frame)
-            label.scale.x = label.scale.y = 0.0
-            label.pose.position.x, label.pose.position.y, label.pose.position.z = x, y, 1.1
-            label.text = "id %d  v %.2f m/s" % (tid, v_tracker)
-            array.markers.append(label)
+            if self.show_rings:
+                array.markers.append(self.ring("reject_1.2m", tid, x, y, self.reject_m, (1.0, 0.1, 0.1, 0.9), self.frame))
+                array.markers.append(self.ring("stop_0.9m", tid, x, y, self.stop_m, (1.0, 0.55, 0.0, 0.9), self.frame))
+            dot = self.marker("dot", tid, Marker.SPHERE, (1.0, 0.0, 1.0, 1.0), self.dot_m, self.frame)
+            dot.pose.position.x, dot.pose.position.y, dot.pose.position.z = x, y, 0.05
+            array.markers.append(dot)
         for tid, trail in self.trails.items():
             if len(trail) < 2:
                 continue

@@ -199,7 +199,7 @@ Visualization Manager:
       Use rainbow: true
       Value: true
     - Class: rviz_default_plugins/MarkerArray
-      Enabled: true
+      Enabled: false
       Name: 3D Detections
       Namespaces:
         bbox: true
@@ -293,7 +293,7 @@ Visualization Manager:
       Value: false
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Name: Pedestrian overlay (rings, prediction)
+      Name: People (dot, trail)
       Namespaces:
         bbox: true
         info: true
@@ -305,7 +305,7 @@ Visualization Manager:
         Value: /ped_overlay
       Value: true
     - Class: rviz_default_plugins/MarkerArray
-      Enabled: true
+      Enabled: false
       Name: Pedestrian figures (NEW)
       Namespaces:
         bbox: true
