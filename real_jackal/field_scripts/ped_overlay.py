@@ -4,7 +4,7 @@
 For every track on /ped_tracking it draws
   * a red ring with the radius at which a candidate path is REJECTED (minimum_human_center_distance, 1.20 m), in the frame of the Tracks message
   * an orange ring with the radius of the tracker's hard STOP (human_stop_distance, 0.90 m), same frame
-  * a small magenta dot (dot_size_m, default 0.15 m) at each tracked person; no text
+  * a small magenta dot (dot_size_m, default 0.30 m) at each tracked person; no text
   * the TRAIL the person has walked (magenta line in the map frame, like the robot's odom trail), kept trail_seconds
     after the last sample of that id
 No prediction is drawn: SPU-BERT only takes the pedestrian histories as input and outputs the robot path.
@@ -47,7 +47,7 @@ class PedOverlay(Node):
         self.reject_m = float(p("reject_radius_m", 0.50).value)
         self.stop_m = float(p("stop_radius_m", 0.30).value)
         self.show_rings = bool(p("show_rings", True).value)
-        self.dot_m = float(p("dot_size_m", 0.15).value)
+        self.dot_m = float(p("dot_size_m", 0.30).value)
         self.dt = float(p("sample_dt", 0.4).value)
         self.steps = int(p("pred_steps", 12).value)
         self.obs_len = int(p("obs_len", 8).value)
