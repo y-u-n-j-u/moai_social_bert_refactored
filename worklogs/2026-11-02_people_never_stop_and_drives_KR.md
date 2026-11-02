@@ -58,3 +58,10 @@
 6. **모델이 사람을 우회하는지 평가**(정지 규칙을 껐으니 핵심 지표): 사람 옆을 지나는 경로, 접촉 직전 최소 거리. 4차의 최소 0.11m가 실제 접촉에 가까웠는지 확인.
 7. 열린 공간 시험(서 있는 사람, 가로지르기, 정면, 옆 접근 각 3회 이상), 복도는 마지막.
 8. 정리: 새 이미지(`drive-1026`), 기록 정리(`pedtest_20261023_114935`, `pedtest_20261102_101541`), 키보드 Ctrl/Alt 교환 설정 결정(`ctrl:swap_lalt_lctl`이 켜져 있어 왼쪽 Ctrl+C/V가 안 됨), `jackal_humble_hmmdyn` 컨테이너(남의 것, 묻고 나서만).
+
+## 7. 내일 이어서 하기 (이미지 `drive-1026`, 컨테이너는 내려 둠)
+
+- 이미지: `drive-1026`(22.8GB). 런처 기본값이다. 안에 있는 것: 사람 규칙 0 설정, 제외 반경 0.8, 접촉 정지 제거된 `monitor_run.bash`, 사람 점/궤적 오버레이, 로봇 궤적, `start_ped_map.bash`(센서+인식+Nav2), `start_bridge_only.bash`, 분석 도구, 한글 글꼴. 확인: 새 이미지를 임시 컨테이너로 열어 파일/설정/코드를 확인했다(스택을 올려 본 것은 아니다).
+- **런처가 바뀌었다**: 2번 칸이 센서+사람 인식+Nav2를 한 번에(`start_ped_map.bash`), 3번 칸은 브릿지만(`start_bridge_only.bash`), 4번 칸은 지도 위 RViz. 예전 2번(LIO만)·3번(Nav2+브릿지)과 다르다. 내일 처음 쓰는 것이므로 **각 칸의 출력을 확인**할 것(특히 3번 칸의 `bridge config: /root/real_jackal_social005_human05.yaml`).
+- 시작 순서는 `DRIVE_PROCEDURE_KR.md` 13절. 부팅 후라면 사용자가 `! sudo bash .../configure_jackal_network.bash up`을 먼저(내가 sudo를 못 한다), `xhost +SI:localuser:root`는 내가 한다.
+- 내일 먼저 할 일은 6절 TODO 순서. 가장 빠른 것은 1번(마진/모름 셀 재계산, 코드 변경 없이 기록으로).
