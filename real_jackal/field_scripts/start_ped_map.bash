@@ -32,6 +32,7 @@ start_once scan '[p]ointcloud_to_laserscan_node' ros2 run pointcloud_to_lasersca
 if ! pgrep -f "[r]sswatch.sh" > /dev/null; then setsid nohup /root/rsswatch.sh > "$RUN/fastlivo_rss.log" 2>&1 < /dev/null & echo "rsswatch $!" >> "$RUN/pids"; fi
 sleep 8
 start_once nav2 '[n]av2_route_planner.launch' ros2 launch moai_jackal_spubert nav2_route_planner.launch.py map:=/root/jackal_maps/world_map.yaml
+[ -f /root/odom_trail.py ] && start_once odomtrail '[o]dom_trail.py' python3 /root/odom_trail.py   # the line the robot has driven (shown in RViz)
 [ -f /root/ped_overlay.py ] && start_once overlay '[p]ed_overlay.py' python3 /root/ped_overlay.py
 sleep 4   # jobs started last die when a docker exec -it session ends: give them time to detach
 echo "run dir: $RUN"
