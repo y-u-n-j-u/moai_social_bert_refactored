@@ -17,7 +17,7 @@
 set -euo pipefail
 
 CONTAINER="${CONTAINER_NAME:-moai_jackal_spubert}"
-IMAGE="${IMAGE:-drive-1025}"
+IMAGE="${IMAGE:-drive-1026}"
 REPO="${CAPSTONE_REPO:-$HOME/capstone_navi}"
 STAB="${STABILITY_REPO:-$HOME/capstone_navi_stability_20260916}"
 ONLY=""
@@ -71,18 +71,18 @@ STATUS_LOOP='while true; do clear; date; uptime | sed "s/.*load/load/"; R=$(read
 tab_script host    "1 HOST: network + container" host \
   "Run once after boot: network (sudo), then the container - skipped with a message if it is already running." \
   "sudo bash $REPO/real_jackal/scripts/configure_jackal_network.bash up && { if docker inspect -f '{{.State.Running}}' $CONTAINER 2>/dev/null | grep -Fxq true; then echo 'container $CONTAINER is already running - nothing to start'; else (cd $STAB && CAPSTONE_CALIB=$REPO/spu_deploy_docker/context/calib IMAGE=$IMAGE CONTAINER_NAME=$CONTAINER MOAI_ENABLE_GUI=1 ./real_jackal/docker/run_stability_container.bash); fi; }" 0
-tab_script sensors "2 SENSORS (lidar + LIO)" container \
-  "Lidar driver, then LIO (FAST-LIVO, VIO off). Restart LIO about every hour (CPU grows)." \
-  "bash /root/start_livox_only.bash && sleep 10 && bash /root/start_lio_fixed.bash" 0
-tab_script nav     "3 NAV2 + BRIDGE" host \
-  "Nav2 (map, AMCL, planner) and the bridge/tracker with the people-only rules (config copy from the repo). Re-run after a config change; goal must be set again." \
-  "docker cp $REPO/real_jackal/field_scripts/start_nav2_bridge.bash $CONTAINER:/root/start_nav2_bridge.bash; docker cp $REPO/real_jackal/ros2_ws/src/moai_jackal_spubert/config/real_jackal_social005.yaml $CONTAINER:/root/real_jackal_social005_human05.yaml; docker exec -it $CONTAINER bash --noprofile --norc /root/start_nav2_bridge.bash" 0
-tab_script rviz    "4 RVIZ" container \
-  "Recording layout. Close it before the run if the computer lags (software GL costs ~2 cores)." \
-  "bash /root/start_rviz.bash" 0
+tab_script sensors "2 SENSORS + PEOPLE + NAV2" host \
+  "Lidar, LIO (FAST-LIVO), RealSense + YOLO + people tracker, scan, Nav2 map/AMCL, robot trail (start_ped_map.bash, repo copy). Restart about every hour (LIO CPU grows)." \
+  "for f in start_ped_map.bash ped_overlay.py odom_trail.py rviz_retry.bash real_jackal_ped_map.rviz; do docker cp $REPO/real_jackal/field_scripts/\$f $CONTAINER:/root/\$f; done; docker exec -it $CONTAINER bash --noprofile --norc /root/start_ped_map.bash" 0
+tab_script nav     "3 BRIDGE (people rules)" host \
+  "Bridge + tracker only, with the people-only rules config (repo copy). Nav2 comes from pane 2. Re-run after a config change; the goal must be set again." \
+  "docker cp $REPO/real_jackal/field_scripts/start_bridge_only.bash $CONTAINER:/root/start_bridge_only.bash; docker cp $REPO/real_jackal/ros2_ws/src/moai_jackal_spubert/config/real_jackal_social005.yaml $CONTAINER:/root/real_jackal_social005_human05.yaml; docker exec -it $CONTAINER bash --noprofile --norc /root/start_bridge_only.bash" 0
+tab_script rviz    "4 RVIZ (people map)" host \
+  "Map + scan + people dot/trail + robot trail + paths. Closes any other RViz first, restarts if it hangs. RViz uses ~5 cores: close it for the drive if you want the load down (it did not change the stops)." \
+  "docker cp $REPO/real_jackal/field_scripts/rviz_retry.bash $CONTAINER:/root/rviz_retry.bash; docker cp $REPO/real_jackal/field_scripts/real_jackal_ped_map.rviz $CONTAINER:/root/real_jackal_ped_map.rviz; docker exec -it $CONTAINER bash --noprofile --norc /root/rviz_retry.bash /root/real_jackal_ped_map.rviz" 0
 tab_script trail   "5 ODOM TRAIL" container \
-  "Draws the travelled path (blue). Cleared when a drive starts or a new goal is set." \
-  "python3 /root/odom_trail.py" 0
+  "The blue travelled line. Already started by pane 2; this only starts it if it is not running." \
+  "pgrep -f '[o]dom_trail.py' >/dev/null && echo 'odom_trail is already running (pane 2)' || python3 /root/odom_trail.py" 0
 tab_script status  "6 STATUS (read-only)" container \
   "Runs by itself: load, FAST-LIVO, processes, last bridge and tracker lines." \
   "$STATUS_LOOP" 1

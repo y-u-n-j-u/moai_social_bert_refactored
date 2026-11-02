@@ -237,3 +237,21 @@ terminator 창 하나가 10칸으로 나뉘어 열린다. **각 칸에는 명령
 - 컨테이너 안에서 `pkill -f`나 `awk /패턴/`을 `bash -c`로 직접 쓰면 자기 자신을 종료시킨다. 스크립트 파일로 만들고 `[x]` 패턴을 쓴다.
 - 인식은 카메라 ±43°만 본다. 옆에서 접근하는 사람은 추적되지 않는다(다음 주 TODO 1번).
 - 주행 후 분석: 정지/회전량/경로 출처/사람 최소 거리를 이전 주행과 비교한다(기록에 롤링 맵, 사람 오버레이, `scan_nohuman`도 들어간다).
+
+## 13. 다음 날 이어서 시작하는 순서 (이미지 `drive-1026`, 2026-11-02 저장)
+
+터미널 런처 기본 이미지가 `drive-1026`이다. 이 이미지에는 11-02의 모든 변경(사람 규칙 0, 제외 반경 0.8, 감시 접촉 정지 제거, RViz 사람 점/궤적, 로봇 궤적, 상태창, 분석 도구, 한글 글꼴)이 들어 있다.
+
+1. (부팅 후에만) 네트워크: 사용자가 직접 `! sudo bash ~/capstone_navi/real_jackal/scripts/configure_jackal_network.bash up`. `192.168.131.50`이 없으면 컨테이너 시작 점검에서 멈춘다.
+2. RViz 화면 권한: `xhost +SI:localuser:root` (부팅 후에만)
+3. `cd ~/capstone_navi/real_jackal/field_scripts && ./open_jackal_terminals.bash` (각 칸은 Enter를 눌러야 실행된다)
+   - 1번 칸: 컨테이너 시작
+   - 2번 칸: **센서 + 사람 인식 + Nav2**(`start_ped_map.bash`: LIO, RealSense, YOLO, 사람 추적, 스캔, Nav2 지도/AMCL, 로봇 궤적). 약 60초 기다린다.
+   - 4번 칸: RViz(지도 위 표시). 켜지면 빨간 `2D Pose Estimate`로 로봇 위치를 찍고 **방향까지 끌기**.
+   - 3번 칸: 브릿지(사람 규칙 설정). 그다음 초록 `2D Goal Pose`로 목표.
+   - 7번 칸 CHECK, 8번 칸 RUN(`monitor_run.bash`): "run"이라고 말할 때만.
+4. 평소 점검: AMCL 표준편차(x≤0.60, y≤0.20, yaw≤10°), `map→odom` 변화 없음, 목표 거리 확인.
+5. 주행 후 분석 도구(컨테이너 `/root`, 저장소 `field_scripts/analysis/`): `drive_an.py`(정지/회전/사람 요약), `timeline.py`(상태 변화+브릿지 이유), `stop3b.py`(정지 지점 주변 폭), `blockmap.py`(정지 순간 롤링 맵의 몸체 반경 침범), `gaps.py`(오도메트리/스캔 끊김, map→odom), `loc.py`/`pre.py`(위치/목표 점검), `go2.sh`(감시 시작), `halt2.sh`/`endday.sh`(정지·기록 닫기). 모두 `docker exec moai_jackal_spubert bash --noprofile --norc -c 'source /root/jackal_runtime/scripts/jackal_ros_env.bash; source /root/moai_stability_ws/install/setup.bash; python3 /root/<파일> <bag 경로> <spubert_real 로그>'` 형식.
+6. 정지 이유를 보는 작은 창(선택): 컨테이너에서 `DISPLAY=:0 python3 /root/drive_hud.py`(CPU 약 15%).
+
+주의: 컨테이너 안에서 `pkill -f`나 `awk /패턴/`을 `bash -c`에 직접 쓰면 자기 자신을 종료시킨다. 스크립트 파일로 만들어 `[x]` 패턴으로 쓴다.
