@@ -205,11 +205,11 @@ terminator 창 하나가 10칸으로 나뉘어 열린다. **각 칸에는 명령
 - 잘 됨: YOLO 점수 0.91~0.97, 매 프레임 검출, 3D 위치 손실 없음, 추적 위치에 라이다 점 있음(24개 중 20개), 사람이 없는 구간 오검출 0건, 보이는 동안 ID 유지.
 - 문제: 사람이 아주 가까워지거나 시야를 벗어나면 추적이 **유령**이 된다(실제 0.5~1.2m인데 추적 3.3~4.2m, 속도 2.41m/s). 가까울 때 속도 추정이 흔들린다. 3m 넘는 거리 데이터는 아직 없다.
 
-## 12. 보행자 규칙과 지도 위 표시 (2026-10-23, 이미지 `drive-1024`)
+## 12. 보행자 규칙과 지도 위 표시 (2026-10-23, 이미지 `drive-1025`; 11-02에 사람 정지 규칙을 모두 끔)
 
 이어서 하는 순서는 `jackal_conversation_logs`의 `worklogs/2026-10-23_pedestrian_map_view_and_first_drives_KR.md` 6절 TODO를 따른다.
 
-**시작 (이미지 `drive-1024`, 터미널 런처 기본값)**
+**시작 (이미지 `drive-1025`, 터미널 런처 기본값)**
 
 - 보행자 표시만 보기(로봇 못 움직임): `./open_jackal_terminals.bash --ped` → 2번 칸 `start_ped_map.bash`(LIO + `/scan` + Nav2 `world_map` + 인식, 브릿지 없음),
   3번 칸 RViz(`rviz_retry.bash`, 다른 RViz를 먼저 닫고 하나만 띄움). `2D Pose Estimate`로 위치를 찍은 뒤 사람이 앞에 서면 지도 위에 보인다.
@@ -220,11 +220,12 @@ terminator 창 하나가 10칸으로 나뉘어 열린다. **각 칸에는 명령
 
 | 파라미터 | 값 | 뜻 |
 |---|---|---|
-| `minimum_human_center_distance` | 0.50m | 후보 경로 거부 반경(이전 1.20) |
-| `human_stop_distance` | 0.30m | 사람 정지(이전 0.90). 0.3m는 몸이 닿는 거리 |
+| `minimum_human_center_distance` | **0 (끔)** | 0이면 사람 때문에 후보를 거부하지 않음. 양수일 때도 실제 한계는 max(설정, 몸체0.44+사람0.35+마진0.20)≈0.99m라서 0.5로는 줄지 않았다(10-23 발견) |
+| `human_stop_distance` | **0 (끔)** | 사람 정지 |
 | `human_scan_mask_radius_m` | 0.50m | 추적된 사람 주변 스캔 점을 장애물 정지/감속 계산에서 제외(즉시 정지 섹터는 원본) |
-| `human_slow_distance`, `human_slow_half_angle_rad` | 0.70m, 1.57 | 사람 전용 감속, ±90° |
-| `human_hold_s`, `human_hold_range_m` | 1.0초, 1.5m | 1.5m 안에서 사라진 사람을 유지 |
+| `human_slow_distance`, `human_slow_half_angle_rad` | **0 (끔)**, 1.57 | 사람 전용 감속 |
+| `human_scan_mask_hard_stop` | **true** | 0.30m 즉시 정지 섹터에서도 추적된 사람을 뺌 → 추적된 사람은 로봇을 멈추게 하지 않는다(e-stop만 남음). 추적 안 된 사람은 스캔 장애물로 남아 감속/정지시킴 |
+| `human_hold_s`, `human_hold_range_m` | 1.0초, 1.5m | 1.5m 안에서 사라진 사람을 유지(위 규칙이 꺼져서 지금은 영향 없음) |
 | `human_map_clear_radius_m`, `human_map_clear_max_cells` | 0.50m, 60 | 롤링 맵에서 사람 점유 셀을 free로(벽에 붙은 큰 덩어리는 제외) |
 
 장애물(벽/박스) 규칙은 그대로: 감속 시작 1.0m, 정지 0.45m, 즉시 정지 0.30m.
