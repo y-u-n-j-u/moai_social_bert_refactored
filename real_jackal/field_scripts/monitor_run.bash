@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Gate + run + supervised drive. Auto-stop on: FAST-LIVO memory, odom blow-up, localization jump, bridge error, contact range.
+# Gate + run + supervised drive. Auto-stop on: FAST-LIVO memory, odom blow-up, localization jump, bridge error (the 0.26 m contact stop was removed 2026-11-02: only the tracker's own obstacle stops remain).
 source /root/jackal_runtime/scripts/jackal_ros_env.bash >/dev/null
 source /root/moai_stability_ws/install/setup.bash
 R=$(readlink -f /root/jackal_logs/drive_latest); L=$(ls -t $R/spubert_real_*.log | head -1)
@@ -46,7 +46,6 @@ for i in $(seq 1 240); do
   [ -n "$OD" ] && echo "$OD" | tr "," " " | awk 'NF>=2 {exit !($1+0>80||$1+0<-80||$2+0>80||$2+0<-80)} NF<2 {exit 1}' && { echo "ODOM DIVERGED -> STOP"; stop "auto: odom diverged ($OD)"; break; }
   [ "$DM" != "na" ] && awk -v d="$DM" 'BEGIN{exit !(d>1.0)}' && { echo "LOCALIZATION JUMP >1 m -> STOP"; stop "auto: map->odom moved ${DM} m"; break; }
   [ "$(grep -c -E '\[ERROR\]|Traceback' $L)" -gt 0 ] && { echo "BRIDGE ERROR -> STOP"; stop "auto: error line in the bridge log"; break; }
-  d=$(echo "$TS" | grep -o "obstacle_too_close:[0-9.]*" | grep -o "[0-9.]*$"); [ -n "$d" ] && awk -v d="$d" 'BEGIN{exit !(d<0.26)}' && { echo "OBSTACLE <0.26m -> STOP"; stop "auto: obstacle ${d} m < 0.26"; break; }
   case "$TS|$(state)" in *goal_reached*) echo "GOAL REACHED"; REACHED=1; break;; esac
 done
 # never leave the robot running without a supervisor: any exit that is not a goal arrival stops

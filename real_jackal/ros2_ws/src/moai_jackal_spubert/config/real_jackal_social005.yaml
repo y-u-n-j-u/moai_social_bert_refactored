@@ -181,7 +181,7 @@ safe_path_tracker:
     human_stop_distance: 0.0
     # people are not walls: leave tracked people out of the scan obstacle stop/slow distances (radius, 0 = off) and slow for
     # them from human_slow_distance down to human_stop_distance (0 = off)
-    human_scan_mask_radius_m: 0.50
+    human_scan_mask_radius_m: 0.80
     # also leave people out of the 0.30 m sector hard stop: people never stop the robot (10-23 operator decision; e-stop only)
     human_scan_mask_hard_stop: true
     human_slow_distance: 0.0
