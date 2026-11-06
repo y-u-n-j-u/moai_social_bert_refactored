@@ -91,6 +91,28 @@ def test_unknown_cells_remain_blocked_and_invalid_grid_is_rejected():
         provider_from_map(grid)
 
 
+def test_unknown_policy_comparison_does_not_clear_occupied_cells_or_change_original_capture():
+    capture = example_capture()
+    record = capture["predictions"][0]
+    grid = capture["maps"][0]
+    grid["occupancy"] = [0] * 6400
+    grid["occupancy"][40 * 80 + 50] = -1  # (1, 0): one unseen cell
+    attempt = record["attempts"][0]
+    attempt["path"] = [[1, 0], [2, 0]]
+    baseline = collision_details(provider_from_map({**grid, "resolution": 0.1}),
+                                 [0, 0], attempt["path"], 0.5)
+    attempt["collision"].update(footprint_collision_count=baseline["count"],
+                                current_footprint_collision=baseline["at_current"],
+                                first_collision_point=baseline["first_xy"])
+    original = copy.deepcopy(capture)
+    result = analyze_capture(capture, [0.5], compare_unknown=True)["unknown_policy_comparison"]
+    assert result["only_unknown_blocked_candidates"] == 1
+    assert capture == original
+    grid["occupancy"][40 * 80 + 50] = 100  # same cell, now known occupied
+    result = analyze_capture(capture, [0.5], compare_unknown=True)["unknown_policy_comparison"]
+    assert result["collision_candidates_unknown_permissive"] == 1
+
+
 def test_unchecked_attempt_is_not_counted_as_collision_free():
     capture = example_capture()
     capture["predictions"][0]["attempts"][0]["collision"] = {"swept_check_performed": False}

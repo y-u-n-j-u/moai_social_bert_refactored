@@ -5,8 +5,7 @@ For every track on /ped_tracking it draws
   * a red ring with the radius at which a candidate path is REJECTED (minimum_human_center_distance, 1.20 m), in the frame of the Tracks message
   * an orange ring with the radius of the tracker's hard STOP (human_stop_distance, 0.90 m), same frame
   * a small magenta dot (dot_size_m, default 0.30 m) at each tracked person; no text
-  * the TRAIL the person has walked (magenta line in the map frame, like the robot's odom trail), kept trail_seconds
-    after the last sample of that id
+  * optional recent trail (off by default); no trail for a lost ID
 No prediction is drawn: SPU-BERT only takes the pedestrian histories as input and outputs the robot path.
 """
 import math
@@ -52,8 +51,11 @@ class PedOverlay(Node):
         self.steps = int(p("pred_steps", 12).value)
         self.obs_len = int(p("obs_len", 8).value)
         self.trail_frame = p("trail_frame", "map").value
-        self.trail_seconds = float(p("trail_seconds", 60.0).value)
-        self.trail_dt = float(p("trail_dt", 0.2).value)
+        self.show_trails = bool(p("show_trails", False).value)
+        self.trail_seconds = min(5.0, max(0.0, float(p("trail_seconds", 2.0).value)))
+        self.trail_dt = max(0.1, float(p("trail_dt", 0.2).value))
+        self.tracks_display_timeout = max(0.1, float(p("tracks_display_timeout", 0.6).value))
+        self.last_tracks_s = -math.inf
         self.trails = {}
         self.trail_seen = {}
         self.tf_buffer = tf2_ros.Buffer()
@@ -64,17 +66,21 @@ class PedOverlay(Node):
         self.stamp = None
         self.pub = self.create_publisher(MarkerArray, self.out_topic, 1)
         self.create_subscription(Tracks, self.tracks_topic, self.on_tracks, qos_profile_sensor_data)
-        self.create_timer(self.dt, self.sample)        # the bridge samples its histories the same way
         self.create_timer(0.2, self.draw)
-        self.create_timer(self.trail_dt, self.sample_trail)
+        if self.show_trails and self.trail_seconds > 0.0:
+            self.create_timer(self.trail_dt, self.sample_trail)
 
     def on_tracks(self, msg):
+        self.last_tracks_s = self.get_clock().now().nanoseconds * 1e-9
         self.frame = msg.header.frame_id or self.frame
         self.latest = {
             int(t.id): (float(t.pose.position.x), float(t.pose.position.y),
                         math.hypot(t.twist.linear.x, t.twist.linear.y))
             for t in msg.tracks
         }
+        for tid in set(self.trails) - self.latest.keys():
+            self.trails.pop(tid, None)
+            self.trail_seen.pop(tid, None)
 
     def sample(self):
         for tid, (x, y, _) in self.latest.items():
@@ -84,6 +90,11 @@ class PedOverlay(Node):
 
     def sample_trail(self):
         """Append every tracked position, transformed to the trail frame, to that id's trail."""
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if not 0 <= now - self.last_tracks_s <= self.tracks_display_timeout:
+            self.trails.clear()
+            self.trail_seen.clear()
+            return
         try:
             tf = self.tf_buffer.lookup_transform(self.trail_frame, self.frame, rclpy.time.Time())
         except Exception:
@@ -91,9 +102,8 @@ class PedOverlay(Node):
         t, q = tf.transform.translation, tf.transform.rotation
         yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
         c, sn = math.cos(yaw), math.sin(yaw)
-        now = self.get_clock().now().nanoseconds * 1e-9
         for tid, (x, y, _) in self.latest.items():
-            trail = self.trails.setdefault(tid, deque(maxlen=int(self.trail_seconds / self.trail_dt)))
+            trail = self.trails.setdefault(tid, deque(maxlen=max(1, int(self.trail_seconds / self.trail_dt))))
             trail.append((t.x + c * x - sn * y, t.y + sn * x + c * y))
             self.trail_seen[tid] = now
         for tid in [i for i, seen in self.trail_seen.items() if now - seen > 5.0]:
@@ -124,6 +134,12 @@ class PedOverlay(Node):
         clear = Marker()
         clear.action = Marker.DELETEALL
         array.markers.append(clear)
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if not 0 <= now - self.last_tracks_s <= self.tracks_display_timeout:
+            self.trails.clear()
+            self.trail_seen.clear()
+            self.pub.publish(array)
+            return
         for tid, (x, y, v_tracker) in self.latest.items():
             if self.show_rings:
                 array.markers.append(self.ring("reject_ring", tid, x, y, self.reject_m, (1.0, 0.1, 0.1, 0.9), self.frame))

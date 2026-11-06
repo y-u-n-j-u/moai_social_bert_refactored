@@ -4,6 +4,7 @@ from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -17,6 +18,7 @@ def generate_launch_description():
     require_global_path = LaunchConfiguration("require_global_path")
     launch_rviz = LaunchConfiguration("launch_rviz")
     rviz_config = LaunchConfiguration("rviz_config")
+    evidence_mode = ParameterValue(LaunchConfiguration("model_evidence_only"), value_type=bool)
 
     bridge = Node(
         package="moai_jackal_spubert",
@@ -28,6 +30,7 @@ def generate_launch_description():
             {
                 "use_cuda": use_cuda,
                 "require_global_path": require_global_path,
+                "model_evidence_only": evidence_mode,
             },
         ],
     )
@@ -36,7 +39,14 @@ def generate_launch_description():
         executable="safe_path_tracker",
         name="safe_path_tracker",
         output="screen",
-        parameters=[config_file, {"cmd_vel_topic": cmd_vel_topic, "motion_enabled": False}],
+        parameters=[config_file, {
+            "cmd_vel_topic": cmd_vel_topic,
+            "motion_enabled": False,
+            "model_evidence_only": evidence_mode,
+            "deadman_joy_topic": ParameterValue(LaunchConfiguration("deadman_joy_topic"), value_type=str),
+            "deadman_button": ParameterValue(LaunchConfiguration("deadman_button"), value_type=int),
+            "deadman_timeout_sec": ParameterValue(LaunchConfiguration("deadman_timeout_sec"), value_type=float),
+        }],
     )
     rviz = Node(
         package="rviz2",
@@ -51,6 +61,10 @@ def generate_launch_description():
         [
             DeclareLaunchArgument("config_file", default_value=default_config),
             DeclareLaunchArgument("cmd_vel_topic", default_value="/spu_bert/cmd_vel_dryrun"),
+            DeclareLaunchArgument("model_evidence_only", default_value="false"),
+            DeclareLaunchArgument("deadman_joy_topic", default_value=""),
+            DeclareLaunchArgument("deadman_button", default_value="-1"),
+            DeclareLaunchArgument("deadman_timeout_sec", default_value="0.35"),
             DeclareLaunchArgument("use_cuda", default_value="true"),
             DeclareLaunchArgument("require_global_path", default_value="true"),
             DeclareLaunchArgument("launch_rviz", default_value="false"),

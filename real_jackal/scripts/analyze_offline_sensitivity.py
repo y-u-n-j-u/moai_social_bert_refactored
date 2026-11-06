@@ -19,12 +19,14 @@ def main():
     parser.add_argument("--capture", help="gzip JSON from capture_collision_maps.py")
     parser.add_argument("--radii", nargs="+", type=float, default=[0.34, 0.40, 0.45, 0.50, 0.55])
     parser.add_argument("--output", help="new full JSON report path; never overwrites")
+    parser.add_argument("--compare-unknown", action="store_true",
+                        help="offline A/B of unknown collision policy; keep occupied and map bounds")
     args = parser.parse_args()
     report = {"synthetic_heading": synthetic_heading_cases()}
     if args.capture:
         with gzip.open(args.capture, "rt", encoding="utf-8") as source:
             capture = json.load(source)
-        report["radius_comparison"] = analyze_capture(capture, args.radii)
+        report["radius_comparison"] = analyze_capture(capture, args.radii, compare_unknown=args.compare_unknown)
         report["captured_odom_proxy"] = sampled_odom_heading_probe(capture.get("odom", []))
     if args.output:
         with open(args.output, "x", encoding="utf-8") as output:

@@ -31,7 +31,13 @@ if [ "$(bag_alive)" -lt 1 ]; then echo "rosbag not running - starting it"; /root
 [ "$(bag_alive)" -ge 1 ] || { echo "NOT STARTING - rosbag recorder is not running (no evidence would be kept)"; exit 3; }
 echo "rosbag recording: $(ls -dt $R/bag_[0-9]* | grep -v '\.log' | head -1)"
 MX0=""; for k in 1 2 3 4 5 6; do read MX0 MY0 MZ0 <<< "$(mo)"; [ -n "$MX0" ] && break; sleep 1; done; echo "map->odom at run: ${MX0:-UNAVAILABLE} $MY0"; echo "state before run: $(state)"
-note "RUN started (state: $(state | cut -c1-60))"; echo "RUN: $(timeout 20 ros2 service call /spu_bert/enable_motion std_srvs/srv/SetBool '{data: true}' 2>&1 | grep -o 'success=[A-Za-z]*.*')"
+RUN_RESPONSE="$(timeout 20 ros2 service call /spu_bert/enable_motion std_srvs/srv/SetBool '{data: true}' 2>&1)"
+echo "$RUN_RESPONSE"
+if ! grep -q 'success=True' <<< "$RUN_RESPONSE"; then
+  stop "RUN service did not confirm enable"
+  exit 3
+fi
+note "RUN started (state: $(state | cut -c1-60))"
 REACHED=0
 for i in $(seq 1 240); do
   sleep 1
@@ -42,6 +48,9 @@ for i in $(seq 1 240); do
   DM=$(awk -v a="$MX" -v b="$MY" -v c="$MX0" -v d="$MY0" 'BEGIN{ if (a=="" || c=="") print "na"; else printf "%.2f", sqrt((a-c)^2+(b-d)^2)}')
   [ "$(bag_alive)" -ge 1 ] || echo "WARNING: rosbag recorder died"
   echo "t+${i}s | $TS | $(state | cut -c1-72) | $RSS| odom=$OD | map-odom shift=${DM}m"
+  case "$TS" in
+    joystick_released_or_stale*|emergency_stop_latched*) note "tracker already stopped: $TS"; exit 0;;
+  esac
   r=$(echo "$RSS" | grep -o "rss_mb=[0-9]*" | grep -o "[0-9]*"); [ -n "$r" ] && [ "$r" -gt 2000 ] && { echo "FASTLIVO MEMORY -> STOP"; stop "auto: FAST-LIVO memory ${r} MB > 2000"; break; }
   [ -n "$OD" ] && echo "$OD" | tr "," " " | awk 'NF>=2 {exit !($1+0>80||$1+0<-80||$2+0>80||$2+0<-80)} NF<2 {exit 1}' && { echo "ODOM DIVERGED -> STOP"; stop "auto: odom diverged ($OD)"; break; }
   [ "$DM" != "na" ] && awk -v d="$DM" 'BEGIN{exit !(d>1.0)}' && { echo "LOCALIZATION JUMP >1 m -> STOP"; stop "auto: map->odom moved ${DM} m"; break; }

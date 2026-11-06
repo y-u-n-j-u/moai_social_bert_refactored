@@ -33,7 +33,7 @@ class Twist:
 
 
 class Marker:
-    ADD, DELETE, SPHERE = 0, 2, 2
+    ADD, DELETE, SPHERE, TEXT_VIEW_FACING = 0, 2, 2, 9
 
     def __init__(self):
         self.header = header()
@@ -94,7 +94,7 @@ def tracker(monkeypatch):
         "geometry_msgs.msg": {"PoseStamped": NS, "Twist": Twist},
         "moai_nav_msgs.msg": {"Tracks": NS},
         "nav_msgs.msg": {"Odometry": NS, "Path": NS},
-        "sensor_msgs.msg": {"LaserScan": NS},
+        "sensor_msgs.msg": {"Joy": NS, "LaserScan": NS},
         "std_msgs.msg": {"Bool": NS, "String": NS},
         "std_srvs.srv": {"SetBool": NS}, "visualization_msgs.msg": {"Marker": Marker},
     }
@@ -122,6 +122,38 @@ def record(tracker):
     return json.loads(tracker.diagnostics_pub.messages[-1].data)
 
 
+def test_deadman_release_latches_stop_until_explicit_rearm(tracker):
+    from moai_jackal_spubert.deadman import Deadman
+
+    tracker._deadman = Deadman(0, 0.35)
+    tracker._deadman_required = True
+    assert not tracker._on_enable_motion(NS(data=True), NS()).success
+    tracker._on_deadman(NS(buttons=[1]))
+    assert tracker._on_enable_motion(NS(data=True), NS()).success
+    tracker._control_tick()
+    assert record(tracker)["control"]["deadman_pressed"]
+    tracker._on_deadman(NS(buttons=[0]))
+    assert_zero(tracker)
+    tracker._on_deadman(NS(buttons=[1]))
+    tracker._control_tick()
+    assert not tracker.motion_enabled
+    assert record(tracker)["status"] == "joystick_released_or_stale"
+
+
+def test_evidence_mode_reports_path_steering_with_overrides_enabled_in_config(tracker):
+    from dataclasses import replace
+
+    tracker.model_evidence_only = True
+    tracker.gap = replace(tracker.gap, min_gap_m=0.85)
+    tracker.avoidance = replace(tracker.avoidance, gain=0.50)
+    assert tracker._on_enable_motion(NS(data=True), NS()).success
+    tracker._control_tick()
+    control = record(tracker)["control"]
+    assert control["mode"] == "model_evidence"
+    assert control["steering_source"] == "path"
+    assert control["path_heading_error_rad"] == control["applied_heading_error_rad"]
+
+
 def assert_zero(tracker):
     command = tracker.cmd_pub.messages[-1]
     assert command.linear.x == command.angular.z == 0.0
@@ -147,8 +179,9 @@ def test_real_control_uses_forward_projection_and_reports_limited_command(tracke
     assert data["target_command"]["v"] > 0.24
     assert data["published_command"]["v"] == pytest.approx(0.035)
     assert data["published_command"]["w"] == tracker.cmd_pub.messages[-1].angular.z
-    assert tracker.lookahead_pub.messages[-1].action == Marker.ADD
-    assert tracker.lookahead_pub.messages[-1].lifetime.nanosec == 500_000_000
+    lookahead = [m for m in tracker.lookahead_pub.messages if m.ns == "tracker_lookahead"][-1]
+    assert lookahead.action == Marker.ADD
+    assert lookahead.lifetime.nanosec == 500_000_000
 
 
 def test_angular_diagnostics_distinguish_target_from_rate_limited_output(tracker):
@@ -171,7 +204,7 @@ def test_empty_path_zeroes_motion_and_preserves_first_reason(tracker):
     assert data["stop_episode"]["first_reason"] == "planner_hold"
     assert data["lookahead"] is None
     assert not data["path"]["present"]
-    assert tracker.lookahead_pub.messages[-1].action == Marker.DELETE
+    assert [m for m in tracker.lookahead_pub.messages if m.ns == "tracker_lookahead"][-1].action == Marker.DELETE
     tracker._on_path(make_path([(0, 0), (3, 0)]))
     tracker._control_tick()
     assert record(tracker)["stop_episode"]["first_reason"] is None

@@ -77,7 +77,7 @@ def collision_details(provider, current, path, radius):
             "at_current": provider.path_collision_cost([current], radius=radius, weight=1) > 0}
 
 
-def compare_record(record, snapshot, radii):
+def compare_record(record, snapshot, radii, *, compare_unknown=False):
     context = record["collision_context"]
     if context.get("unknown_is_occupied") is not True:
         raise ValueError("unexpected unknown policy")
@@ -103,14 +103,23 @@ def compare_record(record, snapshot, radii):
             expected_first is not None and not np.allclose(actual["first_xy"], expected_first, rtol=0, atol=1e-8)
         ):
             raise ValueError("baseline first collision mismatch")
-        rows.append({"rank": attempt["rank"], "original_reason": attempt["reason"],
-                     "by_radius": {str(radius): collision_details(provider, current, path, radius)
-                                   for radius in radii}})
+        row = {"rank": attempt["rank"], "original_reason": attempt["reason"],
+               "by_radius": {str(radius): collision_details(provider, current, path, radius)
+                             for radius in radii}}
+        if compare_unknown:
+            provider.unknown_is_occupied = False
+            try:
+                permissive = collision_details(provider, current, path, baseline)
+            finally:
+                provider.unknown_is_occupied = True
+            row["unknown_policy"] = {"blocked": actual, "permissive": permissive,
+                                     "unknown_only_samples": actual["count"] - permissive["count"]}
+        rows.append(row)
     return {"time": record["stamp_ns"] / 1e9, "original_valid": record["valid"],
             "baseline_radius_m": baseline, "baseline_verified": True, "candidates": rows}
 
 
-def analyze_capture(capture, radii=(0.34, 0.40, 0.45, 0.50, 0.55)):
+def analyze_capture(capture, radii=(0.34, 0.40, 0.45, 0.50, 0.55), *, compare_unknown=False):
     if not radii or any(not math.isfinite(r) or r <= 0 for r in radii):
         raise ValueError("positive finite offline radii required")
     rows, skipped = [], Counter()
@@ -120,7 +129,7 @@ def analyze_capture(capture, radii=(0.34, 0.40, 0.45, 0.50, 0.55)):
             skipped[reason] += 1
             continue
         try:
-            rows.append(compare_record(record, grid, radii))
+            rows.append(compare_record(record, grid, radii, compare_unknown=compare_unknown))
         except (ValueError, KeyError) as exc:
             skipped[str(exc)] += 1
     totals = {}
@@ -132,8 +141,19 @@ def analyze_capture(capture, radii=(0.34, 0.40, 0.45, 0.50, 0.55)):
             "previous_collision_now_collision_free": sum(a["original_reason"] == "robot_footprint_collision"
                 and a["by_radius"][str(radius)]["count"] == 0 for a in tested),
         }
-    return {"warning": "Collision-only sensitivity of fixed candidates, NOT safe-to-drive or full model rerun. Other rejection checks still apply.",
-            "matched_predictions": len(rows), "skipped": dict(skipped), "totals": totals, "predictions": rows}
+    report = {"warning": "Collision-only sensitivity of fixed candidates, NOT safe-to-drive or full model rerun. Other rejection checks still apply.",
+              "matched_predictions": len(rows), "skipped": dict(skipped), "totals": totals, "predictions": rows}
+    if compare_unknown:
+        pairs = [a["unknown_policy"] for row in rows for a in row["candidates"] if "unknown_policy" in a]
+        report["unknown_policy_comparison"] = {
+            "tested_candidates": len(pairs),
+            "collision_candidates_unknown_blocked": sum(p["blocked"]["count"] > 0 for p in pairs),
+            "collision_candidates_unknown_permissive": sum(p["permissive"]["count"] > 0 for p in pairs),
+            "only_unknown_blocked_candidates": sum(
+                p["blocked"]["count"] > 0 and p["permissive"]["count"] == 0 for p in pairs),
+            "unknown_only_samples": sum(p["unknown_only_samples"] for p in pairs),
+        }
+    return report
 
 
 def sampled_odom_heading_probe(odom, sample_period=0.4):

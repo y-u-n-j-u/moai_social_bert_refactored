@@ -293,7 +293,7 @@ Visualization Manager:
       Value: false
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Name: People (dot, trail)
+      Name: People (current tracks)
       Namespaces:
         bbox: true
         info: true
@@ -360,14 +360,14 @@ Visualization Manager:
     - Alpha: 1
       Buffer Length: 1
       Class: rviz_default_plugins/Path
-      Color: 40; 200; 90
+      Color: 220; 220; 220
       Enabled: true
       Head Diameter: 0.35
       Head Length: 0.25
       Length: 0.3
       Line Style: Lines
-      Line Width: 0.2
-      Name: Final TGP (12 steps)
+      Line Width: 0.06
+      Name: Path sent to tracker (all sources)
       Offset:
         X: 0
         Y: 0
@@ -386,8 +386,32 @@ Visualization Manager:
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
+      Name: Model candidates and selection evidence
+      Namespaces:
+        selection_explanation: false
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /spu_bert/selection_markers
+      Value: true
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: Tracker lookahead
+      Namespaces: {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /spu_bert/tracker_lookahead
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
       Name: Adaptive GP and MGP Candidates
       Namespaces:
+        executed_source: false
         global_route: false
         selected_tgp: false
       Topic:
@@ -432,7 +456,7 @@ Visualization Manager:
       Buffer Length: 1
       Class: rviz_default_plugins/Path
       Color: 40; 120; 255
-      Enabled: true
+      Enabled: false
       Head Diameter: 0.35
       Head Length: 0.25
       Length: 0.3
@@ -454,7 +478,7 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /spu_bert/odom_trail
-      Value: true
+      Value: false
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48

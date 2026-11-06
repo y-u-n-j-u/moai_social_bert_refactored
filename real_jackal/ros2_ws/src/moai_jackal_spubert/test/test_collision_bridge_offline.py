@@ -12,7 +12,7 @@ from test_tracker_offline import Marker as BaseMarker, Node as BaseNode, header,
 
 
 class Marker(BaseMarker):
-    DELETEALL, TEXT_VIEW_FACING = 3, 9
+    DELETEALL, TEXT_VIEW_FACING, LINE_STRIP = 3, 9, 4
 
 
 class Node(BaseNode):
@@ -81,7 +81,9 @@ def bridge(monkeypatch):
     node._route_in_frame = lambda *a: [(0, 0), (5, 0)]
     node._publish_debug_map = lambda *a: None
     node._publish_markers = lambda *a: None
-    node._path_message = lambda frame, points: NS(frame=frame, poses=list(points))
+    node._path_message = lambda frame, points: NS(
+        frame=frame, header=header(frame, node.now_s), poses=list(points)
+    )
     node._point_pose = lambda frame, point: NS(frame=frame, point=point)
     node.map_collision = True
 
@@ -622,6 +624,29 @@ def test_sharp_swerve_is_skipped_when_a_straighter_valid_candidate_exists(bridge
     bridge._on_timer()
     assert bridge.path_pub.messages[-1].poses == straight
     assert _predictions(bridge)[0]["selected_rank"] == 1  # logged as the rank actually used
+    report = json.loads(bridge.selection_evidence_pub.messages[-1].data)
+    path = bridge.path_pub.messages[-1]
+    assert report["stamp_ns"] == path.header.stamp.sec * 10**9 + path.header.stamp.nanosec
+    assert report["frame_id"] == path.header.frame_id
+    assert report["executed_source"] == "model"
+    assert report["selected_candidate_index"] == report["executed_candidate_index"] == 11
+    assert report["executed_path"] == [list(p) for p in path.poses]
+    assert report["candidates"][0]["score"]["eligible"] is False
+    assert report["selection_reason"] == "minimum_weighted_cost"
+    markers = bridge.selection_marker_pub.messages[-1].markers
+    assert markers[0].action == Marker.DELETEALL
+    assert all(marker.header == path.header for marker in markers)
+    labels = {marker.text: marker for marker in markers[1:]
+              if marker.type == Marker.TEXT_VIEW_FACING}
+    assert set(labels) == {"C10", "C11"}
+    assert all(marker.ns == "selection_candidate_id" for marker in labels.values())
+    assert (labels["C11"].pose.position.x, labels["C11"].pose.position.y) == straight[-1]
+    lines = {(marker.points[-1].x, marker.points[-1].y): marker for marker in markers[1:]
+             if marker.ns == "model_candidates"}
+    selected, excluded = lines[straight[-1]], lines[swerve[-1]]
+    assert selected.color.g > selected.color.r
+    assert excluded.color.r > excluded.color.g
+    assert selected.scale.x > excluded.scale.x
 
 
 # --- sharp model path -> gentler fallback; always-on executed-source label ---
@@ -651,6 +676,12 @@ def test_sharp_model_path_is_replaced_by_a_gentler_fallback_when_enabled(bridge)
     assert bridge._last_status.startswith("path_valid global_fallback")
     event = _events(bridge, "model_path_replaced_by_smoother_fallback")[0]
     assert event["model_rank"] == 3 and event["model_heading_deviation_rad"] > 0.9
+    report = _events(bridge, "selection_evidence")[-1]
+    assert report["executed_source"] == "fallback"
+    assert report["selected_candidate_index"] == 13
+    assert report["executed_candidate_index"] is None
+    assert report["decision_reason"] == "sharp_model_path"
+    assert report["executed_path"] == [list(p) for p in path]
 
 
 def test_sharp_model_path_is_still_used_when_no_gentler_fallback_exists(bridge):
@@ -808,3 +839,23 @@ def test_retained_path_keeps_the_robot_moving_when_every_new_candidate_is_reject
     assert bridge.path_pub.messages[-1].poses == a
     assert bridge._last_status.startswith("path_valid retained")
     assert not _events(bridge, "global_path_fallback")
+
+
+def test_evidence_mode_never_substitutes_or_recovers_when_candidates_fail(bridge):
+    a, _, cands = _two_candidate_sets(bridge)
+    _enable_retention(bridge)
+    bridge.model_evidence_only = True
+    bridge._runtime.candidates = cands(a, 0)
+    bridge._on_timer()
+    assert bridge.path_pub.messages[-1].poses == a
+    _model_rejects_everything(bridge)
+    for dt in (0.9, 3.0):
+        _advance(bridge, dt)
+        bridge._on_timer()
+        assert bridge.path_pub.messages[-1].poses == []
+    reports = _events(bridge, "selection_evidence")
+    assert [r["executed_source"] for r in reports] == ["model", "hold", "hold"]
+    assert reports[-1]["candidates"][0]["reason"] == "no_map_safe_goal"
+    assert not _events(bridge, "global_path_fallback")
+    assert not _events(bridge, "path_retained")
+    assert not _events(bridge, "recovery_sweep")

@@ -65,6 +65,55 @@ def heading_deviation(robot: XY, yaw: float, candidate: Sequence[XY], index: int
     return abs((diff + math.pi) % (2.0 * math.pi) - math.pi)
 
 
+def score_candidates(
+    paths: Sequence[Sequence[XY]],
+    robot: XY,
+    yaw: float,
+    previous: Optional[Sequence[XY]],
+    previous_age_s: float,
+    config: SelectionConfig,
+    extra_costs: Optional[Sequence[float]] = None,
+) -> tuple[int, list[dict], str]:
+    """Evaluate the actual selector, returning the winner and its auditable inputs."""
+    if not paths:
+        raise ValueError("no candidates")
+    extra = list(extra_costs) if extra_costs is not None else [0.0] * len(paths)
+    if len(extra) != len(paths):
+        raise ValueError("extra_costs must match paths")
+    first_valid = len(paths) == 1 or not (config.active or any(c > 0.0 for c in extra))
+    headings = [heading_deviation(robot, yaw, path) for path in paths]
+    usable = list(range(len(paths)))
+    heading_limit_relaxed = False
+    if config.heading_limit_rad > 0.0:
+        inside = [i for i in usable if headings[i] <= config.heading_limit_rad]
+        heading_limit_relaxed = not inside
+        usable = inside or usable  # never leave the robot without a candidate
+    use_previous = previous if previous_age_s <= config.previous_max_age_s else None
+    best, best_cost = usable[0], math.inf
+    rows = []
+    for i, path in enumerate(paths):
+        distance = continuity_cost(path, use_previous, config.lookahead_points)
+        rank_cost = config.rank_weight * i
+        continuity = config.continuity_weight * distance
+        heading = config.heading_weight * headings[i]
+        cost = rank_cost + continuity + heading + extra[i]
+        eligible = i in usable
+        rows.append({
+            "input_order": i, "eligible": eligible,
+            "heading_limit_relaxed": heading_limit_relaxed,
+            "previous_path_used": bool(use_previous and len(use_previous) >= 2),
+            "continuity_m": distance, "heading_deviation_rad": headings[i],
+            "rank_cost": rank_cost, "continuity_cost": continuity,
+            "heading_cost": heading, "soft_margin_cost": extra[i], "total": cost,
+        })
+        if eligible and cost < best_cost - 1e-12:
+            best, best_cost = i, cost
+    return (0 if first_valid else best), rows, (
+        "only_valid_option" if len(paths) == 1 else
+        "first_valid_by_rank" if first_valid else "minimum_weighted_cost"
+    )
+
+
 def choose_candidate(
     paths: Sequence[Sequence[XY]],
     robot: XY,
@@ -74,31 +123,5 @@ def choose_candidate(
     config: SelectionConfig,
     extra_costs: Optional[Sequence[float]] = None,
 ) -> int:
-    """Index into ``paths`` (given in model-rank order) of the candidate to publish.
-
-    With no weights set this returns 0, the first valid candidate, exactly as before.
-    """
-    if not paths:
-        raise ValueError("no candidates")
-    extra = list(extra_costs) if extra_costs is not None else [0.0] * len(paths)
-    if len(extra) != len(paths):
-        raise ValueError("extra_costs must match paths")
-    if len(paths) == 1 or not (config.active or any(c > 0.0 for c in extra)):
-        return 0
-    usable = list(range(len(paths)))
-    if config.heading_limit_rad > 0.0:
-        inside = [i for i in usable
-                  if heading_deviation(robot, yaw, paths[i]) <= config.heading_limit_rad]
-        usable = inside or usable  # never leave the robot without a candidate
-    use_previous = previous if previous_age_s <= config.previous_max_age_s else None
-    best, best_cost = usable[0], math.inf
-    for rank_order, i in enumerate(usable):
-        cost = (
-            config.rank_weight * i
-            + config.continuity_weight * continuity_cost(paths[i], use_previous, config.lookahead_points)
-            + config.heading_weight * heading_deviation(robot, yaw, paths[i])
-            + extra[i]
-        )
-        if cost < best_cost - 1e-12:
-            best, best_cost = i, cost
-    return best
+    """Index into the valid paths in model-rank order."""
+    return score_candidates(paths, robot, yaw, previous, previous_age_s, config, extra_costs)[0]

@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 import os
 from collections import deque
+from dataclasses import asdict
 from typing import Dict, Optional, Sequence, Tuple
 
 import rclpy
@@ -39,7 +40,7 @@ from .guided_spubert_runtime import (
 )
 from .rolling_laser_map import RollingLaserMapProvider
 from .arc_planner import arc_cost, arc_points, curvature_fan
-from .candidate_select import SelectionConfig, choose_candidate, continuity_cost, heading_deviation
+from .candidate_select import SelectionConfig, continuity_cost, heading_deviation, score_candidates
 from .frame_smoothing import is_large_jump, slew_transform
 from .guidance_stabilizer import StabilizerConfig, stabilize as stabilize_guidance
 from .route_fallback import lateral_offsets, route_prefix_points, shift_path_laterally
@@ -83,6 +84,9 @@ class RealJackalSpubertBridgeNode(Node):
         self.collision_marker_topic = self._string_param(
             "collision_marker_topic", "/spu_bert/collision_markers"
         )
+        # Evidence mode publishes only freshly inferred, validated model paths or holds.
+        # It keeps the Nav2 guidance input, ranking, footprint checks, and stop checks.
+        self.model_evidence_only = self._bool_param("model_evidence_only", False)
         self.compute_path_action = self._string_param("compute_path_action", "/compute_path_to_pose")
         self.planner_id = self._string_param("planner_id", "")
         self.base_frame = self._string_param("base_frame", "base_link")
@@ -296,6 +300,10 @@ class RealJackalSpubertBridgeNode(Node):
         self.minimum_human_center_distance = float(
             self.declare_parameter("minimum_human_center_distance", 1.20).value
         )
+        if self.model_evidence_only:
+            # Keep sensed obstacles and the stricter pedestrian clearance guard.
+            self.human_map_clear_radius_m = 0.0
+            self.minimum_human_center_distance = max(self.minimum_human_center_distance, 1.20)
         self.human_radius = float(self.declare_parameter("human_radius", 0.35).value)
         self.human_safety_margin = float(
             self.declare_parameter("human_safety_margin", 0.20).value
@@ -372,6 +380,10 @@ class RealJackalSpubertBridgeNode(Node):
         self.status_pub = self.create_publisher(String, self.status_topic, 10)
         self.marker_pub = self.create_publisher(MarkerArray, self.marker_topic, 5)
         self.collision_marker_pub = self.create_publisher(MarkerArray, self.collision_marker_topic, 5)
+        self.selection_evidence_pub = self.create_publisher(String, "/spu_bert/selection_evidence", 10)
+        self.selection_marker_pub = self.create_publisher(MarkerArray, "/spu_bert/selection_markers", 5)
+        self._selection_context: dict = {}
+        self._last_planned_path_stamp_ns: Optional[int] = None
         map_qos = QoSProfile(
             depth=1,
             reliability=QoSReliabilityPolicy.RELIABLE,
@@ -521,6 +533,7 @@ class RealJackalSpubertBridgeNode(Node):
         self._last_predict_s = now
 
         robot = self._robot_pose()
+        self._selection_context = {"candidates": [], "robot_pose": robot[:3] if robot else None}
         if robot is None or now - self._odom_stamp_s > self.odom_timeout:
             self._hold("odom_missing_or_stale")
             return
@@ -603,6 +616,7 @@ class RealJackalSpubertBridgeNode(Node):
         collision_context["people_cleared_cells"] = people_cleared
         collision_context["map_origin_xy"] = [self.map_provider.origin_x, self.map_provider.origin_y]
         collision_context["map_shape_cells"] = [self.map_provider.width, self.map_provider.height]
+        self._selection_context["collision_context"] = collision_context
         self._publish_debug_map(odom_frame)
         if not self.map_provider.ready:
             self._hold("rolling_map_unavailable")
@@ -667,6 +681,9 @@ class RealJackalSpubertBridgeNode(Node):
                     radius=self.guidance_radius,
                 )
         except ValueError as exc:
+            if self.model_evidence_only:
+                self._hold(f"adaptive_guidance_failed:{exc}")
+                return
             # The along-path search never leaves the Nav2 route, so a live
             # obstacle (not on the static map) that straddles the whole
             # route within the footprint radius fails it everywhere. Try a
@@ -698,6 +715,7 @@ class RealJackalSpubertBridgeNode(Node):
                 )
                 return
             guidance = detour
+            self._selection_context["guidance_source"] = "lateral_or_relaxed_guidance"
             self._blocked_since_s = None
             self._recovery_active = False
             self._record("lateral_detour", {
@@ -706,6 +724,12 @@ class RealJackalSpubertBridgeNode(Node):
                 "guidance": list(guidance),
             })
 
+        self._selection_context.update(
+            guidance_point=list(guidance),
+            final_goal=list(goal_xy),
+            guidance_source=self._selection_context.get("guidance_source", "nav2_route"),
+            rank_basis="map_safe_mgp_goal_distance_to_guidance",
+        )
         try:
             candidates = self._runtime.predict_candidates(
                 robot_history=list(self._robot_history),
@@ -721,7 +745,9 @@ class RealJackalSpubertBridgeNode(Node):
             return
 
         attempts = []
+        self._selection_context["candidates"] = attempts
         valid_entries = []
+        valid_attempts = []
         selected: Optional[GuidedInferenceResult] = None
         selected_check = None
         for result in candidates:
@@ -759,6 +785,12 @@ class RealJackalSpubertBridgeNode(Node):
                     "candidate_index": int(result.candidate_index),
                     "valid": bool(valid),
                     "reason": reason,
+                    "selected_goal_valid": bool(result.selected_goal_valid),
+                    "trajectory_map_safe": bool(result.trajectory_map_safe),
+                    "model_execution_valid": bool(result.execution_valid),
+                    "goal": getattr(result, "selected_goal_world", None),
+                    "guidance_distance_m": getattr(result, "guidance_distance_m", None),
+                    "score": None,
                     "collision": collision_evidence(check),
                     # Keep rejected geometry too; successful logs already contain
                     # the selected path. JSON sanitization is diagnostic-only.
@@ -772,29 +804,48 @@ class RealJackalSpubertBridgeNode(Node):
             )
             if valid:
                 valid_entries.append((result, check))
+                valid_attempts.append(attempts[-1])
 
         retained = self._retained_candidate(
             robot_x, robot_y, goal_xy, footprint_radius,
             {key: list(value) for key, value in self._human_histories.items()}, now,
         )
+        if retained is not None:
+            self._selection_context["retained_option"] = {
+                "path": retained[0],
+                "from_path_stamp_ns": self._last_planned_path_stamp_ns,
+                "score": None,
+            }
         if valid_entries:
             paths = [list(entry[0].path_world) for entry in valid_entries]
             if retained is not None:
                 paths = [retained[0], *paths]
             extra = [self._soft_margin_penalty(path, footprint_radius) for path in paths]
-            chosen_index = choose_candidate(
+            chosen_index, scores, selection_reason = score_candidates(
                 paths, (robot_x, robot_y), robot_yaw,
                 self._last_published_path, now - self._last_published_s,
                 self.selection_config, extra_costs=extra,
             )
+            offset = 1 if retained is not None else 0
+            for attempt, score in zip(valid_attempts, scores[offset:]):
+                attempt["score"] = score
+            self._selection_context.update(
+                selection_reason=selection_reason,
+                selection_config=asdict(self.selection_config),
+                tie_break="earlier_selector_input",
+                previous_path_age_s=now - self._last_published_s,
+            )
+            if retained is not None:
+                self._selection_context["retained_option"]["score"] = scores[0]
             if retained is not None and chosen_index == 0:
                 if self._proactive_replacement(retained[0], route, goal_xy, robot_x, robot_y,
                                                robot_yaw, odom_frame, now, footprint_radius):
                     return
                 self._publish_retained(retained, odom_frame, goal_xy, robot_x, robot_y, now, attempts)
                 return
-            offset = 1 if retained is not None else 0
             selected, selected_check = valid_entries[chosen_index - offset]
+            self._selection_context["selected_candidate_index"] = int(selected.candidate_index)
+            self._selection_context["selected_rank"] = int(selected.candidate_rank)
 
         debug_result = selected or (candidates[0] if candidates else None)
         self._publish_markers(
@@ -845,8 +896,10 @@ class RealJackalSpubertBridgeNode(Node):
         self._blocked_since_s = None
         self._recovery_active = False
         self._global_fallback_since_s = None
-        path_message = self._path_message(odom_frame, selected.path_world)
-        self.path_pub.publish(path_message)
+        self._publish_decided_path(
+            odom_frame, selected.path_world, "model",
+            self._selection_context["selection_reason"], int(selected.candidate_index),
+        )
         self._last_published_path = [(robot_x, robot_y), *[tuple(p) for p in selected.path_world]]
         self._last_published_s = now
         self._last_published_label = f"MODEL rank {selected.candidate_rank}/{len(candidates)}"
@@ -1215,6 +1268,98 @@ class RealJackalSpubertBridgeNode(Node):
             message.poses.append(pose)
         return message
 
+    def _publish_decided_path(
+        self, frame_id: str, points: Sequence[XY], source: str, reason: str,
+        candidate_index: Optional[int] = None, **details,
+    ) -> None:
+        message = self._path_message(frame_id, points)
+        self.path_pub.publish(message)
+        try:
+            stamp = message.header.stamp
+            stamp_ns = int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
+            if source == "retained":
+                details["retained_from_path_stamp_ns"] = self._last_planned_path_stamp_ns
+            elif source in ("model", "fallback"):
+                self._last_planned_path_stamp_ns = stamp_ns
+            evidence = {
+                "schema_version": 1,
+                "event": "selection_evidence",
+                "selected_candidate_index": None,
+                "selected_rank": None,
+                "selection_reason": None,
+                "candidates": [],
+                **self._selection_context,
+                **details,
+                "stamp_ns": stamp_ns,
+                "frame_id": message.header.frame_id,
+                "goal_generation": self._goal_generation,
+                "model_evidence_only": self.model_evidence_only,
+                "executed_source": source,
+                "executed_candidate_index": candidate_index,
+                "decision_reason": reason,
+                "executed_path": [[float(x), float(y)] for x, y in points],
+            }
+            self._record("selection_evidence", evidence)
+            self.selection_evidence_pub.publish(String(data=diagnostic_json(evidence)))
+            self._publish_selection_markers(message.header, evidence)
+        except Exception as exc:
+            # Evidence output must not interrupt a path or an emergency hold.
+            self.get_logger().warning(f"Selection evidence failed: {exc}", throttle_duration_sec=5.0)
+
+    def _publish_selection_markers(self, header, evidence: dict) -> None:
+        array = MarkerArray()
+        clear = Marker()
+        clear.header = header
+        clear.action = Marker.DELETEALL
+        array.markers.append(clear)
+        frame = header.frame_id
+        lifetime = Duration(seconds=max(1.2, 2.0 * self.replan_period)).to_msg()
+        source = evidence["executed_source"]
+        chosen = evidence["selected_candidate_index"]
+
+        def add(marker):
+            marker.header = header
+            marker.lifetime = lifetime
+            array.markers.append(marker)
+
+        def line(namespace, index, path, color, width):
+            if len(path) < 2 or not all(math.isfinite(v) for xy in path for v in xy):
+                return
+            add(self._line_marker(frame, namespace, index, path, color, width))
+
+        def candidate_label(index, x, y, candidate, color):
+            marker = Marker()
+            marker.ns = "selection_candidate_id"
+            marker.id = index
+            marker.type = Marker.TEXT_VIEW_FACING
+            marker.action = Marker.ADD
+            marker.pose.position.x, marker.pose.position.y, marker.pose.position.z = x, y, 0.50
+            marker.pose.orientation.w = 1.0
+            marker.scale.z = 0.19
+            marker.color = ColorRGBA(r=color[0], g=color[1], b=color[2], a=color[3])
+            marker.text = f"C{candidate}"
+            add(marker)
+
+        for index, row in enumerate(evidence["candidates"], 1):
+            candidate = row["candidate_index"]
+            score = row["score"]
+            if not row["valid"]:
+                color = (1.0, 0.20, 0.18, 0.86)
+            elif score is not None and not score["eligible"]:
+                color = (1.0, 0.50, 0.05, 0.88)
+            else:
+                color = (0.20, 0.60, 1.0, 0.82)
+            selected = row["valid"] and chosen == candidate
+            if selected:
+                color = (0.05, 1.0, 0.25, 1.0) if source == "model" else (1.0, 0.84, 0.10, 1.0)
+            line("model_candidates", index, row["path"], color, 0.075 if selected else 0.028)
+            if row["path"] and all(math.isfinite(v) for v in row["path"][-1]):
+                x, y = row["path"][-1]
+                candidate_label(index, x, y, candidate, color)
+        if source in ("fallback", "retained", "recovery"):
+            line("published_nonmodel_path", 1, evidence["executed_path"], (1.0, 0.65, 0.05, 1.0), 0.085)
+        self.selection_marker_pub.publish(array)
+
     def _point_pose(self, frame_id: str, point: XY) -> PoseStamped:
         message = PoseStamped()
         message.header.frame_id = frame_id
@@ -1248,7 +1393,7 @@ class RealJackalSpubertBridgeNode(Node):
     def _proactive_replacement(self, path, route, goal_xy, robot_x, robot_y, robot_yaw,
                                odom_frame, now, footprint_radius) -> bool:
         """Swap a valid but tight path for a gentler route-prefix detour, before it is forced."""
-        if self.soft_margin_m <= footprint_radius + 1e-6 or not route:
+        if self.model_evidence_only or self.soft_margin_m <= footprint_radius + 1e-6 or not route:
             return False
         clearance = self._path_clearance(path, footprint_radius)
         if clearance >= self.soft_margin_trigger_m:
@@ -1266,7 +1411,8 @@ class RealJackalSpubertBridgeNode(Node):
         """
         previous = self._last_published_path
         if (
-            self.path_retention_max_age_s <= 0.0
+            self.model_evidence_only
+            or self.path_retention_max_age_s <= 0.0
             or not previous
             or now - self._last_published_s > self.path_retention_max_age_s
         ):
@@ -1297,7 +1443,7 @@ class RealJackalSpubertBridgeNode(Node):
         points, check = retained
         self._blocked_since_s = None
         self._recovery_active = False
-        self.path_pub.publish(self._path_message(odom_frame, points))
+        self._publish_decided_path(odom_frame, points, "retained", "previous_path_revalidated")
         self.goal_pub.publish(self._point_pose(odom_frame, goal_xy))
         self._publish_collision_markers(odom_frame, attempts)
         label = f"{self._last_published_label or 'previous path'} (held)"
@@ -1335,7 +1481,7 @@ class RealJackalSpubertBridgeNode(Node):
         Uses validate_candidate_path unchanged, so footprint, pedestrian and
         goal-progress rules are identical to those applied to model output.
         """
-        if not self.global_path_fallback or not route:
+        if self.model_evidence_only or not self.global_path_fallback or not route:
             return False
         if (
             self._global_fallback_since_s is not None
@@ -1404,7 +1550,8 @@ class RealJackalSpubertBridgeNode(Node):
         self._global_fallback_last_s = now
         self._blocked_since_s = None
         self._recovery_active = False
-        self.path_pub.publish(self._path_message(odom_frame, chosen))
+        self._publish_decided_path(odom_frame, chosen, "fallback", reason,
+                                   fallback_kind=source, fallback_tier=tier)
         self._last_published_path = [(robot_x, robot_y), *[tuple(p) for p in chosen]]
         self._last_published_s = now
         self._last_published_label = f"FALLBACK {source}" + ("" if tier == "normal" else f" ({tier})")
@@ -1641,6 +1788,10 @@ class RealJackalSpubertBridgeNode(Node):
         pedestrian); if it persists, stop just sitting there and sweep-scan
         in place instead, since nothing else in this stack will unstick it.
         """
+        if self.model_evidence_only:
+            self._recovery_active = False
+            self._hold(reason)
+            return
         if self._blocked_since_s is None:
             self._blocked_since_s = now
         blocked_duration = now - self._blocked_since_s
@@ -1773,7 +1924,7 @@ class RealJackalSpubertBridgeNode(Node):
             robot_x + self.recovery_step_m * math.cos(sweep_yaw),
             robot_y + self.recovery_step_m * math.sin(sweep_yaw),
         )
-        self.path_pub.publish(self._path_message(odom_frame, [(robot_x, robot_y), target]))
+        self._publish_decided_path(odom_frame, [(robot_x, robot_y), target], "recovery", reason)
         self._status(
             f"recovery_sweep:{reason}:sign={sign:+.0f}:blocked={blocked_duration:.1f}s"
         )
@@ -1794,7 +1945,7 @@ class RealJackalSpubertBridgeNode(Node):
         if not publish_empty:
             return
         frame = self._latest_odom.header.frame_id if self._latest_odom is not None else "odom"
-        self.path_pub.publish(self._path_message(frame or "odom", []))
+        self._publish_decided_path(frame or "odom", [], "hold", reason)
         # Retain freshly published rejection evidence briefly; clear stale
         # evidence on sensor/goal/route holds instead of leaving it in RViz.
         if not reason.startswith("all_candidates_rejected:"):

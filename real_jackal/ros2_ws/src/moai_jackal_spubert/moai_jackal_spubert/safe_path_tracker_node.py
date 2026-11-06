@@ -12,7 +12,7 @@ from nav_msgs.msg import Odometry, Path
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import Joy, LaserScan
 from std_msgs.msg import Bool, String
 from std_srvs.srv import SetBool
 from visualization_msgs.msg import Marker
@@ -26,6 +26,7 @@ from .navigation_core import (
     same_frame_id,
     yaw_from_quaternion,
 )
+from .deadman import Deadman
 from .human_scan_mask import PeopleHold, human_slow_scale, mask_people_in_ranges, nearest_person_ahead
 from .obstacle_steering import (
     GapConfig, SteeringConfig, avoidance_steering, combine_with_path_turn, gap_heading,
@@ -59,6 +60,18 @@ class SafePathTrackerNode(Node):
         self.base_frame = self._string_param("base_frame", "base_link")
 
         self.motion_enabled = self._bool_param("motion_enabled", False)
+        self.model_evidence_only = self._bool_param("model_evidence_only", False)
+        self.deadman_topic = self._string_param("deadman_joy_topic", "")
+        button = int(self.declare_parameter("deadman_button", -1).value)
+        timeout = float(self.declare_parameter("deadman_timeout_sec", 0.35).value)
+        self._deadman = Deadman(button, timeout) if self.deadman_topic else None
+        # Any non-dry-run output in this mode requires an explicitly mapped joystick.
+        self._deadman_required = self._deadman is not None or (
+            self.model_evidence_only and self.cmd_vel_topic != "/spu_bert/cmd_vel_dryrun"
+        )
+        self._deadman_stop_reason = None
+        if self._deadman_required:
+            self.motion_enabled = False
         self.require_tracks_heartbeat = self._bool_param("require_tracks_heartbeat", True)
         self.control_rate = float(self.declare_parameter("control_rate_hz", 10.0).value)
         self.lookahead_distance = float(self.declare_parameter("lookahead_distance", 0.70).value)
@@ -148,6 +161,17 @@ class SafePathTrackerNode(Node):
         self.human_scan_mask_hard_stop = bool(
             self.declare_parameter("human_scan_mask_hard_stop", False).value
         )
+        if self.model_evidence_only:
+            # Keep independent guards on raw observations. No point is removed
+            # because a tracker classified a nearby return as a pedestrian.
+            self.human_scan_mask_radius_m = 0.0
+            self.human_scan_mask_hard_stop = False
+            self.human_stop_distance = max(self.human_stop_distance, 0.90)
+            # The field scan starts at 0.35 m; its 0.30 m sector guard
+            # cannot see any return. Use at least the corridor threshold.
+            self.obstacle_hard_stop_distance = max(
+                self.obstacle_hard_stop_distance, self.obstacle_stop_distance
+            )
         self._human_points: list = []
         # display only: the scan with the tracked people left out, exactly what the stop / slow-down distances use
         self._scan_nohuman_pub = self.create_publisher(LaserScan, "/spu_bert/scan_nohuman", qos_profile_sensor_data)
@@ -195,6 +219,8 @@ class SafePathTrackerNode(Node):
         self.create_subscription(LaserScan, self.scan_topic, self._on_scan, qos_profile_sensor_data)
         self.create_subscription(Tracks, self.tracks_topic, self._on_tracks, 10)
         self.create_subscription(Bool, self.emergency_stop_topic, self._on_emergency_stop, 10)
+        if self._deadman is not None:
+            self.create_subscription(Joy, self.deadman_topic, self._on_deadman, qos_profile_sensor_data)
         self.create_service(SetBool, self.enable_service, self._on_enable_motion)
         self.create_timer(1.0 / max(self.control_rate, 1.0), self._control_tick)
 
@@ -291,12 +317,31 @@ class SafePathTrackerNode(Node):
             self.motion_enabled = False
             self._stop("emergency_stop_latched")
 
+    def _on_deadman(self, msg: Joy) -> None:
+        now = self._now_s()
+        was_ready = self._deadman.ready(now)
+        self._deadman.observe(msg.buttons, now)
+        if self.motion_enabled and (not was_ready or not self._deadman.ready(now)):
+            self._stop_for_deadman("joystick_released_or_stale")
+
+    def _stop_for_deadman(self, reason: str) -> None:
+        self.motion_enabled = False
+        self._deadman_stop_reason = reason
+        self._stop(reason)
+
     def _on_enable_motion(self, request: SetBool.Request, response: SetBool.Response):
         if request.data:
             if self._emergency_latched:
                 response.success = False
                 response.message = "Emergency stop is latched; call with data=false first to reset."
                 return response
+            if self._deadman_required and (
+                self._deadman is None or not self._deadman.ready(self._now_s())
+            ):
+                response.success = False
+                response.message = "A configured, fresh, pressed joystick deadman is required."
+                return response
+            self._deadman_stop_reason = None
             self.motion_enabled = True
             self._stop_episode.finish(self._now_s())
             response.success = True
@@ -305,6 +350,7 @@ class SafePathTrackerNode(Node):
             return response
         self.motion_enabled = False
         self._emergency_latched = False
+        self._deadman_stop_reason = None
         self._stop("stopped")
         response.success = True
         response.message = "Motion stopped and emergency latch reset."
@@ -312,9 +358,15 @@ class SafePathTrackerNode(Node):
 
     def _control_tick(self) -> None:
         if not self.motion_enabled:
-            self._stop("stopped")
+            self._stop("emergency_stop_latched" if self._emergency_latched else
+                       self._deadman_stop_reason or "stopped")
             return
         now = self._now_s()
+        if self._deadman_required and (
+            self._deadman is None or not self._deadman.ready(now)
+        ):
+            self._stop_for_deadman("joystick_released_or_stale")
+            return
         if self._odom is None or now - self._odom_stamp_s > self.odom_timeout:
             self._stop("odom_missing_or_stale")
             return
@@ -415,8 +467,12 @@ class SafePathTrackerNode(Node):
             self._stop("path_endpoint_reached")
             return
         heading_error = normalize_angle(math.atan2(target[1] - robot_y, target[0] - robot_x) - robot_yaw)
+        path_heading_error = heading_error
+        path_only_angular = clamp(
+            self.angular_gain * path_heading_error, -self.maximum_angular_speed, self.maximum_angular_speed
+        )
         gap_heading_used = None
-        if self.gap.active:
+        if not self.model_evidence_only and self.gap.active:
             gap = gap_heading(
                 self._scan.ranges, self._scan.angle_min, self._scan.angle_increment, self.gap,
                 prefer_side=self._avoid_side if now - self._avoid_side_s < 2.0 else 0,
@@ -431,7 +487,8 @@ class SafePathTrackerNode(Node):
             self.maximum_angular_speed,
         )
         avoid_rate = 0.0
-        if (self.avoidance.active and gap_heading_used is None
+        avoidance_applied = False
+        if (not self.model_evidence_only and self.avoidance.active and gap_heading_used is None
                 and abs(heading_error) < self.rotate_in_place_angle):
             # an obstacle dead ahead: keep last side for a while, else go to the side the path leans
             if now - self._avoid_side_s < 1.5 and self._avoid_side != 0:
@@ -443,6 +500,7 @@ class SafePathTrackerNode(Node):
                 self.avoidance, prefer_side=prefer,
             )
             if steering.side != 0:
+                avoidance_applied = True
                 self._avoid_side, self._avoid_side_s = steering.side, now
                 combined = clamp(
                     combine_with_path_turn(angular, steering),
@@ -485,6 +543,13 @@ class SafePathTrackerNode(Node):
             "heading_error_rad": heading_error,
             "goal_distance_m": goal_distance,
             "front_obstacle_distance_m": minimum_obstacle,
+            "steering_source": ("gap" if gap_heading_used is not None else
+                                "avoidance" if avoidance_applied else "path"),
+            "path_heading_error_rad": path_heading_error,
+            "applied_heading_error_rad": heading_error,
+            "path_only_angular_rad_s": path_only_angular,
+            "avoidance_delta_rad_s": avoid_rate,
+            "gap_heading_rad": gap_heading_used,
         }
         self._publish_command(linear, angular)
         status = (
@@ -573,6 +638,17 @@ class SafePathTrackerNode(Node):
                 },
                 "robot": robot,
                 "lookahead": self._tracking_debug,
+                "control": {
+                    "mode": "model_evidence" if self.model_evidence_only else "normal",
+                    "steering_source": "stop" if stopped else self._tracking_debug["steering_source"],
+                    **{key: (self._tracking_debug or {}).get(key) for key in (
+                        "path_heading_error_rad", "applied_heading_error_rad", "path_only_angular_rad_s",
+                        "avoidance_delta_rad_s", "gap_heading_rad"
+                    )},
+                    "deadman_configured": self._deadman is not None,
+                    "deadman_required": self._deadman_required,
+                    "deadman_pressed": self._deadman is not None and self._deadman.ready(now),
+                },
                 "target_command": {"v": linear, "w": angular},
                 "published_command": {"v": self._last_command.linear.x,
                                       "w": self._last_command.angular.z},
@@ -603,6 +679,25 @@ class SafePathTrackerNode(Node):
                 marker.color.r, marker.color.g, marker.color.b, marker.color.a = 1.0, 0.5, 0.0, 1.0
                 marker.lifetime.nanosec = 500_000_000
             self.lookahead_pub.publish(marker)
+            if robot is not None:
+                label = Marker()
+                label.header = marker.header
+                label.ns = "tracker_command_source"
+                label.id = 1
+                label.type = Marker.TEXT_VIEW_FACING
+                label.action = Marker.ADD
+                label.pose.position.x = robot["x"]
+                label.pose.position.y = robot["y"] - 0.65
+                label.pose.position.z = 0.26
+                label.pose.orientation.w = 1.0
+                label.scale.z = 0.12
+                label.color.r = label.color.g = label.color.b = label.color.a = 1.0
+                label.lifetime.nanosec = 500_000_000
+                source = record["control"]["steering_source"]
+                label.text = (f"TRACKER STOP: {status}" if stopped else
+                              f"TRACKER {source.upper()} | v={self._last_command.linear.x:.2f}"
+                              f" w={self._last_command.angular.z:+.2f}")
+                self.lookahead_pub.publish(label)
         except Exception as exc:
             self.get_logger().warning(f"Tracker diagnostics unavailable: {exc}", throttle_duration_sec=5.0)
 
