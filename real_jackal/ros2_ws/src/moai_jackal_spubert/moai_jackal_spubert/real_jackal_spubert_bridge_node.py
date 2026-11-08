@@ -1346,18 +1346,18 @@ class RealJackalSpubertBridgeNode(Node):
             if not row["valid"]:
                 color = (1.0, 0.20, 0.18, 0.86)
             elif score is not None and not score["eligible"]:
-                color = (1.0, 0.50, 0.05, 0.88)
+                color = (1.0, 0.20, 0.18, 0.86)   # 11-08 (operator): heading-excluded candidates are red like rejected ones
             else:
                 color = (0.20, 0.60, 1.0, 0.82)
             selected = row["valid"] and chosen == candidate
             if selected:
-                color = (0.05, 1.0, 0.25, 1.0) if source == "model" else (1.0, 0.84, 0.10, 1.0)
+                color = (0.05, 1.0, 0.25, 1.0)   # 11-08 (operator): green whether the model path or a replacement was published
             line("model_candidates", index, row["path"], color, 0.075 if selected else 0.028)
             if row["path"] and all(math.isfinite(v) for v in row["path"][-1]):
                 x, y = row["path"][-1]
                 candidate_label(index, x, y, candidate, color)
         if source in ("fallback", "retained", "recovery"):
-            line("published_nonmodel_path", 1, evidence["executed_path"], (1.0, 0.65, 0.05, 1.0), 0.085)
+            line("published_nonmodel_path", 1, evidence["executed_path"], (0.05, 1.0, 0.25, 1.0), 0.085)
         self.selection_marker_pub.publish(array)
 
     def _point_pose(self, frame_id: str, point: XY) -> PoseStamped:
