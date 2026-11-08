@@ -361,7 +361,7 @@ Visualization Manager:
       Buffer Length: 1
       Class: rviz_default_plugins/Path
       Color: 220; 220; 220
-      Enabled: true
+      Enabled: false
       Head Diameter: 0.35
       Head Length: 0.25
       Length: 0.3
