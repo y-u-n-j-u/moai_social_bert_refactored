@@ -13,8 +13,12 @@ XY = Tuple[float, float]
 
 
 class CandidateDisplayHold:
-    def __init__(self, enabled: bool = False, reach_radius_m: float = 0.5, max_hold_s: float = 20.0) -> None:
+    def __init__(self, enabled: bool = False, reach_radius_m: float = 0.5, max_hold_s: float = 20.0,
+                 same_cycle_s: float = 0.4) -> None:
         self.enabled = bool(enabled)
+        self.same_cycle_s = float(same_cycle_s)
+        self._decided_at_s: Optional[float] = None
+        self._decision = True
         self.reach_radius_m = float(reach_radius_m)
         self.max_hold_s = float(max_hold_s)
         self._shown_at_s: Optional[float] = None
@@ -31,6 +35,22 @@ class CandidateDisplayHold:
         if now_s - self._shown_at_s > self.max_hold_s:
             return True
         return math.hypot(robot_xy[0] - self._shown_mgp[0], robot_xy[1] - self._shown_mgp[1]) <= self.reach_radius_m
+
+    def decide(self, now_s: float, robot_xy: Sequence[float], goal_generation: int, mgp_xy: Optional[Sequence[float]]) -> bool:
+        """One decision per planning cycle, shared by every display that is drawn from the same candidates.
+
+        The first caller of a cycle decides (and, when the set is replaced, records its goal sample); the others within
+        ``same_cycle_s`` get the same answer, so the candidate lines, the goal-sample spheres, the guidance sphere and the selected
+        path change together.
+        """
+        if self._decided_at_s is not None and 0.0 <= now_s - self._decided_at_s < self.same_cycle_s:
+            return self._decision
+        refresh = self.should_refresh(now_s, robot_xy, goal_generation)
+        if refresh:
+            self.note_shown(now_s, goal_generation, mgp_xy)
+        self._decided_at_s = float(now_s)
+        self._decision = refresh
+        return refresh
 
     def note_shown(self, now_s: float, goal_generation: int, mgp_xy: Optional[Sequence[float]]) -> None:
         self._shown_at_s = float(now_s)

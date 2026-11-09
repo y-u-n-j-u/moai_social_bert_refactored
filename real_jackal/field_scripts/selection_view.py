@@ -76,6 +76,55 @@ def cost_text(value):
     return f"{value:.3f}" if isinstance(value, (int, float)) and math.isfinite(value) else "—"
 
 
+HOLD_ENABLED = os.environ.get("SELECTION_VIEW_HOLD", "1") != "0"
+HOLD_REACH_M = float(os.environ.get("SELECTION_VIEW_REACH_M", "0.5"))
+HOLD_MAX_S = float(os.environ.get("SELECTION_VIEW_HOLD_MAX_S", "20"))
+
+
+def display_mgp(candidates, chosen):
+    """Goal sample (MGP) of the selected candidate, else of the first candidate that has one (same rule as the bridge's RViz hold)."""
+    first = None
+    for row in candidates:
+        goal = row.get("goal")
+        if not goal or len(goal) < 2:
+            continue
+        point = (float(goal[0]), float(goal[1]))
+        if row.get("valid") and chosen is not None and row.get("candidate_index") == chosen:
+            return point
+        if first is None:
+            first = point
+    return first
+
+
+class TableHold:
+    """Keep the shown table until the robot is within HOLD_REACH_M of its goal sample, the goal changed or HOLD_MAX_S passed
+    (operator request 11-09: the table must not change at every replan). Display only."""
+
+    def __init__(self):
+        self.mgp = None
+        self.generation = None
+        self.shown_at = None
+
+    def distance(self, report):
+        pose = report.get("robot_pose")
+        if self.mgp is None or not pose:
+            return None
+        return math.hypot(pose[0] - self.mgp[0], pose[1] - self.mgp[1])
+
+    def should_refresh(self, report, now):
+        if not HOLD_ENABLED or self.shown_at is None or self.mgp is None:
+            return True
+        if report.get("goal_generation") != self.generation or now - self.shown_at > HOLD_MAX_S:
+            return True
+        distance = self.distance(report)
+        return distance is None or distance <= HOLD_REACH_M
+
+    def note_shown(self, report, now):
+        self.mgp = display_mgp(report.get("candidates", []), report.get("selected_candidate_index"))
+        self.generation = report.get("goal_generation")
+        self.shown_at = now
+
+
 MAX_REJECTED_ROWS = int(os.environ.get("SELECTION_VIEW_MAX_REJECTED", "2"))   # 0 or negative = show all
 
 
@@ -165,6 +214,8 @@ class SelectionView:
         self.node = node
         self.displayed = None
         self.displayed_rows = ()
+        self.hold = TableHold()
+        self.hold_note = ""
         root.title("Jackal Candidate Decisions")
         root.geometry("1060x440")
         root.minsize(900, 360)
@@ -218,9 +269,16 @@ class SelectionView:
             mode = "합성 시연" if report.get("synthetic") else "ROS 선택 증거"
             stale = "  |  새 데이터 없음 · 마지막 수신 표시" if time.monotonic() - self.node.received_at > 3.0 else ""
             sec, ns = divmod(report["stamp_ns"], 1_000_000_000)
-            self.source.set(f"{mode}  |  ROS {sec}.{ns:09d}{stale}")
+            self.source.set(f"{mode}  |  ROS {sec}.{ns:09d}{stale}{self.hold_note}")
             if report is not self.displayed:
-                self.show_report(report)
+                now = time.monotonic()
+                if self.hold.should_refresh(report, now):
+                    self.show_report(report)
+                    self.hold.note_shown(report, now)
+                    self.hold_note = ""
+                else:
+                    distance = self.hold.distance(report)
+                    self.hold_note = ("  |  표 고정 중" + (f" · 목표 샘플까지 {distance:.1f}m" if distance is not None else ""))
                 self.displayed = report
         self.root.after(40, self.refresh)
 

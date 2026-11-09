@@ -1112,6 +1112,15 @@ class RealJackalSpubertBridgeNode(Node):
         result: Optional[GuidedInferenceResult],
         valid: bool,
     ) -> None:
+        if self._candidate_hold.enabled:
+            # Same rule as the candidate lines: the guidance sphere, the goal-sample spheres and the selected path (these markers have no
+            # lifetime, so not publishing leaves them as they are) are replaced only when the robot has reached the goal sample.
+            pose = self._robot_pose()
+            mgp = None if result is None else getattr(result, "selected_goal_world", None)
+            if pose is not None and not self._candidate_hold.decide(
+                self._now_s(), pose[:2], int(self._goal_generation), mgp
+            ):
+                return
         array = MarkerArray()
         clear = Marker()
         clear.action = Marker.DELETEALL
@@ -1333,7 +1342,9 @@ class RealJackalSpubertBridgeNode(Node):
         generation = int(evidence.get("goal_generation", 0))
         # Display only: the candidate lines are redrawn when the robot has reached the goal sample (MGP) of the candidate that was
         # selected from the shown set (candidate_hold_until_reach), not at every replan; the planner and the evidence topic are unaffected.
-        refresh = self._candidate_hold.should_refresh(now_s, evidence["robot_pose"][:2], generation)
+        refresh = self._candidate_hold.decide(
+            now_s, evidence["robot_pose"][:2], generation, display_mgp(evidence["candidates"], chosen)
+        )
 
         def add(marker):
             marker.header = header
@@ -1382,9 +1393,7 @@ class RealJackalSpubertBridgeNode(Node):
                 if row["path"] and all(math.isfinite(v) for v in row["path"][-1]):
                     x, y = row["path"][-1]
                     candidate_label(index, x, y, candidate, color)
-            selected_goal = display_mgp(evidence["candidates"], chosen)
             self._held_candidate_markers = fresh
-            self._candidate_hold.note_shown(now_s, generation, selected_goal)
         for marker in self._held_candidate_markers:
             add(marker)
         if source in ("fallback", "retained", "recovery"):

@@ -55,3 +55,13 @@ def test_display_mgp_falls_back_to_the_first_candidate_goal_when_nothing_was_sel
 def test_display_mgp_none_without_any_goal():
     assert display_mgp([{"candidate_index": 1, "valid": False, "goal": None}], None) is None
     assert display_mgp([], None) is None
+
+
+def test_decide_is_shared_within_one_planning_cycle():
+    hold = CandidateDisplayHold(enabled=True, reach_radius_m=0.5)
+    assert hold.decide(0.0, (0.0, 0.0), 1, (3.0, 0.0))                  # first set is shown
+    assert not hold.decide(1.0, (0.2, 0.0), 1, (9.0, 9.0))              # held: the goal sample stays (3, 0)
+    assert not hold.decide(1.1, (0.2, 0.0), 1, (9.0, 9.0))              # second display of the same cycle: same answer
+    assert hold.decide(5.0, (2.7, 0.0), 1, (6.0, 0.0))                  # reached (3, 0) within 0.5 m: replaced
+    assert hold.decide(5.1, (2.7, 0.0), 1, (6.0, 0.0))                  # the other display of that cycle is replaced too
+    assert not hold.decide(6.0, (3.0, 0.0), 1, (9.0, 9.0))              # new goal sample is (6, 0): held again
