@@ -69,7 +69,7 @@ def reason_text(code):
 
 
 def candidate_name(index):
-    return f"C{index}" if index is not None else "—"
+    return f"C{index}" if index is not None else "—"        # fallback paths: CF1.. / CFP / CFA
 
 
 def cost_text(value):
@@ -132,52 +132,65 @@ def hidden_rejected(report, max_rejected):
     """How many failed candidates are left out of the table."""
     if max_rejected is None:
         return 0
-    failed = sum(1 for row in report.get("candidates", []) if not row.get("valid"))
+    failed = sum(1 for row in [*report.get("candidates", []), *(report.get("fallback_candidates") or [])] if not row.get("valid"))
     return max(failed - max_rejected, 0)
+
+
+def row_result(row, chosen, sent, selection_reason, winning_cost, selector):
+    """(tag, state, reason) of one candidate row; the same rules for the model candidates and for the fallback paths."""
+    index = row.get("candidate_index")
+    score = row.get("score") or {}
+    if not row.get("valid"):
+        return "rejected", "검사 탈락", reason_text(row.get("reason"))
+    if index is not None and index == chosen:
+        if sent:
+            return "selected", "선택·발행", reason_text(selection_reason)
+        # operator request 11-09: only three results are shown; a pick that was replaced stays "검사 통과"
+        return "valid", "검사 통과", f"{selector}가 골랐지만 다른 경로가 발행됨"
+    if score.get("eligible") is False:
+        return "valid", "검사 통과", "시작 방향 제한 초과로 선택 제외"
+    reason = "다른 경로가 선택됨"
+    total = score.get("total")
+    if selection_reason == "minimum_weighted_cost" and total is not None and winning_cost is not None:
+        if total > winning_cost + 1e-12:
+            reason = "선택 경로보다 총비용이 높음"
+        elif abs(total - winning_cost) <= 1e-12:
+            reason = "동점에서 앞선 입력 경로 우선"
+    return "valid", "검사 통과", reason
 
 
 def candidate_rows(report, max_rejected=None):
     """Format emitted facts, including safety failures with no computed cost.
 
     ``max_rejected`` (operator request 11-09): show at most this many rows of candidates that failed the checks (the first ones, in
-    the evidence order); None = all. The number hidden is reported by ``hidden_rejected``.
+    the evidence order, model candidates and fallback paths together); None = all. The number hidden is reported by ``hidden_rejected``.
+    Fallback paths (built only when every model candidate was rejected) are named C + F1.. (curves to the goal samples), CFP (Nav2 route
+    prefix), CFA (arc) and get the same three results and the same reasons as the model candidates.
     """
     shown_rejected = 0
-    chosen = report.get("selected_candidate_index")
-    published = report.get("executed_candidate_index")
-    selection_reason = report.get("selection_reason")
-    retained = report.get("retained_option")
-    winner = next((row for row in report["candidates"]
-                   if chosen is not None and row.get("candidate_index") == chosen), None)
-    if winner is None and report.get("executed_source") == "retained":
-        winner = retained
-    winning_cost = ((winner or {}).get("score") or {}).get("total")
-    for row in report["candidates"]:
-        index = row.get("candidate_index")
-        score = row.get("score") or {}
-        if not row.get("valid"):
-            if max_rejected is not None and shown_rejected >= max_rejected:
-                continue
-            shown_rejected += 1
-            tag, state, reason = "rejected", "검사 탈락", reason_text(row.get("reason"))
-        elif index is not None and index == chosen:
-            sent = report.get("executed_source") == "model" and index == published
-            if sent:
-                tag, state, reason = "selected", "선택·발행", reason_text(selection_reason)
-            else:                      # operator request 11-09: only three results are shown; a pick that was replaced stays "검사 통과"
-                tag, state, reason = "valid", "검사 통과", "모델이 골랐지만 다른 경로가 발행됨"
-        elif score.get("eligible") is False:
-            tag, state, reason = "valid", "검사 통과", "시작 방향 제한 초과로 선택 제외"
-        else:
-            tag, state, reason = "valid", "검사 통과", "다른 경로가 선택됨"
-            total = score.get("total")
-            if selection_reason == "minimum_weighted_cost" and total is not None and winning_cost is not None:
-                if total > winning_cost + 1e-12:
-                    reason = "선택 경로보다 총비용이 높음"
-                elif abs(total - winning_cost) <= 1e-12:
-                    reason = "동점에서 앞선 입력 경로 우선"
-        yield tag, (candidate_name(index), row.get("rank", "—"), state,
-                    *(cost_text(score.get(key)) for key in COSTS), reason)
+
+    def block(rows, chosen, sent, selection_reason, selector):
+        nonlocal shown_rejected
+        winner = next((r for r in rows if chosen is not None and r.get("candidate_index") == chosen), None)
+        winning_cost = ((winner or {}).get("score") or {}).get("total")
+        for row in rows:
+            tag, state, reason = row_result(row, chosen, sent, selection_reason, winning_cost, selector)
+            if tag == "rejected":
+                if max_rejected is not None and shown_rejected >= max_rejected:
+                    continue
+                shown_rejected += 1
+            score = row.get("score") or {}
+            yield tag, (candidate_name(row.get("candidate_index")), row.get("rank", "—"), state,
+                        *(cost_text(score.get(key)) for key in COSTS), reason)
+
+    executed_source = report.get("executed_source")
+    yield from block(report["candidates"], report.get("selected_candidate_index"),
+                     executed_source == "model" and report.get("selected_candidate_index") == report.get("executed_candidate_index"),
+                     report.get("selection_reason"), "모델")
+    fallback = report.get("fallback_candidates") or []
+    if fallback:
+        yield from block(fallback, report.get("selected_fallback_index"), executed_source == "fallback",
+                         report.get("fallback_selection_reason"), "선택기")
 
 
 class EvidenceSubscriber(Node):

@@ -110,6 +110,13 @@ real_jackal_spubert_bridge:
     candidate_hold_max_s: 20.0
     # 11-09: draw at most this many candidates that failed the checks in RViz (0 = all); the candidate window has the same limit
     rejected_display_max: 2
+    # 11-09: when every model candidate is rejected, build curves to the safe goal samples (MGP), validate them and publish the best of
+    # them / the route-prefix / the arc
+    mgp_fallback: true
+    mgp_fallback_max_candidates: 5
+    mgp_fallback_max_angle_rad: 1.4
+    mgp_fallback_tangent_m: 1.0
+    mgp_fallback_max_length_m: 4.0
     human_radius: 0.35
     human_safety_margin: 0.20
     maximum_model_speed: 1.50

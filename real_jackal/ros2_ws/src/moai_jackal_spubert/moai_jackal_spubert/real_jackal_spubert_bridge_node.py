@@ -41,6 +41,7 @@ from .guided_spubert_runtime import (
 from .rolling_laser_map import RollingLaserMapProvider
 from .arc_planner import arc_cost, arc_points, curvature_fan
 from .candidate_display_hold import CandidateDisplayHold, display_mgp
+from .mgp_fallback import curve_to_goal, pick_goal_samples
 from .candidate_select import SelectionConfig, continuity_cost, heading_deviation, score_candidates
 from .frame_smoothing import is_large_jump, slew_transform
 from .guidance_stabilizer import StabilizerConfig, stabilize as stabilize_guidance
@@ -393,6 +394,14 @@ class RealJackalSpubertBridgeNode(Node):
         )
         self._held_candidate_markers = []
         self.rejected_display_max = int(self.declare_parameter("rejected_display_max", 0).value)
+        # 11-09 (operator): when every model candidate is rejected, also build smooth curves to the safe goal samples (MGP), validate them
+        # like any other path and publish the best of them (with the route-prefix / arc fallback as competitors)
+        self.mgp_fallback = bool(self.declare_parameter("mgp_fallback", False).value)
+        self.mgp_fallback_max_candidates = int(self.declare_parameter("mgp_fallback_max_candidates", 5).value)
+        self.mgp_fallback_max_angle_rad = float(self.declare_parameter("mgp_fallback_max_angle_rad", 1.4).value)
+        self.mgp_fallback_tangent_m = float(self.declare_parameter("mgp_fallback_tangent_m", 1.0).value)
+        self.mgp_fallback_max_length_m = float(self.declare_parameter("mgp_fallback_max_length_m", 4.0).value)
+        self._mgp_goal_samples = None
         self._selection_context: dict = {}
         self._last_planned_path_stamp_ns: Optional[int] = None
         map_qos = QoSProfile(
@@ -545,6 +554,7 @@ class RealJackalSpubertBridgeNode(Node):
 
         robot = self._robot_pose()
         self._selection_context = {"candidates": [], "robot_pose": robot[:3] if robot else None}
+        self._mgp_goal_samples = None
         if robot is None or now - self._odom_stamp_s > self.odom_timeout:
             self._hold("odom_missing_or_stale")
             return
@@ -759,6 +769,10 @@ class RealJackalSpubertBridgeNode(Node):
 
         attempts = []
         self._selection_context["candidates"] = attempts
+        if candidates and getattr(candidates[0], "candidate_goals_world", None) is not None:
+            self._mgp_goal_samples = (
+                list(candidates[0].candidate_goals_world), list(getattr(candidates[0], "candidate_safe_mask", ())), guidance,
+            )
         valid_entries = []
         valid_attempts = []
         selected: Optional[GuidedInferenceResult] = None
@@ -874,6 +888,7 @@ class RealJackalSpubertBridgeNode(Node):
             self._record("prediction", {"valid": False, "reason": reason, "attempts": attempts,
                                         "collision_context": collision_context})
             if retained is not None:
+                self._show_mgp_fallback_candidates(robot_x, robot_y, robot_yaw, goal_xy, footprint_radius)
                 self._publish_retained(retained, odom_frame, goal_xy, robot_x, robot_y, now, attempts)
                 return
             if self._try_global_path_fallback(
@@ -1342,9 +1357,16 @@ class RealJackalSpubertBridgeNode(Node):
         generation = int(evidence.get("goal_generation", 0))
         # Display only: the candidate lines are redrawn when the robot has reached the goal sample (MGP) of the candidate that was
         # selected from the shown set (candidate_hold_until_reach), not at every replan; the planner and the evidence topic are unaffected.
-        refresh = self._candidate_hold.decide(
-            now_s, evidence["robot_pose"][:2], generation, display_mgp(evidence["candidates"], chosen)
-        )
+        fallback_rows = evidence.get("fallback_candidates") or []
+        chosen_fallback = evidence.get("selected_fallback_index")
+        robot_pose = evidence.get("robot_pose")
+        if robot_pose:
+            refresh = self._candidate_hold.decide(
+                now_s, robot_pose[:2], generation,
+                display_mgp([*evidence["candidates"], *fallback_rows], chosen if chosen is not None else chosen_fallback),
+            )
+        else:
+            refresh = True                      # no robot position yet (start-up): draw the set as it is, nothing to hold
 
         def add(marker):
             marker.header = header
@@ -1359,7 +1381,7 @@ class RealJackalSpubertBridgeNode(Node):
                     return
                 fresh.append(self._line_marker(frame, namespace, index, path, color, width))
 
-            def candidate_label(index, x, y, candidate, color):
+            def candidate_label(index, x, y, candidate, color, prefix="C"):
                 marker = Marker()
                 marker.ns = "selection_candidate_id"
                 marker.id = index
@@ -1369,7 +1391,7 @@ class RealJackalSpubertBridgeNode(Node):
                 marker.pose.orientation.w = 1.0
                 marker.scale.z = 0.19
                 marker.color = ColorRGBA(r=color[0], g=color[1], b=color[2], a=color[3])
-                marker.text = f"C{candidate}"
+                marker.text = f"{prefix}{candidate}"
                 fresh.append(marker)
 
             shown_red = 0
@@ -1393,10 +1415,27 @@ class RealJackalSpubertBridgeNode(Node):
                 if row["path"] and all(math.isfinite(v) for v in row["path"][-1]):
                     x, y = row["path"][-1]
                     candidate_label(index, x, y, candidate, color)
+            for number, row in enumerate(fallback_rows, 1):
+                # fallback paths (to the goal samples, route prefix, arc): blue = passed the checks, red = failed, green = the one published
+                path = row.get("path") or []
+                if len(path) < 2:
+                    continue
+                if not row["valid"]:
+                    if self.rejected_display_max > 0 and shown_red >= self.rejected_display_max:
+                        continue
+                    shown_red += 1
+                    color, width = (1.0, 0.20, 0.18, 0.86), 0.028
+                elif row.get("selected"):
+                    color, width = (0.05, 1.0, 0.25, 1.0), 0.075
+                else:
+                    color, width = (0.20, 0.60, 1.0, 0.82), 0.028
+                fresh.append(self._line_marker(frame, "fallback_candidates", number, path, color, width))
+                x, y = path[-1]
+                candidate_label(100 + number, x, y, row["candidate_index"], color)
             self._held_candidate_markers = fresh
         for marker in self._held_candidate_markers:
             add(marker)
-        if source in ("fallback", "retained", "recovery"):
+        if source in ("fallback", "retained", "recovery") and not (source == "fallback" and chosen_fallback is not None):
             path = evidence["executed_path"]
             if len(path) >= 2 and all(math.isfinite(v) for xy in path for v in xy):
                 add(self._line_marker(frame, "published_nonmodel_path", 1, path, (0.05, 1.0, 0.25, 1.0), 0.085))
@@ -1551,6 +1590,10 @@ class RealJackalSpubertBridgeNode(Node):
             points, route, goal_xy, robot_x, robot_y, robot_yaw, footprint_radius,
             human_histories, count, spacing, minimum_points, now=now,
         )
+        found = self._choose_with_mgp_candidates(
+            found, reason, robot_x, robot_y, robot_yaw, goal_xy, footprint_radius, human_histories,
+            count, spacing, minimum_points, now,
+        )
         escape_radius = (
             self._adaptive_escape_radius(robot_x, robot_y, footprint_radius)
             if found is None else None
@@ -1625,6 +1668,107 @@ class RealJackalSpubertBridgeNode(Node):
             ),
         })
         return True
+
+    def _build_mgp_rows(
+        self, robot_x, robot_y, robot_yaw, goal_xy, footprint_radius, human_histories, count, spacing, minimum_points,
+    ):
+        """Validated curves to the safe goal samples: (rows, pool) or (None, None) when the feature is off / there are no goal samples.
+
+        ``rows`` are the evidence rows (all curves), ``pool`` the valid ones as (path, shift, check, source, curvature, heading, row).
+        """
+        samples = self._mgp_goal_samples
+        if not self.mgp_fallback or samples is None:
+            return None, None
+        goals, safe, guidance = samples
+        rows, pool = [], []
+        for number, (_, goal) in enumerate(
+            pick_goal_samples(goals, safe, guidance, self.mgp_fallback_max_candidates), 1
+        ):
+            path = curve_to_goal(                      # spacing=None: the points span the whole curve, which ends AT the goal sample
+                (robot_x, robot_y), robot_yaw, goal, count, None,
+                self.mgp_fallback_tangent_m, self.mgp_fallback_max_angle_rad, max_length_m=self.mgp_fallback_max_length_m,
+            )
+            if path is None or len(path) < minimum_points:
+                continue
+            check = validate_candidate_path(
+                current=(robot_x, robot_y), path=path, final_goal=goal_xy, map_provider=self.map_provider,
+                footprint_radius=footprint_radius, prediction_dt=self.prediction_dt,
+                maximum_model_speed=self.maximum_model_speed, maximum_step_ratio=self.maximum_step_ratio,
+                minimum_goal_progress=self.minimum_goal_progress, human_histories=human_histories,
+                human_sample_dt=self.prediction_dt, minimum_human_center_distance=self.minimum_human_center_distance,
+                human_radius=self.human_radius, human_safety_margin=self.human_safety_margin,
+            )
+            row = self._fallback_row(len(rows) + 1, f"F{number}", "mgp", path, list(goal), check)
+            rows.append(row)
+            if check.valid:
+                pool.append((path, 0.0, check, "mgp", None, None, row))
+        return rows, pool
+
+    def _show_mgp_fallback_candidates(self, robot_x, robot_y, robot_yaw, goal_xy, footprint_radius) -> None:
+        """Display only: the previous path is about to be published, but the curves to the goal samples are still built and shown
+        (nothing is selected here), so RViz and the candidate window show them in every cycle in which all model candidates failed."""
+        if not self.mgp_fallback or self._mgp_goal_samples is None:
+            return
+        count = max(int(self.pred_len), 1)
+        spacing = self.global_fallback_length_m / count
+        minimum_points = max(1, math.ceil(self.global_fallback_min_safe_length_m / spacing))
+        rows, _ = self._build_mgp_rows(
+            robot_x, robot_y, robot_yaw, goal_xy, footprint_radius,
+            {key: list(value) for key, value in self._human_histories.items()}, count, spacing, minimum_points,
+        )
+        if rows:
+            self._selection_context["fallback_candidates"] = rows
+
+    def _choose_with_mgp_candidates(
+        self, found, reason, robot_x, robot_y, robot_yaw, goal_xy, footprint_radius, human_histories,
+        count, spacing, minimum_points, now,
+    ):
+        """All model candidates were rejected: add curves to the safe goal samples (MGP) to the route-prefix / arc fallback and pick the best.
+
+        Every curve is validated with validate_candidate_path (the checks of every other path) and the valid ones, together with the
+        route-prefix / arc result of _find_fallback_path, are ranked by score_candidates (continuity, start direction, obstacle margin).
+        The rows go to the selection evidence ("fallback_candidates") for RViz and the candidate window. Returns ``found`` in the format
+        of _find_fallback_path (the winner, or None when nothing is valid).
+        """
+        if not str(reason).startswith("all_candidates_rejected"):
+            return found
+        rows, pool = self._build_mgp_rows(
+            robot_x, robot_y, robot_yaw, goal_xy, footprint_radius, human_histories, count, spacing, minimum_points,
+        )
+        if rows is None:
+            return found
+        if found is not None:
+            label = "FP" if found[3] == "route_prefix" else "FA"
+            row = self._fallback_row(len(rows) + 1, label, found[3], found[0], list(found[0][-1]), found[2])
+            rows.append(row)
+            pool.append((*found[:6], row))
+        self._selection_context["fallback_candidates"] = rows
+        if not pool:
+            return None
+        paths = [list(entry[0]) for entry in pool]
+        chosen_index, scores, selection_reason = score_candidates(
+            paths, (robot_x, robot_y), robot_yaw, self._last_published_path, now - self._last_published_s,
+            self.selection_config, extra_costs=[self._soft_margin_penalty(path, footprint_radius) for path in paths],
+        )
+        for entry, score in zip(pool, scores):
+            entry[6]["score"] = score
+        winner = pool[chosen_index]
+        winner[6]["selected"] = True
+        self._selection_context["selected_fallback_index"] = winner[6]["candidate_index"]
+        self._selection_context["fallback_selection_reason"] = selection_reason
+        return winner[:6]
+
+    @staticmethod
+    def _fallback_row(rank, label, kind, path, goal, check) -> dict:
+        return {
+            "rank": rank, "candidate_index": label, "kind": kind, "valid": bool(check.valid), "reason": check.reason,
+            "goal": [float(goal[0]), float(goal[1])], "path": [[float(p[0]), float(p[1])] for p in path],
+            "goal_progress_m": check.goal_progress_m,
+            "minimum_human_distance_m": (
+                None if not math.isfinite(check.minimum_human_distance_m) else check.minimum_human_distance_m
+            ),
+            "collision": collision_evidence(check), "score": None, "selected": False,
+        }
 
     def _find_fallback_path(
         self,
