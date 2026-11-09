@@ -101,12 +101,12 @@ def test_rviz_draws_the_fallback_paths_blue_and_the_published_one_green(bridge):
     node._on_timer()
     lines = drawn(node)
     assert lines, "no fallback line was drawn"
-    green = [m for m in lines if m.color.g > 0.9 and m.color.r < 0.3]
     blue = [m for m in lines if m.color.b > 0.9 and m.color.r < 0.3]
-    assert len(green) == 1 and abs(green[0].scale.x - 0.075) < 1e-9
     assert len(blue) >= 1
-    # the published path is the green one: no second, thicker copy of it is drawn
+    # operator 11-09: exactly ONE green line, the published path; a selected fallback candidate is drawn blue like the other candidates
     array = node.selection_marker_pub.messages[-1]
+    green = [m for m in array.markers if getattr(m, "type", 0) == 4 and m.color.g > 0.9 and m.color.r < 0.3 and m.color.b < 0.5]
+    assert len(green) == 1 and green[0].ns == "published_path"
     assert not [m for m in array.markers if getattr(m, "ns", "") == "published_nonmodel_path"]
 
 
@@ -136,7 +136,8 @@ def test_when_the_previous_path_is_kept_the_fallback_candidates_are_still_shown_
     assert rows and not any(r["selected"] for r in rows) and evidence.get("selected_fallback_index") is None
     # the thick published line stays (it is the retained path) and the fallback lines are drawn as candidates
     array = node.selection_marker_pub.messages[-1]
-    assert [m for m in array.markers if getattr(m, "ns", "") == "published_nonmodel_path"]
+    greens = [m for m in array.markers if getattr(m, "type", 0) == 4 and m.color.g > 0.9 and m.color.r < 0.3 and m.color.b < 0.5]
+    assert len(greens) == 1 and greens[0].ns == "published_path"        # one green line: the retained path that is published
     assert drawn(node)
 
 
@@ -176,3 +177,26 @@ def test_a_curve_keeps_its_goal_sample_number_when_that_number_is_free(bridge):
     for row in evidence_of(node)["fallback_candidates"]:
         if row["kind"] == "mgp":
             assert GOALS[row["candidate_index"]] == tuple(row["goal"])        # model numbers are 10..14 here, so 0..4 are free
+
+
+def test_there_is_exactly_one_green_line_whichever_path_is_published(bridge):
+    node = bridge
+    node._runtime.candidates = [NS(                                     # valid model candidates: a model path is published
+        selected_goal_valid=True, trajectory_map_safe=True, execution_valid=True,
+        path_world=[(0.2 * (i + 1), 0.01 * rank) for i in range(12)], candidate_rank=rank, candidate_index=rank + 10,
+        selected_goal_world=GOALS[rank], candidate_goals_world=list(GOALS), candidate_safe_mask=(True,) * 5,
+    ) for rank in range(3)]
+    node.map_collision = False
+    node.rejected_display_max = 0
+    node._on_timer()
+    assert evidence_of(node)["executed_source"] == "model"
+    array = node.selection_marker_pub.messages[-1]
+    greens = [m for m in array.markers if getattr(m, "type", 0) == 4 and m.color.g > 0.9 and m.color.r < 0.3 and m.color.b < 0.5]
+    assert len(greens) == 1 and greens[0].ns == "published_path"
+
+
+def test_the_yellow_guidance_point_is_not_drawn(bridge):
+    node = bridge
+    node._on_timer()
+    for message in node.marker_pub.messages:
+        assert not [m for m in message.markers if getattr(m, "ns", "") == "adaptive_guidance"]

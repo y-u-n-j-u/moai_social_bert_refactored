@@ -401,6 +401,7 @@ class RealJackalSpubertBridgeNode(Node):
         self.mgp_fallback_max_angle_rad = float(self.declare_parameter("mgp_fallback_max_angle_rad", 1.4).value)
         self.mgp_fallback_tangent_m = float(self.declare_parameter("mgp_fallback_tangent_m", 1.0).value)
         # 11-09: several curve shapes per goal sample (shorter/longer start, pushed to either side); the valid one with the most wall clearance is kept
+        self.show_guidance_marker = bool(self.declare_parameter("show_guidance_marker", False).value)
         self.mgp_fallback_shape_search = bool(self.declare_parameter("mgp_fallback_shape_search", True).value)
         self.mgp_fallback_lateral_m = float(self.declare_parameter("mgp_fallback_lateral_m", 0.6).value)
         self.mgp_fallback_max_length_m = float(self.declare_parameter("mgp_fallback_max_length_m", 4.0).value)
@@ -1161,7 +1162,8 @@ class RealJackalSpubertBridgeNode(Node):
         guidance_marker.pose.orientation.w = 1.0
         guidance_marker.scale.x = guidance_marker.scale.y = guidance_marker.scale.z = 0.35
         guidance_marker.color = ColorRGBA(r=1.0, g=0.72, b=0.0, a=1.0)
-        array.markers.append(guidance_marker)
+        if self.show_guidance_marker:                                  # 11-09 (operator): the yellow guidance point is not drawn
+            array.markers.append(guidance_marker)
         if result is not None:
             for index, point in enumerate(result.candidate_goals_world):
                 marker = Marker()
@@ -1414,9 +1416,8 @@ class RealJackalSpubertBridgeNode(Node):
                     color = (1.0, 0.20, 0.18, 0.86)
                 else:
                     color = (0.20, 0.60, 1.0, 0.82)
-                if selected:
-                    color = (0.05, 1.0, 0.25, 1.0)   # 11-08 (operator): green whether the model path or a replacement was published
-                line("model_candidates", index, row["path"], color, 0.075 if selected else 0.028)
+                # 11-09 (operator): green is ONLY the path that was published (drawn below); a selected candidate stays blue here
+                line("model_candidates", index, row["path"], color, 0.045 if selected else 0.028)
                 if row["path"] and all(math.isfinite(v) for v in row["path"][-1]):
                     x, y = row["path"][-1]
                     candidate_label(index, x, y, candidate, color)
@@ -1431,7 +1432,7 @@ class RealJackalSpubertBridgeNode(Node):
                     shown_red += 1
                     color, width = (1.0, 0.20, 0.18, 0.86), 0.028
                 elif row.get("selected"):
-                    color, width = (0.05, 1.0, 0.25, 1.0), 0.075
+                    color, width = (0.20, 0.60, 1.0, 0.82), 0.045
                 else:
                     color, width = (0.20, 0.60, 1.0, 0.82), 0.028
                 fresh.append(self._line_marker(frame, "fallback_candidates", number, path, color, width))
@@ -1440,10 +1441,11 @@ class RealJackalSpubertBridgeNode(Node):
             self._held_candidate_markers = fresh
         for marker in self._held_candidate_markers:
             add(marker)
-        if source in ("fallback", "retained", "recovery") and not (source == "fallback" and chosen_fallback is not None):
+        if source in ("model", "fallback", "retained", "recovery"):
+            # the single green line: the path handed to the tracker in this cycle (model, previous, fallback or recovery path)
             path = evidence["executed_path"]
             if len(path) >= 2 and all(math.isfinite(v) for xy in path for v in xy):
-                add(self._line_marker(frame, "published_nonmodel_path", 1, path, (0.05, 1.0, 0.25, 1.0), 0.085))
+                add(self._line_marker(frame, "published_path", 1, path, (0.05, 1.0, 0.25, 1.0), 0.085))
         self.selection_marker_pub.publish(array)
 
     def _point_pose(self, frame_id: str, point: XY) -> PoseStamped:
