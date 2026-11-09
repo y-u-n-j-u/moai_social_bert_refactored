@@ -40,7 +40,7 @@ from .guided_spubert_runtime import (
 )
 from .rolling_laser_map import RollingLaserMapProvider
 from .arc_planner import arc_cost, arc_points, curvature_fan
-from .candidate_display_hold import CandidateDisplayHold
+from .candidate_display_hold import CandidateDisplayHold, display_mgp
 from .candidate_select import SelectionConfig, continuity_cost, heading_deviation, score_candidates
 from .frame_smoothing import is_large_jump, slew_transform
 from .guidance_stabilizer import StabilizerConfig, stabilize as stabilize_guidance
@@ -1361,31 +1361,28 @@ class RealJackalSpubertBridgeNode(Node):
                 marker.text = f"C{candidate}"
                 fresh.append(marker)
 
-            selected_goal = None
-            shown_rejected = 0
+            shown_red = 0
             for index, row in enumerate(evidence["candidates"], 1):
                 candidate = row["candidate_index"]
                 score = row["score"]
-                if not row["valid"]:
-                    # operator request 11-09: at most rejected_display_max candidates that failed the checks are drawn (0 = all)
-                    if self.rejected_display_max > 0 and shown_rejected >= self.rejected_display_max:
+                selected = row["valid"] and chosen == candidate
+                red = (not row["valid"]) or (score is not None and not score["eligible"])
+                if red and not selected:
+                    # operator request 11-09: at most rejected_display_max red lines (failed the checks OR excluded by the start
+                    # direction limit) are drawn (0 = all); blue and the selected green lines are always drawn
+                    if self.rejected_display_max > 0 and shown_red >= self.rejected_display_max:
                         continue
-                    shown_rejected += 1
+                    shown_red += 1
                     color = (1.0, 0.20, 0.18, 0.86)
-                elif score is not None and not score["eligible"]:
-                    color = (1.0, 0.20, 0.18, 0.86)   # 11-08 (operator): heading-excluded candidates are red like rejected ones
                 else:
                     color = (0.20, 0.60, 1.0, 0.82)
-                selected = row["valid"] and chosen == candidate
                 if selected:
                     color = (0.05, 1.0, 0.25, 1.0)   # 11-08 (operator): green whether the model path or a replacement was published
-                    goal = row.get("goal")
-                    if goal is not None and len(goal) >= 2 and all(math.isfinite(v) for v in goal[:2]):
-                        selected_goal = (float(goal[0]), float(goal[1]))
                 line("model_candidates", index, row["path"], color, 0.075 if selected else 0.028)
                 if row["path"] and all(math.isfinite(v) for v in row["path"][-1]):
                     x, y = row["path"][-1]
                     candidate_label(index, x, y, candidate, color)
+            selected_goal = display_mgp(evidence["candidates"], chosen)
             self._held_candidate_markers = fresh
             self._candidate_hold.note_shown(now_s, generation, selected_goal)
         for marker in self._held_candidate_markers:

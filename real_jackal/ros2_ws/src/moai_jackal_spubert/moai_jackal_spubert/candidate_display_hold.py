@@ -36,3 +36,22 @@ class CandidateDisplayHold:
         self._shown_at_s = float(now_s)
         self._shown_generation = goal_generation
         self._shown_mgp = None if mgp_xy is None else (float(mgp_xy[0]), float(mgp_xy[1]))
+
+
+def display_mgp(candidates: Sequence[dict], chosen) -> Optional[XY]:
+    """The goal sample (MGP) the robot has to reach before the shown set is replaced.
+
+    The goal of the selected candidate; when no candidate was selected (every candidate failed) the goal of the first candidate that
+    has one, so that such a set is held too instead of being redrawn at every replan.
+    """
+    first = None
+    for row in candidates:
+        goal = row.get("goal")
+        if goal is None or len(goal) < 2 or not all(math.isfinite(float(v)) for v in goal[:2]):
+            continue
+        point = (float(goal[0]), float(goal[1]))
+        if row.get("valid") and chosen is not None and row.get("candidate_index") == chosen:
+            return point
+        if first is None:
+            first = point
+    return first

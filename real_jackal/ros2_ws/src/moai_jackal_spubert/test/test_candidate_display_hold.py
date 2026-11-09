@@ -1,4 +1,4 @@
-from moai_jackal_spubert.candidate_display_hold import CandidateDisplayHold
+from moai_jackal_spubert.candidate_display_hold import CandidateDisplayHold, display_mgp
 
 
 def shown(hold, now=0.0, generation=1, mgp=(3.0, 0.0)):
@@ -40,3 +40,18 @@ def test_a_set_without_a_selected_candidate_is_replaced_every_cycle():
     hold = CandidateDisplayHold(enabled=True)
     shown(hold, mgp=None)
     assert hold.should_refresh(0.5, (0.0, 0.0), 1)
+
+
+def test_display_mgp_selected_candidate_wins():
+    rows = [{"candidate_index": 1, "valid": False, "goal": [1.0, 0.0]}, {"candidate_index": 2, "valid": True, "goal": [4.0, 1.0]}]
+    assert display_mgp(rows, 2) == (4.0, 1.0)
+
+
+def test_display_mgp_falls_back_to_the_first_candidate_goal_when_nothing_was_selected():
+    rows = [{"candidate_index": 1, "valid": False, "goal": [1.0, 0.0]}, {"candidate_index": 2, "valid": False, "goal": [4.0, 1.0]}]
+    assert display_mgp(rows, None) == (1.0, 0.0)
+
+
+def test_display_mgp_none_without_any_goal():
+    assert display_mgp([{"candidate_index": 1, "valid": False, "goal": None}], None) is None
+    assert display_mgp([], None) is None
