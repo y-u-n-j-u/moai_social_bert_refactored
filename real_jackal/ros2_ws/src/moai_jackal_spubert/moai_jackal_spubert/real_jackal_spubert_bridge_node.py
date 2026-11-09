@@ -392,6 +392,7 @@ class RealJackalSpubertBridgeNode(Node):
             float(self.declare_parameter("candidate_hold_max_s", 20.0).value),
         )
         self._held_candidate_markers = []
+        self.rejected_display_max = int(self.declare_parameter("rejected_display_max", 0).value)
         self._selection_context: dict = {}
         self._last_planned_path_stamp_ns: Optional[int] = None
         map_qos = QoSProfile(
@@ -1361,10 +1362,15 @@ class RealJackalSpubertBridgeNode(Node):
                 fresh.append(marker)
 
             selected_goal = None
+            shown_rejected = 0
             for index, row in enumerate(evidence["candidates"], 1):
                 candidate = row["candidate_index"]
                 score = row["score"]
                 if not row["valid"]:
+                    # operator request 11-09: at most rejected_display_max candidates that failed the checks are drawn (0 = all)
+                    if self.rejected_display_max > 0 and shown_rejected >= self.rejected_display_max:
+                        continue
+                    shown_rejected += 1
                     color = (1.0, 0.20, 0.18, 0.86)
                 elif score is not None and not score["eligible"]:
                     color = (1.0, 0.20, 0.18, 0.86)   # 11-08 (operator): heading-excluded candidates are red like rejected ones

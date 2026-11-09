@@ -76,8 +76,24 @@ def cost_text(value):
     return f"{value:.3f}" if isinstance(value, (int, float)) and math.isfinite(value) else "—"
 
 
-def candidate_rows(report):
-    """Format emitted facts, including safety failures with no computed cost."""
+MAX_REJECTED_ROWS = int(os.environ.get("SELECTION_VIEW_MAX_REJECTED", "2"))   # 0 or negative = show all
+
+
+def hidden_rejected(report, max_rejected):
+    """How many failed candidates are left out of the table."""
+    if max_rejected is None:
+        return 0
+    failed = sum(1 for row in report.get("candidates", []) if not row.get("valid"))
+    return max(failed - max_rejected, 0)
+
+
+def candidate_rows(report, max_rejected=None):
+    """Format emitted facts, including safety failures with no computed cost.
+
+    ``max_rejected`` (operator request 11-09): show at most this many rows of candidates that failed the checks (the first ones, in
+    the evidence order); None = all. The number hidden is reported by ``hidden_rejected``.
+    """
+    shown_rejected = 0
     chosen = report.get("selected_candidate_index")
     published = report.get("executed_candidate_index")
     selection_reason = report.get("selection_reason")
@@ -91,6 +107,9 @@ def candidate_rows(report):
         index = row.get("candidate_index")
         score = row.get("score") or {}
         if not row.get("valid"):
+            if max_rejected is not None and shown_rejected >= max_rejected:
+                continue
+            shown_rejected += 1
             tag, state, reason = "rejected", "검사 탈락", reason_text(row.get("reason"))
         elif index is not None and index == chosen:
             sent = report.get("executed_source") == "model" and index == published
@@ -217,7 +236,11 @@ class SelectionView:
         reason = reason_text(chooser_reason) if chosen is not None else "새 모델 후보 선택 없음"
         self.choice.set(f"모델 선택  {candidate_name(chosen)}  ·  {reason}")
         self.decision.set(f"추종기에 발행  {published_text}  |  {reason_text(decision_reason)}")
-        rows = tuple(candidate_rows(report))
+        limit = MAX_REJECTED_ROWS if MAX_REJECTED_ROWS > 0 else None
+        hidden = hidden_rejected(report, limit)
+        if hidden:
+            self.decision.set(self.decision.get() + f"   (검사 탈락 {hidden}개 더 있음, 표에는 {limit}개만 표시)")
+        rows = tuple(candidate_rows(report, limit))
         if rows != self.displayed_rows:
             self.rows.delete(*self.rows.get_children())
             for tag, values in rows:

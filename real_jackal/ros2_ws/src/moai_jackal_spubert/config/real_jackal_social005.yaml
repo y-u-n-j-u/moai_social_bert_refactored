@@ -108,6 +108,8 @@ real_jackal_spubert_bridge:
     candidate_hold_until_reach: true
     candidate_reach_radius_m: 0.5
     candidate_hold_max_s: 20.0
+    # 11-09: draw at most this many candidates that failed the checks in RViz (0 = all); the candidate window has the same limit
+    rejected_display_max: 2
     human_radius: 0.35
     human_safety_margin: 0.20
     maximum_model_speed: 1.50
