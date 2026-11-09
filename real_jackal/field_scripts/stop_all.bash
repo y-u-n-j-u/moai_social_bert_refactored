@@ -10,6 +10,7 @@ stop() { for n in "$@"; do pid=$(awk -v n="$n" '$1==n{print $2}' "$R/pids" | tai
 for p in $(ps -eo pid,cmd | grep "[m]onitor_run.ba" | awk '{print $1}'); do kill "$p" 2>/dev/null; done
 pkill -INT -f "ros2 bag reco[r]d" 2>/dev/null
 stop spubert_real rviz odom_trail; sleep 5     # drive side
+pkill -INT -f '[p]ython3 .*selection_view.py' 2>/dev/null
 stop nav2; sleep 4                             # Nav2
 stop full_stack filterpass scan; sleep 6       # LIO
 for p in $(ps -eo pid,cmd | grep "[r]sswatch.sh" | awk '{print $1}'); do kill "$p" 2>/dev/null; done

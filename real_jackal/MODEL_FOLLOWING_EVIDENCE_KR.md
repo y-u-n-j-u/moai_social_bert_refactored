@@ -22,6 +22,8 @@
 
 ## 후보 점수와 이유를 보여주는 별도 창
 
+기존 터미널 런처의 일반 주행 4번 RViz 또는 보행자 인식 모드 3번 RViz를 실행하면 후보 평가 창도 함께 열린다. 런처가 최신 `selection_view.py`를 컨테이너로 복사하고, RViz와 같은 ROS·화면 환경에서 시작한다. 같은 사용자와 ROS domain에서는 창 하나만 유지하며 RViz 내부 재시작 동안에도 유지한다. 창을 직접 닫거나 `stop_all.bash` / `kill_all.sh`로 종료할 수 있다. 시작 오류는 해당 실행 폴더의 `selection_view.log`에서 확인한다.
+
 RViz를 실행하는 PC에서 같은 ROS 환경과 DDS 설정을 적용하고 다음 명령으로 연다. 그래픽 화면과 Python Tk가 필요하다.
 
 ```bash

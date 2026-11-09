@@ -79,7 +79,7 @@ tab_script nav     "3 BRIDGE (people rules)" host \
   "docker cp $REPO/real_jackal/field_scripts/start_bridge_only.bash $CONTAINER:/root/start_bridge_only.bash; docker cp $REPO/real_jackal/ros2_ws/src/moai_jackal_spubert/config/real_jackal_social005.yaml $CONTAINER:/root/real_jackal_social005_human05.yaml; docker exec -it $CONTAINER bash --noprofile --norc /root/start_bridge_only.bash" 0
 tab_script rviz    "4 RVIZ (people map)" host \
   "Map + scan + people dot/trail + robot trail + paths. Closes any other RViz first, restarts if it hangs. RViz uses ~5 cores: close it for the drive if you want the load down (it did not change the stops)." \
-  "docker cp $REPO/real_jackal/field_scripts/rviz_retry.bash $CONTAINER:/root/rviz_retry.bash; docker cp $REPO/real_jackal/field_scripts/real_jackal_ped_map.rviz $CONTAINER:/root/real_jackal_ped_map.rviz; docker exec -it $CONTAINER bash --noprofile --norc /root/rviz_retry.bash /root/real_jackal_ped_map.rviz" 0
+  "for f in rviz_retry.bash selection_view.py real_jackal_ped_map.rviz; do docker cp $REPO/real_jackal/field_scripts/\$f $CONTAINER:/root/\$f; done; docker exec -it $CONTAINER bash --noprofile --norc /root/rviz_retry.bash /root/real_jackal_ped_map.rviz" 0
 tab_script trail   "5 ODOM TRAIL" container \
   "The blue travelled line. Already started by pane 2; this only starts it if it is not running." \
   "pgrep -f '[o]dom_trail.py' >/dev/null && echo 'odom_trail is already running (pane 2)' || python3 /root/odom_trail.py" 0
@@ -100,13 +100,13 @@ tab_script after   "10 AFTER THE RUN" container \
   'pkill -INT -f "ros2 bag reco[r]d"; sleep 5; ls -dt /root/jackal_logs/drive_latest/bag_[0-9]* | grep -v "\.log" | head -3' 0
 
 PED_STATUS='while true; do clear; date; uptime | sed "s/.*load/load/"; echo "--- top CPU:"; ps -eo pcpu,rss,args --sort=-pcpu | head -7 | cut -c1-110; echo "--- GPU:"; nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader 2>/dev/null || echo "(nvidia-smi not available here)"; source /root/jackal_runtime/scripts/jackal_ros_env.bash >/dev/null 2>&1; echo "--- tracks now:"; timeout 3 ros2 topic echo /ped_tracking --once --field tracks 2>/dev/null | grep -c "^- id" | sed "s/^/ pedestrians tracked: /"; sleep 2; done'
-CP_PED="for f in start_ped_test.bash start_ped_map.bash start_bag_ped.bash ped_overlay.py real_jackal_ped.rviz real_jackal_ped_map.rviz rviz_retry.bash; do docker cp $REPO/real_jackal/field_scripts/\$f $CONTAINER:/root/\$f; done"
+CP_PED="for f in start_ped_test.bash start_ped_map.bash start_bag_ped.bash ped_overlay.py selection_view.py real_jackal_ped.rviz real_jackal_ped_map.rviz rviz_retry.bash; do docker cp $REPO/real_jackal/field_scripts/\$f $CONTAINER:/root/\$f; done"
 tab_script pedsensors "2 PED SENSORS (lidar + camera + YOLO + tracker)" host \
   "Perception only - no FAST-LIVO/Nav2/bridge, the robot cannot move. Copies the new scripts into the container first." \
   "$CP_PED; docker exec -it $CONTAINER bash --noprofile --norc /root/start_ped_map.bash" 0
 tab_script pedrviz "3 PED RVIZ (light)" host \
   "Pedestrian view on the saved map (needs start_ped_map: pane 2). Closes any other RViz first and restarts it if it hangs." \
-  "docker cp $REPO/real_jackal/field_scripts/rviz_retry.bash $CONTAINER:/root/rviz_retry.bash; docker cp $REPO/real_jackal/field_scripts/real_jackal_ped_map.rviz $CONTAINER:/root/real_jackal_ped_map.rviz; docker exec -it $CONTAINER bash --noprofile --norc /root/rviz_retry.bash /root/real_jackal_ped_map.rviz" 0
+  "for f in rviz_retry.bash selection_view.py real_jackal_ped_map.rviz; do docker cp $REPO/real_jackal/field_scripts/\$f $CONTAINER:/root/\$f; done; docker exec -it $CONTAINER bash --noprofile --norc /root/rviz_retry.bash /root/real_jackal_ped_map.rviz" 0
 tab_script pedstatus "4 PED STATUS (read-only)" container \
   "Runs by itself: load, top processes, GPU, number of tracked pedestrians." \
   "$PED_STATUS" 1

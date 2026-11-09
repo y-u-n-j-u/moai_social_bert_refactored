@@ -11,6 +11,13 @@ CFG="${1:-/root/real_jackal_ped.rviz}"
 for P in $(pgrep -f "[r]viz2 -d" ); do kill "$P" 2>/dev/null; done; sleep 2
 for P in $(pgrep -f "[r]viz2 -d" ); do kill -9 "$P" 2>/dev/null; done
 R=$(readlink -f /root/jackal_logs/drive_latest)
+VIEW="$(dirname -- "${BASH_SOURCE[0]}")/selection_view.py"
+if [ -f "$VIEW" ] && python3 -c 'import tkinter, rclpy' >> "$R/selection_view.log" 2>&1; then
+  setsid nohup python3 -u "$VIEW" >> "$R/selection_view.log" 2>&1 < /dev/null &
+  echo "Candidate decisions window requested (log: $R/selection_view.log)."
+else
+  echo "Candidate decisions window could not start: check $VIEW and $R/selection_view.log (Python Tk/ROS required)." >&2
+fi
 for try in 1 2 3 4 5 6 7 8; do
   START=$(date +%s)
   rviz2 -d "$CFG" > "$R/rviz.log" 2>&1 &

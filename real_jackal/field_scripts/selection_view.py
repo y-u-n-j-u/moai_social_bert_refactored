@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Read-only desktop view of the bridge's candidate selection evidence."""
 
+import errno
+import getpass
 import json
 import math
+import os
+from pathlib import Path
+import tempfile
 import time
 import tkinter as tk
 from tkinter import ttk
@@ -35,6 +40,26 @@ SOURCES = {
     "fallback": "대체 경로", "recovery": "복구 경로", "hold": "정지 대기",
 }
 COSTS = ("total", "rank_cost", "continuity_cost", "heading_cost", "soft_margin_cost")
+
+
+def acquire_instance_lock():
+    domain = os.environ.get("ROS_DOMAIN_ID", "0")
+    lock_path = Path(tempfile.gettempdir()) / f"moai_selection_view_{getpass.getuser()}_{domain}.lock"
+    handle = lock_path.open("a+b")
+    try:
+        if os.name == "nt":
+            import msvcrt
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        handle.close()
+        if exc.errno in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+            return None
+        raise
+    return handle
 
 
 def reason_text(code):
@@ -201,19 +226,24 @@ class SelectionView:
 
 
 def main():
-    root = tk.Tk()
-    rclpy.init()
-    node = EvidenceSubscriber()
-    try:
-        window = SelectionView(root, node)
-        root.after(0, window.refresh)
-        root.mainloop()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+    lock = acquire_instance_lock()
+    if lock is None:
+        print("Candidate decisions window is already running in this ROS domain.", flush=True)
+        return
+    with lock:
+        root = tk.Tk()
+        rclpy.init()
+        node = EvidenceSubscriber()
+        try:
+            window = SelectionView(root, node)
+            root.after(0, window.refresh)
+            root.mainloop()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            node.destroy_node()
+            if rclpy.ok():
+                rclpy.shutdown()
 
 
 if __name__ == "__main__":
