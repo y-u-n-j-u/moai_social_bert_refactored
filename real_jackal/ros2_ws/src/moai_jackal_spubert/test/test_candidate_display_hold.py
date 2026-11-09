@@ -65,3 +65,12 @@ def test_decide_is_shared_within_one_planning_cycle():
     assert hold.decide(5.0, (2.7, 0.0), 1, (6.0, 0.0))                  # reached (3, 0) within 0.5 m: replaced
     assert hold.decide(5.1, (2.7, 0.0), 1, (6.0, 0.0))                  # the other display of that cycle is replaced too
     assert not hold.decide(6.0, (3.0, 0.0), 1, (9.0, 9.0))              # new goal sample is (6, 0): held again
+
+
+def test_force_replaces_a_held_set_at_once():
+    from moai_jackal_spubert.candidate_display_hold import CandidateDisplayHold
+    hold = CandidateDisplayHold(enabled=True, reach_radius_m=0.5, max_hold_s=20.0, same_cycle_s=0.4)
+    assert hold.decide(0.0, (0.0, 0.0), 1, (5.0, 0.0)) is True
+    assert hold.decide(1.0, (0.1, 0.0), 1, (6.0, 0.0)) is False               # held: the robot is far from (5, 0)
+    assert hold.decide(2.0, (0.2, 0.0), 1, (6.0, 0.0), force=True) is True    # forced
+    assert hold.decide(3.0, (0.3, 0.0), 1, (7.0, 0.0)) is False               # holds the new set (goal sample (6, 0))

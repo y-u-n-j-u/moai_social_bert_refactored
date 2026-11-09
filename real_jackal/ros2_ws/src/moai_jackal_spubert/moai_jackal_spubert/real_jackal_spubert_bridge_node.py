@@ -407,6 +407,7 @@ class RealJackalSpubertBridgeNode(Node):
         self.never_hold = bool(self.declare_parameter("never_hold", False).value)
         self.never_hold_max_age_s = float(self.declare_parameter("never_hold_max_age_s", 6.0).value)
         self._moving_path = None
+        self._shown_has_pick = False
         self._moving_path_s = -math.inf
         self.show_guidance_marker = bool(self.declare_parameter("show_guidance_marker", False).value)
         self.mgp_fallback_shape_search = bool(self.declare_parameter("mgp_fallback_shape_search", True).value)
@@ -1369,6 +1370,13 @@ class RealJackalSpubertBridgeNode(Node):
         lifetime = Duration(seconds=max(1.2, 2.0 * self.replan_period)).to_msg()
         source = evidence["executed_source"]
         chosen = evidence["selected_candidate_index"]
+        if chosen is None:
+            # 11-09 (operator): the model-stage pick is shown green in EVERY cycle that has a passed candidate, also when the previous path
+            # (which competes with the candidates) or a fallback path was published: the passed, eligible candidate with the lowest total cost
+            passed = [r for r in evidence["candidates"] if r["valid"] and (r.get("score") or {}).get("eligible") is not False]
+            passed = passed or [r for r in evidence["candidates"] if r["valid"]]
+            if passed:
+                chosen = min(passed, key=lambda r: ((r.get("score") or {}).get("total", math.inf), r.get("rank", 0)))["candidate_index"]
         now_s = self._now_s()
         generation = int(evidence.get("goal_generation", 0))
         # Display only: the candidate lines are redrawn when the robot has reached the goal sample (MGP) of the candidate that was
@@ -1380,6 +1388,8 @@ class RealJackalSpubertBridgeNode(Node):
             refresh = self._candidate_hold.decide(
                 now_s, robot_pose[:2], generation,
                 display_mgp([*evidence["candidates"], *fallback_rows], chosen if chosen is not None else chosen_fallback),
+                # operator 11-09: a green pick must be on screen in every cycle that has one, so a held set without a green line is replaced
+                force=(chosen is not None or chosen_fallback is not None) and not self._shown_has_pick,
             )
         else:
             refresh = True                      # no robot position yet (start-up): draw the set as it is, nothing to hold
@@ -1425,8 +1435,9 @@ class RealJackalSpubertBridgeNode(Node):
                     color = (1.0, 0.20, 0.18, 0.86)
                 else:
                     color = (0.20, 0.60, 1.0, 0.82)
-                # 11-09 (operator): green is ONLY the path that was published (drawn below); a selected candidate stays blue here
-                line("model_candidates", index, row["path"], color, 0.045 if selected else 0.028)
+                if selected:
+                    color = (0.05, 1.0, 0.25, 1.0)   # green = the model-stage pick (one per cycle)
+                line("model_candidates", index, row["path"], color, 0.075 if selected else 0.028)
                 if row["path"] and all(math.isfinite(v) for v in row["path"][-1]):
                     x, y = row["path"][-1]
                     candidate_label(index, x, y, candidate, color)
@@ -1440,21 +1451,22 @@ class RealJackalSpubertBridgeNode(Node):
                         continue
                     shown_red += 1
                     color, width = (1.0, 0.20, 0.18, 0.86), 0.028
-                elif row.get("selected"):
-                    color, width = (0.20, 0.60, 1.0, 0.82), 0.045
+                elif row.get("selected") and chosen is None:         # green only when no model candidate passed (one green in all)
+                    color, width = (0.05, 1.0, 0.25, 1.0), 0.075
                 else:
                     color, width = (0.20, 0.60, 1.0, 0.82), 0.028
                 fresh.append(self._line_marker(frame, "fallback_candidates", number, path, color, width))
                 x, y = path[-1]
                 candidate_label(100 + number, x, y, row["candidate_index"], color)
             self._held_candidate_markers = fresh
+            self._shown_has_pick = chosen is not None or chosen_fallback is not None
         for marker in self._held_candidate_markers:
             add(marker)
-        if source in ("model", "fallback", "retained", "recovery"):
-            # the single green line: the path handed to the tracker in this cycle (model, previous, fallback or recovery path)
+        if source in ("retained", "recovery") or (source == "fallback" and chosen_fallback is None):
+            # published, but not one of the drawn candidates (previous / recovery / route-prefix path): white, so it is not mistaken for the green pick
             path = evidence["executed_path"]
             if len(path) >= 2 and all(math.isfinite(v) for xy in path for v in xy):
-                add(self._line_marker(frame, "published_path", 1, path, (0.05, 1.0, 0.25, 1.0), 0.085))
+                add(self._line_marker(frame, "published_path", 1, path, (1.0, 1.0, 1.0, 0.95), 0.085))
         self.selection_marker_pub.publish(array)
 
     def _point_pose(self, frame_id: str, point: XY) -> PoseStamped:

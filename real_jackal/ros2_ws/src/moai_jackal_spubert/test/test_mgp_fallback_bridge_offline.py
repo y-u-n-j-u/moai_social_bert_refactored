@@ -106,7 +106,7 @@ def test_rviz_draws_the_fallback_paths_blue_and_the_published_one_green(bridge):
     # operator 11-09: exactly ONE green line, the published path; a selected fallback candidate is drawn blue like the other candidates
     array = node.selection_marker_pub.messages[-1]
     green = [m for m in array.markers if getattr(m, "type", 0) == 4 and m.color.g > 0.9 and m.color.r < 0.3 and m.color.b < 0.5]
-    assert len(green) == 1 and green[0].ns == "published_path"
+    assert len(green) == 1 and green[0].ns == "fallback_candidates"     # no model candidate passed: the selected fallback path is the green one
     assert not [m for m in array.markers if getattr(m, "ns", "") == "published_nonmodel_path"]
 
 
@@ -137,7 +137,8 @@ def test_when_the_previous_path_is_kept_the_fallback_candidates_are_still_shown_
     # the thick published line stays (it is the retained path) and the fallback lines are drawn as candidates
     array = node.selection_marker_pub.messages[-1]
     greens = [m for m in array.markers if getattr(m, "type", 0) == 4 and m.color.g > 0.9 and m.color.r < 0.3 and m.color.b < 0.5]
-    assert len(greens) == 1 and greens[0].ns == "published_path"        # one green line: the retained path that is published
+    whites = [m for m in array.markers if getattr(m, "type", 0) == 4 and m.color.r > 0.9 and m.color.g > 0.9 and m.color.b > 0.9]
+    assert not greens and len(whites) == 1 and whites[0].ns == "published_path"     # nothing passed: the published previous path is white
     assert drawn(node)
 
 
@@ -192,7 +193,30 @@ def test_there_is_exactly_one_green_line_whichever_path_is_published(bridge):
     assert evidence_of(node)["executed_source"] == "model"
     array = node.selection_marker_pub.messages[-1]
     greens = [m for m in array.markers if getattr(m, "type", 0) == 4 and m.color.g > 0.9 and m.color.r < 0.3 and m.color.b < 0.5]
-    assert len(greens) == 1 and greens[0].ns == "published_path"
+    assert len(greens) == 1 and greens[0].ns == "model_candidates"
+
+
+def test_the_model_pick_is_green_even_when_the_previous_path_is_published(bridge):
+    node = bridge
+    node._runtime.candidates = [NS(
+        selected_goal_valid=True, trajectory_map_safe=True, execution_valid=True,
+        path_world=[(0.2 * (i + 1), 0.01 * rank) for i in range(12)], candidate_rank=rank, candidate_index=rank + 10,
+        selected_goal_world=GOALS[rank], candidate_goals_world=list(GOALS), candidate_safe_mask=(True,) * 5,
+    ) for rank in range(3)]
+    node.map_collision = False
+    node.rejected_display_max = 0
+    node._on_timer()
+    evidence = evidence_of(node)
+    evidence.update({"executed_source": "retained", "selected_candidate_index": None, "executed_candidate_index": None,
+                     "executed_path": [[0.1 * i, 0.0] for i in range(12)]})
+    node._candidate_hold.enabled = False
+    node._publish_selection_markers(node.selection_marker_pub.messages[-1].markers[0].header, evidence)
+    array = node.selection_marker_pub.messages[-1]
+    lines = [m for m in array.markers if getattr(m, "type", 0) == 4]
+    greens = [m for m in lines if m.color.g > 0.9 and m.color.r < 0.3 and m.color.b < 0.5]
+    whites = [m for m in lines if m.color.r > 0.9 and m.color.g > 0.9 and m.color.b > 0.9]
+    assert len(greens) == 1 and greens[0].ns == "model_candidates"        # the model-stage pick, although the previous path won
+    assert len(whites) == 1 and whites[0].ns == "published_path"
 
 
 def test_the_yellow_guidance_point_is_not_drawn(bridge):
