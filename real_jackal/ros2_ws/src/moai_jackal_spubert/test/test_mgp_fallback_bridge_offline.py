@@ -151,3 +151,28 @@ def test_selection_markers_survive_a_missing_robot_pose(bridge):
     header = NS(frame_id="odom", stamp=None)
     node._publish_selection_markers(header, evidence)             # must not raise
     assert node.selection_marker_pub.messages
+
+
+def test_no_candidate_number_appears_twice_in_one_cycle(bridge):
+    node = bridge
+    make_all_model_candidates_fail(node)
+    node.mgp_fallback = True
+    # model candidates numbered like the goal samples (0..4) so that the fallback curves would collide with them
+    for rank, candidate in enumerate(node._runtime.candidates):
+        candidate.candidate_index = rank
+    node._on_timer()
+    evidence = evidence_of(node)
+    numbers = [c["candidate_index"] for c in evidence["candidates"]] + [r["candidate_index"] for r in evidence["fallback_candidates"]]
+    assert len(numbers) == len(set(numbers)), numbers
+    assert all(isinstance(n, int) for n in numbers)
+    assert all(r["candidate_index"] >= len(GOALS) for r in evidence["fallback_candidates"])     # taken beyond every goal-sample number
+
+
+def test_a_curve_keeps_its_goal_sample_number_when_that_number_is_free(bridge):
+    node = bridge
+    make_all_model_candidates_fail(node)
+    node.mgp_fallback = True
+    node._on_timer()
+    for row in evidence_of(node)["fallback_candidates"]:
+        if row["kind"] == "mgp":
+            assert GOALS[row["candidate_index"]] == tuple(row["goal"])        # model numbers are 10..14 here, so 0..4 are free

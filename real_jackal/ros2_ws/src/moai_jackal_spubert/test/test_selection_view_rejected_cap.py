@@ -79,22 +79,22 @@ def test_only_three_results_are_shown(view):
 
 def test_fallback_paths_are_listed_with_c_names_the_same_three_results_and_the_same_reasons(view):
     report = {"selected_candidate_index": None, "executed_candidate_index": None, "executed_source": "fallback",
-              "selection_reason": None, "selected_fallback_index": "F2", "fallback_selection_reason": "minimum_weighted_cost",
+              "selection_reason": None, "selected_fallback_index": 31, "fallback_selection_reason": "minimum_weighted_cost",
               "candidates": [{"candidate_index": i, "rank": i + 1, "valid": False, "reason": "model_map_check_failed", "score": None} for i in range(2)],
               "fallback_candidates": [
-                  {"candidate_index": "F1", "rank": 1, "kind": "mgp", "valid": False, "reason": "robot_footprint_collision", "score": None, "selected": False},
-                  {"candidate_index": "F2", "rank": 2, "kind": "mgp", "valid": True, "reason": "valid", "score": {"eligible": True, "total": 0.4}, "selected": True},
-                  {"candidate_index": "FP", "rank": 3, "kind": "route_prefix", "valid": True, "reason": "valid", "score": {"eligible": True, "total": 0.9}, "selected": False}]}
+                  {"candidate_index": 30, "rank": 1, "kind": "mgp", "valid": False, "reason": "robot_footprint_collision", "score": None, "selected": False},
+                  {"candidate_index": 31, "rank": 2, "kind": "mgp", "valid": True, "reason": "valid", "score": {"eligible": True, "total": 0.4}, "selected": True},
+                  {"candidate_index": 32, "rank": 3, "kind": "route_prefix", "valid": True, "reason": "valid", "score": {"eligible": True, "total": 0.9}, "selected": False}]}
     rows = {values[0]: (tag, values[2], values[-1]) for tag, values in view.candidate_rows(report, None)}
-    assert rows["CF1"][:2] == ("rejected", "검사 탈락") and rows["CF1"][2] == view.reason_text("robot_footprint_collision")
-    assert rows["CF2"][:2] == ("selected", "선택·발행") and rows["CF2"][2] == view.reason_text("minimum_weighted_cost")
-    assert rows["CFP"][:2] == ("valid", "검사 통과") and rows["CFP"][2] == "선택 경로보다 총비용이 높음"
+    assert rows["C30"][:2] == ("rejected", "검사 탈락") and rows["C30"][2] == view.reason_text("robot_footprint_collision")
+    assert rows["C31"][:2] == ("selected", "선택·발행") and rows["C31"][2] == view.reason_text("minimum_weighted_cost")
+    assert rows["C32"][:2] == ("valid", "검사 통과") and rows["C32"][2] == "선택 경로보다 총비용이 높음"
     assert {state for _, state, _ in rows.values()} <= {"검사 통과", "검사 탈락", "선택·발행"}
-    assert view.hidden_rejected(report, 2) == 1                                  # 3 failed (C0, C1, CF1), 2 shown
+    assert view.hidden_rejected(report, 2) == 1                                  # 3 failed (C0, C1, C30), 2 shown
 
 
 def test_the_rejected_limit_also_covers_fallback_rows(view):
     report = {"selected_candidate_index": None, "executed_source": "hold", "candidates": [
         {"candidate_index": i, "valid": False, "reason": "robot_footprint_collision", "score": None} for i in range(3)],
-        "fallback_candidates": [{"candidate_index": "F1", "kind": "mgp", "valid": False, "reason": "robot_footprint_collision", "score": None}]}
+        "fallback_candidates": [{"candidate_index": 40, "kind": "mgp", "valid": False, "reason": "robot_footprint_collision", "score": None}]}
     assert sum(1 for tag, _ in view.candidate_rows(report, 2) if tag == "rejected") == 2

@@ -402,6 +402,8 @@ class RealJackalSpubertBridgeNode(Node):
         self.mgp_fallback_tangent_m = float(self.declare_parameter("mgp_fallback_tangent_m", 1.0).value)
         self.mgp_fallback_max_length_m = float(self.declare_parameter("mgp_fallback_max_length_m", 4.0).value)
         self._mgp_goal_samples = None
+        self._cand_used = set()
+        self._cand_next = 0
         self._selection_context: dict = {}
         self._last_planned_path_stamp_ns: Optional[int] = None
         map_qos = QoSProfile(
@@ -1669,6 +1671,26 @@ class RealJackalSpubertBridgeNode(Node):
         })
         return True
 
+    def _reset_candidate_numbers(self) -> None:
+        """Numbers already used by this cycle's model candidates; fallback paths take unused ones (no number appears twice)."""
+        used = {
+            int(a["candidate_index"]) for a in self._selection_context.get("candidates", [])
+            if a.get("candidate_index") is not None
+        }
+        goal_count = len(self._mgp_goal_samples[0]) if self._mgp_goal_samples else 0
+        self._cand_used = used
+        self._cand_next = max([goal_count, *(u + 1 for u in used)])
+
+    def _take_candidate_number(self, preferred=None) -> int:
+        """The goal-sample number itself when it is still free, else the next number beyond every goal-sample number."""
+        if preferred is not None and int(preferred) not in self._cand_used:
+            self._cand_used.add(int(preferred))
+            return int(preferred)
+        while self._cand_next in self._cand_used:
+            self._cand_next += 1
+        self._cand_used.add(self._cand_next)
+        return self._cand_next
+
     def _build_mgp_rows(
         self, robot_x, robot_y, robot_yaw, goal_xy, footprint_radius, human_histories, count, spacing, minimum_points,
     ):
@@ -1681,9 +1703,8 @@ class RealJackalSpubertBridgeNode(Node):
             return None, None
         goals, safe, guidance = samples
         rows, pool = [], []
-        for number, (_, goal) in enumerate(
-            pick_goal_samples(goals, safe, guidance, self.mgp_fallback_max_candidates), 1
-        ):
+        self._reset_candidate_numbers()
+        for goal_index, goal in pick_goal_samples(goals, safe, guidance, self.mgp_fallback_max_candidates):
             path = curve_to_goal(                      # spacing=None: the points span the whole curve, which ends AT the goal sample
                 (robot_x, robot_y), robot_yaw, goal, count, None,
                 self.mgp_fallback_tangent_m, self.mgp_fallback_max_angle_rad, max_length_m=self.mgp_fallback_max_length_m,
@@ -1698,7 +1719,7 @@ class RealJackalSpubertBridgeNode(Node):
                 human_sample_dt=self.prediction_dt, minimum_human_center_distance=self.minimum_human_center_distance,
                 human_radius=self.human_radius, human_safety_margin=self.human_safety_margin,
             )
-            row = self._fallback_row(len(rows) + 1, f"F{number}", "mgp", path, list(goal), check)
+            row = self._fallback_row(len(rows) + 1, self._take_candidate_number(goal_index), "mgp", path, list(goal), check)
             rows.append(row)
             if check.valid:
                 pool.append((path, 0.0, check, "mgp", None, None, row))
@@ -1738,8 +1759,7 @@ class RealJackalSpubertBridgeNode(Node):
         if rows is None:
             return found
         if found is not None:
-            label = "FP" if found[3] == "route_prefix" else "FA"
-            row = self._fallback_row(len(rows) + 1, label, found[3], found[0], list(found[0][-1]), found[2])
+            row = self._fallback_row(len(rows) + 1, self._take_candidate_number(), found[3], found[0], list(found[0][-1]), found[2])
             rows.append(row)
             pool.append((*found[:6], row))
         self._selection_context["fallback_candidates"] = rows
