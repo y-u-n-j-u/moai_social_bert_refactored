@@ -200,3 +200,31 @@ def test_the_yellow_guidance_point_is_not_drawn(bridge):
     node._on_timer()
     for message in node.marker_pub.messages:
         assert not [m for m in message.markers if getattr(m, "ns", "") == "adaptive_guidance"]
+
+
+def test_never_hold_keeps_following_the_last_planned_path_when_planning_fails(bridge):
+    node = bridge
+    node.never_hold = True
+    node._moving_path = [(0.0, 0.0)] + [(0.3 * i, 0.0) for i in range(1, 12)]
+    node._moving_path_s = node.now_s - 1.0
+    node._hold("all_candidates_rejected:robot_footprint_collision")
+    assert len(node.path_pub.messages[-1].poses) >= 4
+    ev = evidence_of(node)
+    assert ev["executed_source"] == "retained" and ev["decision_reason"].startswith("keep_moving")
+
+
+def test_never_hold_does_not_move_on_sensor_holds_old_paths_or_when_off(bridge):
+    node = bridge
+    node._moving_path = [(0.0, 0.0)] + [(0.3 * i, 0.0) for i in range(1, 12)]
+    node._moving_path_s = node.now_s - 1.0
+    node.never_hold = False
+    node._hold("all_candidates_rejected:x")
+    assert node.path_pub.messages[-1].poses == []                       # default: unchanged
+    node.never_hold = True
+    node._hold("odom_missing_or_stale")
+    assert node.path_pub.messages[-1].poses == []                       # sensor hold stays a hold
+    node._hold("goal_reached")
+    assert node.path_pub.messages[-1].poses == []
+    node._moving_path_s = node.now_s - 60.0
+    node._hold("adaptive_guidance_failed:x")
+    assert node.path_pub.messages[-1].poses == []                       # too old

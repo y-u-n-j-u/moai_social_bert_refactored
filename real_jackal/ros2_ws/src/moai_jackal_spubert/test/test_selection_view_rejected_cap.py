@@ -113,3 +113,11 @@ def test_the_table_never_has_more_than_five_rows_and_keeps_the_selected_one(view
     assert len(capped) == 5 and ("selected", ("C7",)) in capped
     assert [v for _, v in capped] == sorted([v for _, v in capped], key=lambda v: int(v[0][1:]))     # original order kept
     assert view.cap_rows(rows[:4], 5) == rows[:4]
+
+
+def test_a_passed_candidate_says_which_other_path_was_published(view):
+    base = {"selected_candidate_index": None, "executed_candidate_index": None, "selection_reason": "minimum_weighted_cost",
+            "candidates": [{"candidate_index": 3, "rank": 1, "valid": True, "reason": "valid", "score": {"eligible": True, "total": 0.5}}]}
+    for source, text in (("retained", "이전 경로가 선택됨"), ("fallback", "대체 경로가 선택됨"), ("recovery", "복구 경로가 선택됨")):
+        rows = list(view.candidate_rows({**base, "executed_source": source}, None))
+        assert rows[0][1][-1] == text and rows[0][1][2] == "검사 통과"

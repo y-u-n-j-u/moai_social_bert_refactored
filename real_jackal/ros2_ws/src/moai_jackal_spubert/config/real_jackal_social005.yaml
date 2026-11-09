@@ -129,8 +129,11 @@ real_jackal_spubert_bridge:
     rolling_map_resolution: 0.10
     free_gap_fill_m: 0.20
     free_ray_limit_m: 11.5
-    odom_timeout_sec: 0.60
-    scan_timeout_sec: 0.60
+    # 11-09 (operator: no stopping): 1 s instead of 0.6 s before odometry/scan count as stale (a 1 s old pose is 0.25 m at 0.25 m/s)
+    odom_timeout_sec: 1.00
+    scan_timeout_sec: 1.00
+    never_hold: true
+    never_hold_max_age_s: 6.0
     tracks_timeout_sec: 1.00
     minimum_track_score: 0.30
     diagnostics_path: /root/jackal_logs/spubert_real_jackal_diagnostics.jsonl
@@ -162,8 +165,8 @@ safe_path_tracker:
     # and under CPU load the robot stopped every few seconds (61 gaps > 1.2 s in 150 s). Obstacle stop,
     # slow-down and gap steering use the live scan, so a path a little older is still safe to follow.
     path_timeout_sec: 2.50
-    odom_timeout_sec: 0.50
-    scan_timeout_sec: 0.50
+    odom_timeout_sec: 1.00     # 11-09 (operator: no stopping), was 0.50
+    scan_timeout_sec: 1.00     # 11-09 (operator: no stopping), was 0.50
     tracks_timeout_sec: 1.00
     # 09-30: the old rule (any point within 0.75 m in a +-40 deg sector => stop)
     # froze the robot beside a box in the ~2 m corridor although the planner had a

@@ -401,6 +401,13 @@ class RealJackalSpubertBridgeNode(Node):
         self.mgp_fallback_max_angle_rad = float(self.declare_parameter("mgp_fallback_max_angle_rad", 1.4).value)
         self.mgp_fallback_tangent_m = float(self.declare_parameter("mgp_fallback_tangent_m", 1.0).value)
         # 11-09: several curve shapes per goal sample (shorter/longer start, pushed to either side); the valid one with the most wall clearance is kept
+        # 11-09 (operator): "no stopping at all". When the planner would publish an EMPTY path because of a planning failure (no guidance point,
+        # every candidate rejected, inference error ...) keep following the rest of the last planned path instead, for at most never_hold_max_age_s
+        # after it was planned. Sensor/goal holds (stale odometry or scan, goal reached, waiting for a goal) are not planning failures and stay.
+        self.never_hold = bool(self.declare_parameter("never_hold", False).value)
+        self.never_hold_max_age_s = float(self.declare_parameter("never_hold_max_age_s", 6.0).value)
+        self._moving_path = None
+        self._moving_path_s = -math.inf
         self.show_guidance_marker = bool(self.declare_parameter("show_guidance_marker", False).value)
         self.mgp_fallback_shape_search = bool(self.declare_parameter("mgp_fallback_shape_search", True).value)
         self.mgp_fallback_lateral_m = float(self.declare_parameter("mgp_fallback_lateral_m", 0.6).value)
@@ -1318,6 +1325,8 @@ class RealJackalSpubertBridgeNode(Node):
     ) -> None:
         message = self._path_message(frame_id, points)
         self.path_pub.publish(message)
+        if source in ("model", "fallback", "retained") and len(points) >= 2 and not str(reason).startswith("keep_moving"):
+            self._moving_path, self._moving_path_s = [tuple(p) for p in points], self._now_s()      # a path that really was planned/validated now
         try:
             stamp = message.header.stamp
             stamp_ns = int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
@@ -2169,11 +2178,37 @@ class RealJackalSpubertBridgeNode(Node):
         if not publish_empty:
             return
         frame = self._latest_odom.header.frame_id if self._latest_odom is not None else "odom"
+        if self._keep_moving(reason, frame or "odom"):
+            return
         self._publish_decided_path(frame or "odom", [], "hold", reason)
         # Retain freshly published rejection evidence briefly; clear stale
         # evidence on sensor/goal/route holds instead of leaving it in RViz.
         if not reason.startswith("all_candidates_rejected:"):
             self._publish_collision_markers(frame or "odom", [])
+
+    NEVER_HOLD_REASONS = ("adaptive_guidance_failed", "all_candidates_rejected", "recovery_blocked", "inference_error",
+                          "rolling_map_unavailable", "waiting_for_nav2_global_path", "goal_transform_unavailable")
+
+    def _keep_moving(self, reason: str, frame: str) -> bool:
+        """Planning failure: publish the rest of the last planned path (from the robot's nearest point on it) instead of an empty path."""
+        if not self.never_hold or not reason.startswith(self.NEVER_HOLD_REASONS) or not self._moving_path:
+            return False
+        now = self._now_s()
+        robot = self._robot_pose()
+        if robot is None or now - self._moving_path_s > self.never_hold_max_age_s:
+            return False
+        nearest, nearest_d = 0, math.inf
+        for index, (px, py) in enumerate(self._moving_path):
+            d = math.hypot(px - robot[0], py - robot[1])
+            if d < nearest_d:
+                nearest, nearest_d = index, d
+        remaining = [(robot[0], robot[1]), *self._moving_path[nearest + 1:]]
+        length = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(remaining, remaining[1:]))
+        if nearest_d > 0.6 or len(remaining) < 4 or length < 0.5:
+            return False
+        self._publish_decided_path(frame, remaining, "retained", f"keep_moving:{reason[:60]}")
+        self._status(f"path_valid keep_moving ({reason[:40]}) points={len(remaining)}")
+        return True
 
     def _status(self, text: str) -> None:
         if text == self._last_status:

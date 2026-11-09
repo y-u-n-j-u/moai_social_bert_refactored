@@ -136,7 +136,10 @@ def hidden_rejected(report, max_rejected):
     return max(failed - max_rejected, 0)
 
 
-def row_result(row, chosen, sent, selection_reason, winning_cost, selector, uniform_reason=None):
+OTHER_PATH = {"retained": "이전 경로가 선택됨", "fallback": "대체 경로가 선택됨", "recovery": "복구 경로가 선택됨"}
+
+
+def row_result(row, chosen, sent, selection_reason, winning_cost, selector, uniform_reason=None, published=None):
     """(tag, state, reason) of one candidate row; the same rules for the model candidates and for the fallback paths."""
     index = row.get("candidate_index")
     score = row.get("score") or {}
@@ -151,9 +154,9 @@ def row_result(row, chosen, sent, selection_reason, winning_cost, selector, unif
         return "valid", "검사 통과", uniform_reason
     if score.get("eligible") is False:
         return "valid", "검사 통과", "시작 방향 제한 초과로 선택 제외"
-    reason = "다른 경로가 선택됨"
+    reason = OTHER_PATH.get(published, "다른 경로가 선택됨")      # the previous / fallback path won, not one of these candidates
     total = score.get("total")
-    if selection_reason == "minimum_weighted_cost" and total is not None and winning_cost is not None:
+    if published not in OTHER_PATH and selection_reason == "minimum_weighted_cost" and total is not None and winning_cost is not None:
         if total > winning_cost + 1e-12:
             reason = "선택 경로보다 총비용이 높음"
         elif abs(total - winning_cost) <= 1e-12:
@@ -188,12 +191,12 @@ def candidate_rows(report, max_rejected=None):
     """
     shown_rejected = 0
 
-    def block(rows, chosen, sent, selection_reason, selector, uniform_reason=None):
+    def block(rows, chosen, sent, selection_reason, selector, uniform_reason=None, published=None):
         nonlocal shown_rejected
         winner = next((r for r in rows if chosen is not None and r.get("candidate_index") == chosen), None)
         winning_cost = ((winner or {}).get("score") or {}).get("total")
         for row in rows:
-            tag, state, reason = row_result(row, chosen, sent, selection_reason, winning_cost, selector, uniform_reason)
+            tag, state, reason = row_result(row, chosen, sent, selection_reason, winning_cost, selector, uniform_reason, published)
             if tag == "rejected":
                 if max_rejected is not None and shown_rejected >= max_rejected:
                     continue
@@ -205,7 +208,7 @@ def candidate_rows(report, max_rejected=None):
     executed_source = report.get("executed_source")
     yield from block(report["candidates"], report.get("selected_candidate_index"),
                      executed_source == "model" and report.get("selected_candidate_index") == report.get("executed_candidate_index"),
-                     report.get("selection_reason"), "모델")
+                     report.get("selection_reason"), "모델", None, executed_source if report.get("selected_candidate_index") is None or executed_source != "model" else None)
     fallback = report.get("fallback_candidates") or []
     if fallback:
         yield from block(fallback, report.get("selected_fallback_index"), executed_source == "fallback",
