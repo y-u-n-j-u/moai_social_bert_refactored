@@ -41,7 +41,7 @@ from .guided_spubert_runtime import (
 from .rolling_laser_map import RollingLaserMapProvider
 from .arc_planner import arc_cost, arc_points, curvature_fan
 from .candidate_display_hold import CandidateDisplayHold, display_mgp
-from .mgp_fallback import curve_to_goal, pick_goal_samples
+from .mgp_fallback import curve_shapes, curve_to_goal, pick_goal_samples
 from .candidate_select import SelectionConfig, continuity_cost, heading_deviation, score_candidates
 from .frame_smoothing import is_large_jump, slew_transform
 from .guidance_stabilizer import StabilizerConfig, stabilize as stabilize_guidance
@@ -400,6 +400,9 @@ class RealJackalSpubertBridgeNode(Node):
         self.mgp_fallback_max_candidates = int(self.declare_parameter("mgp_fallback_max_candidates", 5).value)
         self.mgp_fallback_max_angle_rad = float(self.declare_parameter("mgp_fallback_max_angle_rad", 1.4).value)
         self.mgp_fallback_tangent_m = float(self.declare_parameter("mgp_fallback_tangent_m", 1.0).value)
+        # 11-09: several curve shapes per goal sample (shorter/longer start, pushed to either side); the valid one with the most wall clearance is kept
+        self.mgp_fallback_shape_search = bool(self.declare_parameter("mgp_fallback_shape_search", True).value)
+        self.mgp_fallback_lateral_m = float(self.declare_parameter("mgp_fallback_lateral_m", 0.6).value)
         self.mgp_fallback_max_length_m = float(self.declare_parameter("mgp_fallback_max_length_m", 4.0).value)
         self._mgp_goal_samples = None
         self._cand_used = set()
@@ -1705,20 +1708,33 @@ class RealJackalSpubertBridgeNode(Node):
         rows, pool = [], []
         self._reset_candidate_numbers()
         for goal_index, goal in pick_goal_samples(goals, safe, guidance, self.mgp_fallback_max_candidates):
-            path = curve_to_goal(                      # spacing=None: the points span the whole curve, which ends AT the goal sample
-                (robot_x, robot_y), robot_yaw, goal, count, None,
-                self.mgp_fallback_tangent_m, self.mgp_fallback_max_angle_rad, max_length_m=self.mgp_fallback_max_length_m,
-            )
-            if path is None or len(path) < minimum_points:
+            shapes = (curve_shapes(self.mgp_fallback_tangent_m, self.mgp_fallback_lateral_m)
+                      if self.mgp_fallback_shape_search else [(self.mgp_fallback_tangent_m, 0.0)])
+            best = first = None                        # best = (clearance, path, check) of the valid shape with the most wall clearance
+            for tangent, lateral in shapes:
+                path = curve_to_goal(                  # spacing=None: the points span the whole curve, which ends AT the goal sample
+                    (robot_x, robot_y), robot_yaw, goal, count, None, tangent, self.mgp_fallback_max_angle_rad,
+                    max_length_m=self.mgp_fallback_max_length_m, lateral_m=lateral,
+                )
+                if path is None or len(path) < minimum_points:
+                    continue
+                check = validate_candidate_path(
+                    current=(robot_x, robot_y), path=path, final_goal=goal_xy, map_provider=self.map_provider,
+                    footprint_radius=footprint_radius, prediction_dt=self.prediction_dt,
+                    maximum_model_speed=self.maximum_model_speed, maximum_step_ratio=self.maximum_step_ratio,
+                    minimum_goal_progress=self.minimum_goal_progress, human_histories=human_histories,
+                    human_sample_dt=self.prediction_dt, minimum_human_center_distance=self.minimum_human_center_distance,
+                    human_radius=self.human_radius, human_safety_margin=self.human_safety_margin,
+                )
+                if first is None:
+                    first = (path, check)
+                if check.valid:
+                    clearance = self._path_clearance(path, footprint_radius)
+                    if best is None or clearance > best[0] + 1e-9:
+                        best = (clearance, path, check)
+            if first is None:
                 continue
-            check = validate_candidate_path(
-                current=(robot_x, robot_y), path=path, final_goal=goal_xy, map_provider=self.map_provider,
-                footprint_radius=footprint_radius, prediction_dt=self.prediction_dt,
-                maximum_model_speed=self.maximum_model_speed, maximum_step_ratio=self.maximum_step_ratio,
-                minimum_goal_progress=self.minimum_goal_progress, human_histories=human_histories,
-                human_sample_dt=self.prediction_dt, minimum_human_center_distance=self.minimum_human_center_distance,
-                human_radius=self.human_radius, human_safety_margin=self.human_safety_margin,
-            )
+            path, check = (best[1], best[2]) if best is not None else first
             row = self._fallback_row(len(rows) + 1, self._take_candidate_number(goal_index), "mgp", path, list(goal), check)
             rows.append(row)
             if check.valid:

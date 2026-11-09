@@ -22,6 +22,7 @@ def curve_to_goal(
     max_angle_rad: float = 1.4,
     minimum_distance_m: float = 0.3,
     max_length_m: float = 4.0,
+    lateral_m: float = 0.0,
 ) -> Optional[List[XY]]:
     """Points of a quadratic Bezier from ``start`` to ``goal``: one every ``spacing`` along the curve, at most ``count``.
 
@@ -40,7 +41,8 @@ def curve_to_goal(
     if off_heading > max_angle_rad:
         return None
     reach = min(0.5 * distance, max(tangent_m, 0.0))
-    control = (start[0] + reach * math.cos(yaw), start[1] + reach * math.sin(yaw))
+    # lateral_m > 0 moves the control point to the left of the heading (< 0 to the right): a rounder curve that keeps away from a wall on the other side
+    control = (start[0] + reach * math.cos(yaw) - lateral_m * math.sin(yaw), start[1] + reach * math.sin(yaw) + lateral_m * math.cos(yaw))
     dense = 240
     curve = []
     for step in range(dense + 1):
@@ -68,6 +70,23 @@ def curve_to_goal(
     if len(points) < count and (not points or math.hypot(goal[0] - points[-1][0], goal[1] - points[-1][1]) > 0.05):
         points.append((float(goal[0]), float(goal[1])))
     return points or None
+
+
+def curve_shapes(tangent_m: float = 1.0, lateral_m: float = 0.6) -> List[Tuple[float, float]]:
+    """(tangent, lateral) shapes tried for one goal sample, the plain one first: shorter / longer start, pushed left / right."""
+    shapes = [(tangent_m, 0.0)]
+    for tangent in (tangent_m, 0.5 * tangent_m, 1.6 * tangent_m):
+        for lateral in (lateral_m, -lateral_m):
+            shapes.append((tangent, lateral))
+    for lateral in (0.5 * lateral_m, -0.5 * lateral_m):
+        shapes.append((0.5 * tangent_m, lateral))
+    seen, unique = set(), []
+    for shape in shapes:
+        key = (round(shape[0], 3), round(shape[1], 3))
+        if key not in seen:
+            seen.add(key)
+            unique.append(shape)
+    return unique
 
 
 def pick_goal_samples(

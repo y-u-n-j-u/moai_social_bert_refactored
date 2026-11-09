@@ -136,7 +136,7 @@ def hidden_rejected(report, max_rejected):
     return max(failed - max_rejected, 0)
 
 
-def row_result(row, chosen, sent, selection_reason, winning_cost, selector):
+def row_result(row, chosen, sent, selection_reason, winning_cost, selector, uniform_reason=None):
     """(tag, state, reason) of one candidate row; the same rules for the model candidates and for the fallback paths."""
     index = row.get("candidate_index")
     score = row.get("score") or {}
@@ -147,6 +147,8 @@ def row_result(row, chosen, sent, selection_reason, winning_cost, selector):
             return "selected", "선택·발행", reason_text(selection_reason)
         # operator request 11-09: only three results are shown; a pick that was replaced stays "검사 통과"
         return "valid", "검사 통과", f"{selector}가 골랐지만 다른 경로가 발행됨"
+    if uniform_reason:                                  # operator request 11-09: fallback paths that passed but were not picked
+        return "valid", "검사 통과", uniform_reason
     if score.get("eligible") is False:
         return "valid", "검사 통과", "시작 방향 제한 초과로 선택 제외"
     reason = "다른 경로가 선택됨"
@@ -159,6 +161,23 @@ def row_result(row, chosen, sent, selection_reason, winning_cost, selector):
     return "valid", "검사 통과", reason
 
 
+MAX_ROWS = int(os.environ.get("SELECTION_VIEW_MAX_ROWS", "5"))          # operator request 11-09: never more than 5 candidates in the table
+
+
+def cap_rows(rows, maximum):
+    """At most ``maximum`` rows, in the original order; the selected row is always kept (the others fill up in order)."""
+    rows = list(rows)
+    if maximum <= 0 or len(rows) <= maximum:
+        return rows
+    keep = [i for i, (tag, _) in enumerate(rows) if tag == "selected"][:maximum]
+    for i in range(len(rows)):
+        if len(keep) >= maximum:
+            break
+        if i not in keep:
+            keep.append(i)
+    return [rows[i] for i in sorted(keep)]
+
+
 def candidate_rows(report, max_rejected=None):
     """Format emitted facts, including safety failures with no computed cost.
 
@@ -169,12 +188,12 @@ def candidate_rows(report, max_rejected=None):
     """
     shown_rejected = 0
 
-    def block(rows, chosen, sent, selection_reason, selector):
+    def block(rows, chosen, sent, selection_reason, selector, uniform_reason=None):
         nonlocal shown_rejected
         winner = next((r for r in rows if chosen is not None and r.get("candidate_index") == chosen), None)
         winning_cost = ((winner or {}).get("score") or {}).get("total")
         for row in rows:
-            tag, state, reason = row_result(row, chosen, sent, selection_reason, winning_cost, selector)
+            tag, state, reason = row_result(row, chosen, sent, selection_reason, winning_cost, selector, uniform_reason)
             if tag == "rejected":
                 if max_rejected is not None and shown_rejected >= max_rejected:
                     continue
@@ -190,7 +209,7 @@ def candidate_rows(report, max_rejected=None):
     fallback = report.get("fallback_candidates") or []
     if fallback:
         yield from block(fallback, report.get("selected_fallback_index"), executed_source == "fallback",
-                         report.get("fallback_selection_reason"), "선택기")
+                         report.get("fallback_selection_reason"), "선택기", "선택 경로보다 총비용이 높음")
 
 
 class EvidenceSubscriber(Node):
@@ -298,13 +317,13 @@ class SelectionView:
         if sent is not None:
             published_text += f" {candidate_name(sent)}"
         reason = reason_text(chooser_reason) if chosen is not None else "새 모델 후보 선택 없음"
-        self.choice.set(f"모델 선택  {candidate_name(chosen)}  ·  {reason}")
+        self.choice.set("모델 선택")                                   # operator request 11-09: only these words, no explanation
         self.decision.set(f"추종기에 발행  {published_text}  |  {reason_text(decision_reason)}")
         limit = MAX_REJECTED_ROWS if MAX_REJECTED_ROWS > 0 else None
         hidden = hidden_rejected(report, limit)
         if hidden:
             self.decision.set(self.decision.get() + f"   (검사 탈락 {hidden}개 더 있음, 표에는 {limit}개만 표시)")
-        rows = tuple(candidate_rows(report, limit))
+        rows = tuple(cap_rows(candidate_rows(report, limit), MAX_ROWS))
         if rows != self.displayed_rows:
             self.rows.delete(*self.rows.get_children())
             for tag, values in rows:

@@ -89,6 +89,12 @@ def test_fallback_paths_are_listed_with_c_names_the_same_three_results_and_the_s
     assert rows["C30"][:2] == ("rejected", "검사 탈락") and rows["C30"][2] == view.reason_text("robot_footprint_collision")
     assert rows["C31"][:2] == ("selected", "선택·발행") and rows["C31"][2] == view.reason_text("minimum_weighted_cost")
     assert rows["C32"][:2] == ("valid", "검사 통과") and rows["C32"][2] == "선택 경로보다 총비용이 높음"
+    # fallback paths that passed but were not picked always read "선택 경로보다 총비용이 높음", even when the cost is not known or heading-excluded
+    report["fallback_candidates"].append({"candidate_index": 33, "rank": 4, "kind": "arc", "valid": True, "reason": "valid", "score": {"eligible": False}, "selected": False})
+    report["fallback_candidates"].append({"candidate_index": 34, "rank": 5, "kind": "mgp", "valid": True, "reason": "valid", "score": None, "selected": False})
+    again = {v[0]: v[-1] for _, v in view.candidate_rows(report, None)}
+    assert again["C33"] == again["C34"] == "선택 경로보다 총비용이 높음"
+    report["fallback_candidates"] = report["fallback_candidates"][:3]
     assert {state for _, state, _ in rows.values()} <= {"검사 통과", "검사 탈락", "선택·발행"}
     assert view.hidden_rejected(report, 2) == 1                                  # 3 failed (C0, C1, C30), 2 shown
 
@@ -98,3 +104,12 @@ def test_the_rejected_limit_also_covers_fallback_rows(view):
         {"candidate_index": i, "valid": False, "reason": "robot_footprint_collision", "score": None} for i in range(3)],
         "fallback_candidates": [{"candidate_index": 40, "kind": "mgp", "valid": False, "reason": "robot_footprint_collision", "score": None}]}
     assert sum(1 for tag, _ in view.candidate_rows(report, 2) if tag == "rejected") == 2
+
+
+def test_the_table_never_has_more_than_five_rows_and_keeps_the_selected_one(view):
+    rows = [("valid", (f"C{i}",)) for i in range(9)]
+    rows[7] = ("selected", ("C7",))
+    capped = view.cap_rows(rows, 5)
+    assert len(capped) == 5 and ("selected", ("C7",)) in capped
+    assert [v for _, v in capped] == sorted([v for _, v in capped], key=lambda v: int(v[0][1:]))     # original order kept
+    assert view.cap_rows(rows[:4], 5) == rows[:4]

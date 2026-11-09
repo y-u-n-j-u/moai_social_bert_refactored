@@ -47,3 +47,15 @@ def test_without_spacing_the_points_span_the_whole_curve_and_end_at_the_goal():
 def test_a_goal_beyond_the_maximum_length_is_approached_not_reached():
     path = curve_to_goal((0.0, 0.0), 0.0, (10.0, 0.0), count=12, max_length_m=3.0)
     assert len(path) == 12 and 2.9 < path[-1][0] < 3.1
+
+
+def test_lateral_offset_moves_the_curve_to_that_side_and_still_ends_at_the_goal():
+    from moai_jackal_spubert.mgp_fallback import curve_shapes, curve_to_goal
+    left = curve_to_goal((0.0, 0.0), 0.0, (3.0, 0.0), 12, None, 1.0, lateral_m=0.6)
+    right = curve_to_goal((0.0, 0.0), 0.0, (3.0, 0.0), 12, None, 1.0, lateral_m=-0.6)
+    plain = curve_to_goal((0.0, 0.0), 0.0, (3.0, 0.0), 12, None, 1.0)
+    assert max(p[1] for p in left) > 0.1 and min(p[1] for p in right) < -0.1 and max(abs(p[1]) for p in plain) < 1e-9
+    for path in (left, right):
+        assert math.hypot(path[-1][0] - 3.0, path[-1][1]) < 1e-6
+    shapes = curve_shapes(1.0, 0.6)
+    assert shapes[0] == (1.0, 0.0) and len(shapes) == len(set(shapes)) and any(l > 0 for _, l in shapes) and any(l < 0 for _, l in shapes)
