@@ -40,6 +40,7 @@ from .guided_spubert_runtime import (
 )
 from .rolling_laser_map import RollingLaserMapProvider
 from .arc_planner import arc_cost, arc_points, curvature_fan
+from .candidate_display_hold import CandidateDisplayHold
 from .candidate_select import SelectionConfig, continuity_cost, heading_deviation, score_candidates
 from .frame_smoothing import is_large_jump, slew_transform
 from .guidance_stabilizer import StabilizerConfig, stabilize as stabilize_guidance
@@ -385,6 +386,12 @@ class RealJackalSpubertBridgeNode(Node):
         self.collision_marker_pub = self.create_publisher(MarkerArray, self.collision_marker_topic, 5)
         self.selection_evidence_pub = self.create_publisher(String, "/spu_bert/selection_evidence", 10)
         self.selection_marker_pub = self.create_publisher(MarkerArray, "/spu_bert/selection_markers", 5)
+        self._candidate_hold = CandidateDisplayHold(
+            bool(self.declare_parameter("candidate_hold_until_reach", False).value),
+            float(self.declare_parameter("candidate_reach_radius_m", 0.5).value),
+            float(self.declare_parameter("candidate_hold_max_s", 20.0).value),
+        )
+        self._held_candidate_markers = []
         self._selection_context: dict = {}
         self._last_planned_path_stamp_ns: Optional[int] = None
         map_qos = QoSProfile(
@@ -1321,48 +1328,66 @@ class RealJackalSpubertBridgeNode(Node):
         lifetime = Duration(seconds=max(1.2, 2.0 * self.replan_period)).to_msg()
         source = evidence["executed_source"]
         chosen = evidence["selected_candidate_index"]
+        now_s = self._now_s()
+        generation = int(evidence.get("goal_generation", 0))
+        # Display only: the candidate lines are redrawn when the robot has reached the goal sample (MGP) of the candidate that was
+        # selected from the shown set (candidate_hold_until_reach), not at every replan; the planner and the evidence topic are unaffected.
+        refresh = self._candidate_hold.should_refresh(now_s, evidence["robot_pose"][:2], generation)
 
         def add(marker):
             marker.header = header
             marker.lifetime = lifetime
             array.markers.append(marker)
 
-        def line(namespace, index, path, color, width):
-            if len(path) < 2 or not all(math.isfinite(v) for xy in path for v in xy):
-                return
-            add(self._line_marker(frame, namespace, index, path, color, width))
+        if refresh:
+            fresh = []
 
-        def candidate_label(index, x, y, candidate, color):
-            marker = Marker()
-            marker.ns = "selection_candidate_id"
-            marker.id = index
-            marker.type = Marker.TEXT_VIEW_FACING
-            marker.action = Marker.ADD
-            marker.pose.position.x, marker.pose.position.y, marker.pose.position.z = x, y, 0.50
-            marker.pose.orientation.w = 1.0
-            marker.scale.z = 0.19
-            marker.color = ColorRGBA(r=color[0], g=color[1], b=color[2], a=color[3])
-            marker.text = f"C{candidate}"
+            def line(namespace, index, path, color, width):
+                if len(path) < 2 or not all(math.isfinite(v) for xy in path for v in xy):
+                    return
+                fresh.append(self._line_marker(frame, namespace, index, path, color, width))
+
+            def candidate_label(index, x, y, candidate, color):
+                marker = Marker()
+                marker.ns = "selection_candidate_id"
+                marker.id = index
+                marker.type = Marker.TEXT_VIEW_FACING
+                marker.action = Marker.ADD
+                marker.pose.position.x, marker.pose.position.y, marker.pose.position.z = x, y, 0.50
+                marker.pose.orientation.w = 1.0
+                marker.scale.z = 0.19
+                marker.color = ColorRGBA(r=color[0], g=color[1], b=color[2], a=color[3])
+                marker.text = f"C{candidate}"
+                fresh.append(marker)
+
+            selected_goal = None
+            for index, row in enumerate(evidence["candidates"], 1):
+                candidate = row["candidate_index"]
+                score = row["score"]
+                if not row["valid"]:
+                    color = (1.0, 0.20, 0.18, 0.86)
+                elif score is not None and not score["eligible"]:
+                    color = (1.0, 0.20, 0.18, 0.86)   # 11-08 (operator): heading-excluded candidates are red like rejected ones
+                else:
+                    color = (0.20, 0.60, 1.0, 0.82)
+                selected = row["valid"] and chosen == candidate
+                if selected:
+                    color = (0.05, 1.0, 0.25, 1.0)   # 11-08 (operator): green whether the model path or a replacement was published
+                    goal = row.get("goal")
+                    if goal is not None and len(goal) >= 2 and all(math.isfinite(v) for v in goal[:2]):
+                        selected_goal = (float(goal[0]), float(goal[1]))
+                line("model_candidates", index, row["path"], color, 0.075 if selected else 0.028)
+                if row["path"] and all(math.isfinite(v) for v in row["path"][-1]):
+                    x, y = row["path"][-1]
+                    candidate_label(index, x, y, candidate, color)
+            self._held_candidate_markers = fresh
+            self._candidate_hold.note_shown(now_s, generation, selected_goal)
+        for marker in self._held_candidate_markers:
             add(marker)
-
-        for index, row in enumerate(evidence["candidates"], 1):
-            candidate = row["candidate_index"]
-            score = row["score"]
-            if not row["valid"]:
-                color = (1.0, 0.20, 0.18, 0.86)
-            elif score is not None and not score["eligible"]:
-                color = (1.0, 0.20, 0.18, 0.86)   # 11-08 (operator): heading-excluded candidates are red like rejected ones
-            else:
-                color = (0.20, 0.60, 1.0, 0.82)
-            selected = row["valid"] and chosen == candidate
-            if selected:
-                color = (0.05, 1.0, 0.25, 1.0)   # 11-08 (operator): green whether the model path or a replacement was published
-            line("model_candidates", index, row["path"], color, 0.075 if selected else 0.028)
-            if row["path"] and all(math.isfinite(v) for v in row["path"][-1]):
-                x, y = row["path"][-1]
-                candidate_label(index, x, y, candidate, color)
         if source in ("fallback", "retained", "recovery"):
-            line("published_nonmodel_path", 1, evidence["executed_path"], (0.05, 1.0, 0.25, 1.0), 0.085)
+            path = evidence["executed_path"]
+            if len(path) >= 2 and all(math.isfinite(v) for xy in path for v in xy):
+                add(self._line_marker(frame, "published_nonmodel_path", 1, path, (0.05, 1.0, 0.25, 1.0), 0.085))
         self.selection_marker_pub.publish(array)
 
     def _point_pose(self, frame_id: str, point: XY) -> PoseStamped:

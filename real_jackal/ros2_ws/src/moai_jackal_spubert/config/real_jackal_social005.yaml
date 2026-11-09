@@ -104,6 +104,10 @@ real_jackal_spubert_bridge:
     human_map_clear_max_cells: 60
     # 11-09: also free the unknown cells (lidar shadow) inside that radius for a person who is not merged with a wall
     human_map_clear_unknown: true
+    # 11-09: RViz candidate lines stay until the robot reaches the goal sample (MGP) of the selected candidate (display only)
+    candidate_hold_until_reach: true
+    candidate_reach_radius_m: 0.5
+    candidate_hold_max_s: 20.0
     human_radius: 0.35
     human_safety_margin: 0.20
     maximum_model_speed: 1.50
