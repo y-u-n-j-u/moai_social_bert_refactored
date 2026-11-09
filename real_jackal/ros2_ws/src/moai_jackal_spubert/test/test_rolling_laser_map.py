@@ -109,3 +109,46 @@ def test_clear_people_off_and_no_people_do_nothing():
     _person_scan(provider, (3.0, 0.0))
     assert provider.clear_people([(3.0, 0.0)], 0.0) == 0
     assert provider.clear_people([], 0.5) == 0
+
+
+def _unknown_within(provider, x, y, radius):
+    xs, ys = np.meshgrid(np.arange(x - radius, x + radius, 0.05), np.arange(y - radius, y + radius, 0.05))
+    keep = np.hypot(xs - x, ys - y) < radius
+    return int((provider.occupancy_at_world(xs[keep], ys[keep]) == 0).sum())
+
+
+def test_clear_people_unknown_cells_become_free_for_an_isolated_person():
+    provider = RollingLaserMapProvider()
+    _person_scan(provider, (3.0, 0.0))
+    before = _unknown_within(provider, 3.0, 0.0, 0.5)
+    assert before > 0, "the lidar shadow right behind the person must contain unknown cells"
+    provider.clear_people([(3.0, 0.0)], 0.5, clear_unknown=True)
+    assert _unknown_within(provider, 3.0, 0.0, 0.45) == 0
+    assert provider.last_unknown_cleared > 0
+
+
+def test_clear_people_unknown_is_left_alone_by_default():
+    provider = RollingLaserMapProvider()
+    _person_scan(provider, (3.0, 0.0))
+    before = _unknown_within(provider, 3.0, 0.0, 0.5)
+    provider.clear_people([(3.0, 0.0)], 0.5)
+    assert _unknown_within(provider, 3.0, 0.0, 0.5) == before
+    assert provider.last_unknown_cleared == 0
+
+
+def test_clear_people_unknown_is_not_cleared_for_a_person_merged_with_a_wall():
+    provider = RollingLaserMapProvider()
+    _person_scan(provider, (3.0, 1.0), wall_y=1.2)
+    before = _unknown_within(provider, 3.0, 1.0, 0.5)
+    provider.clear_people([(3.0, 1.0)], 0.5, max_cells=20, clear_unknown=True)
+    assert _unknown_within(provider, 3.0, 1.0, 0.5) == before
+    assert provider.last_unknown_cleared == 0
+
+
+def test_clear_people_unknown_never_touches_occupied_cells_of_a_wall_far_from_the_person():
+    provider = RollingLaserMapProvider()
+    _person_scan(provider, (3.0, 0.0), wall_y=2.0)         # wall 2 m from the person, outside the 0.5 m circle
+    wall_before = _occupied_near(provider, 3.0, 2.0, 0.4)
+    assert wall_before > 0
+    provider.clear_people([(3.0, 0.0)], 0.5, clear_unknown=True)
+    assert _occupied_near(provider, 3.0, 2.0, 0.4) == wall_before

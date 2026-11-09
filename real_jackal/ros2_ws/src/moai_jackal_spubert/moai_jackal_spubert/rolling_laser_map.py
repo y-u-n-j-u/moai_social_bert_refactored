@@ -38,6 +38,7 @@ class RollingLaserMapProvider:
         self.origin_y = -0.5 * self.size_m
         self.grid = np.zeros((self.height, self.width), dtype=np.uint8)
         self.ready = False
+        self.last_unknown_cleared = 0
 
     def update_from_scan(
         self,
@@ -149,16 +150,28 @@ class RollingLaserMapProvider:
                 self.grid[rows[unknown], cols[unknown]] = 1
         self.grid[original == 2] = 2
 
-    def clear_people(self, people: Sequence[Tuple[float, float]], radius_m: float, max_cells: int = 60) -> int:
+    def clear_people(
+        self,
+        people: Sequence[Tuple[float, float]],
+        radius_m: float,
+        max_cells: int = 60,
+        clear_unknown: bool = False,
+    ) -> int:
         """Turn the occupied cells of each person (within ``radius_m``) back into free cells; returns the cell count.
 
         A person is a small blob; a wall is a long one. The blob is only cleared when the occupied cells connected to
         it number at most ``max_cells``: a person standing against a wall (or a box) merges with it, stays occupied,
-        and is handled as before. Unknown cells (the shadow behind the person) are left alone.
+        and is handled as before.
+
+        With ``clear_unknown`` the unknown cells inside the same circle (the lidar shadow right behind the person) become
+        free too, but only for a person who is not merged with a wall or box: such a person is left exactly as before. The
+        number of unknown cells freed is kept in ``last_unknown_cleared``.
         """
+        self.last_unknown_cleared = 0
         if radius_m <= 0.0 or not people:
             return 0
         reach = int(math.ceil(radius_m / self.resolution))
+        radius_cells_sq = (radius_m / self.resolution) ** 2
         cleared = 0
         for px, py in people:
             center = self._world_to_cell(float(px), float(py))
@@ -169,26 +182,36 @@ class RollingLaserMapProvider:
                 for row in range(max(center[1] - reach, 0), min(center[1] + reach + 1, self.height))
                 for col in range(max(center[0] - reach, 0), min(center[0] + reach + 1, self.width))
                 if self.grid[row, col] == 2
-                and (col - center[0]) ** 2 + (row - center[1]) ** 2 <= (radius_m / self.resolution) ** 2
+                and (col - center[0]) ** 2 + (row - center[1]) ** 2 <= radius_cells_sq
             ]
-            if not seeds:
-                continue
-            seen = set(seeds)
-            stack = list(seeds)
-            while stack and len(seen) <= max_cells:
-                col, row = stack.pop()
-                for dc in (-1, 0, 1):
-                    for dr in (-1, 0, 1):
-                        c, r = col + dc, row + dr
-                        if (c, r) not in seen and 0 <= c < self.width and 0 <= r < self.height \
-                                and self.grid[r, c] == 2:
-                            seen.add((c, r))
-                            stack.append((c, r))
-            if len(seen) > max_cells:
-                continue
-            for col, row in seen:
-                self.grid[row, col] = 1
-            cleared += len(seen)
+            isolated = True
+            if seeds:
+                seen = set(seeds)
+                stack = list(seeds)
+                while stack and len(seen) <= max_cells:
+                    col, row = stack.pop()
+                    for dc in (-1, 0, 1):
+                        for dr in (-1, 0, 1):
+                            c, r = col + dc, row + dr
+                            if (c, r) not in seen and 0 <= c < self.width and 0 <= r < self.height \
+                                    and self.grid[r, c] == 2:
+                                seen.add((c, r))
+                                stack.append((c, r))
+                if len(seen) > max_cells:
+                    isolated = False                      # merged with a wall or box: leave this person alone
+                else:
+                    for col, row in seen:
+                        self.grid[row, col] = 1
+                    cleared += len(seen)
+            if clear_unknown and isolated:
+                rows = np.arange(max(center[1] - reach, 0), min(center[1] + reach + 1, self.height))
+                cols = np.arange(max(center[0] - reach, 0), min(center[0] + reach + 1, self.width))
+                if rows.size and cols.size:
+                    rr, cc = np.meshgrid(rows, cols, indexing="ij")
+                    inside = (cc - center[0]) ** 2 + (rr - center[1]) ** 2 <= radius_cells_sq
+                    unknown = inside & (self.grid[rr, cc] == 0)
+                    self.grid[rr[unknown], cc[unknown]] = 1
+                    self.last_unknown_cleared += int(unknown.sum())
         return cleared
 
     def _world_to_cell(self, x: float, y: float):

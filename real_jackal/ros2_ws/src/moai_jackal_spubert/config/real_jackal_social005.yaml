@@ -102,6 +102,8 @@ real_jackal_spubert_bridge:
     # people are not walls in the rolling map: clear a tracked person's occupied blob (radius, 0 = off); blobs merged with a wall stay
     human_map_clear_radius_m: 0.50
     human_map_clear_max_cells: 60
+    # 11-09: also free the unknown cells (lidar shadow) inside that radius for a person who is not merged with a wall
+    human_map_clear_unknown: true
     human_radius: 0.35
     human_safety_margin: 0.20
     maximum_model_speed: 1.50

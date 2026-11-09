@@ -297,6 +297,9 @@ class RealJackalSpubertBridgeNode(Node):
         # cells (0 = off). Only small blobs are cleared; a person merged with a wall or a box stays occupied.
         self.human_map_clear_radius_m = float(self.declare_parameter("human_map_clear_radius_m", 0.0).value)
         self.human_map_clear_max_cells = int(self.declare_parameter("human_map_clear_max_cells", 60).value)
+        # also turn the unknown cells inside that radius (the lidar shadow right behind the person) into free cells (not for a
+        # person merged with a wall or box)
+        self.human_map_clear_unknown = bool(self.declare_parameter("human_map_clear_unknown", False).value)
         self.minimum_human_center_distance = float(
             self.declare_parameter("minimum_human_center_distance", 1.20).value
         )
@@ -612,8 +615,10 @@ class RealJackalSpubertBridgeNode(Node):
         if self.human_map_clear_radius_m > 0.0 and map_update_s - self._tracks_stamp_s <= self.tracks_timeout:
             people_cleared = self.map_provider.clear_people(
                 list(self._latest_humans.values()), self.human_map_clear_radius_m, self.human_map_clear_max_cells,
+                self.human_map_clear_unknown,
             )
         collision_context["people_cleared_cells"] = people_cleared
+        collision_context["people_cleared_unknown_cells"] = self.map_provider.last_unknown_cleared if people_cleared or self.human_map_clear_unknown else 0
         collision_context["map_origin_xy"] = [self.map_provider.origin_x, self.map_provider.origin_y]
         collision_context["map_shape_cells"] = [self.map_provider.width, self.map_provider.height]
         self._selection_context["collision_context"] = collision_context
