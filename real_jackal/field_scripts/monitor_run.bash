@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 11-09: the automatic stops below are OFF by default (AUTO_STOP=1 turns them back on): the operator stops the robot with the controller.
+AUTO_STOP="${AUTO_STOP:-0}"
 # Gate + run + supervised drive. Auto-stop on: FAST-LIVO memory, odom blow-up, localization jump, bridge error (the 0.26 m contact stop was removed 2026-11-02: only the tracker's own obstacle stops remain).
 source /root/jackal_runtime/scripts/jackal_ros_env.bash >/dev/null
 source /root/moai_stability_ws/install/setup.bash
@@ -51,10 +53,10 @@ for i in $(seq 1 240); do
   case "$TS" in
     joystick_released_or_stale*|emergency_stop_latched*) note "tracker already stopped: $TS"; exit 0;;
   esac
-  r=$(echo "$RSS" | grep -o "rss_mb=[0-9]*" | grep -o "[0-9]*"); [ -n "$r" ] && [ "$r" -gt 2000 ] && { echo "FASTLIVO MEMORY -> STOP"; stop "auto: FAST-LIVO memory ${r} MB > 2000"; break; }
-  [ -n "$OD" ] && echo "$OD" | tr "," " " | awk 'NF>=2 {exit !($1+0>80||$1+0<-80||$2+0>80||$2+0<-80)} NF<2 {exit 1}' && { echo "ODOM DIVERGED -> STOP"; stop "auto: odom diverged ($OD)"; break; }
-  [ "$DM" != "na" ] && awk -v d="$DM" 'BEGIN{exit !(d>1.0)}' && { echo "LOCALIZATION JUMP >1 m -> STOP"; stop "auto: map->odom moved ${DM} m"; break; }
-  [ "$(grep -c -E '\[ERROR\]|Traceback' $L)" -gt 0 ] && { echo "BRIDGE ERROR -> STOP"; stop "auto: error line in the bridge log"; break; }
+  r=$(echo "$RSS" | grep -o "rss_mb=[0-9]*" | grep -o "[0-9]*"); [ "$AUTO_STOP" = 1 ] && [ -n "$r" ] && [ "$r" -gt 2000 ] && { echo "FASTLIVO MEMORY -> STOP"; stop "auto: FAST-LIVO memory ${r} MB > 2000"; break; }
+  [ "$AUTO_STOP" = 1 ] && [ -n "$OD" ] && echo "$OD" | tr "," " " | awk 'NF>=2 {exit !($1+0>80||$1+0<-80||$2+0>80||$2+0<-80)} NF<2 {exit 1}' && { echo "ODOM DIVERGED -> STOP"; stop "auto: odom diverged ($OD)"; break; }
+  [ "$AUTO_STOP" = 1 ] && [ "$DM" != "na" ] && awk -v d="$DM" 'BEGIN{exit !(d>1.0)}' && { echo "LOCALIZATION JUMP >1 m -> STOP"; stop "auto: map->odom moved ${DM} m"; break; }
+  [ "$AUTO_STOP" = 1 ] && [ "$(grep -c -E '\[ERROR\]|Traceback' $L)" -gt 0 ] && { echo "BRIDGE ERROR -> STOP"; stop "auto: error line in the bridge log"; break; }
   case "$TS|$(state)" in *goal_reached*) echo "GOAL REACHED"; REACHED=1; break;; esac
 done
 # never leave the robot running without a supervisor: any exit that is not a goal arrival stops

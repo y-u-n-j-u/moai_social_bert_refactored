@@ -156,12 +156,12 @@ safe_path_tracker:
     # froze the robot beside a box in the ~2 m corridor although the planner had a
     # validated path. Now only obstacles in the straight-ahead body corridor stop
     # or slow it; anything inside 0.38 m in the sector is still an emergency stop.
-    obstacle_stop_distance: 0.45
+    obstacle_stop_distance: 0.0   # 11-09 (operator): no obstacle stop; the operator stops the robot with the controller
     obstacle_slow_distance: 1.00
     # corridor = body half width 0.215 + 0.125; hard stop sits inside the body's circumscribed
     # radius (0.33) but beyond the front face (0.25) so passing a box corner is not a stop.
     obstacle_corridor_half_width: 0.34
-    obstacle_hard_stop_distance: 0.30
+    obstacle_hard_stop_distance: 0.0   # 11-09 (operator): no obstacle stop; the operator stops the robot with the controller
     # slow down for obstacles along the direction of travel (not straight ahead) while turning away
     slow_along_travel_direction: true
     # continuous steering away from obstacles in the way (rad/s at an obstacle touching the robot)
