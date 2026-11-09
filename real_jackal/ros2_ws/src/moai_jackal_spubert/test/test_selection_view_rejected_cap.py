@@ -60,3 +60,18 @@ def test_table_hold_ends_on_new_goal_or_timeout(view, monkeypatch):
     hold.note_shown(first, 0.0)
     assert hold.should_refresh(hold_report((0.5, 0.0), (3.0, 0.0), generation=2), 1.0)
     assert hold.should_refresh(hold_report((0.5, 0.0), (3.0, 0.0)), view.HOLD_MAX_S + 1.0)
+
+
+def test_only_three_results_are_shown(view):
+    base = {"selected_candidate_index": 1, "executed_candidate_index": None, "executed_source": "retained", "selection_reason": "minimum_weighted_cost",
+            "retained_option": {"path": [[0, 0], [1, 0]], "score": {"total": 0.1}},
+            "candidates": [
+                {"candidate_index": 1, "rank": 1, "valid": True, "reason": "valid", "score": {"eligible": True, "total": 0.5}},     # chosen, not published
+                {"candidate_index": 2, "rank": 2, "valid": True, "reason": "valid", "score": {"eligible": False, "total": 0.9}},    # excluded by heading
+                {"candidate_index": 3, "rank": 3, "valid": True, "reason": "valid", "score": {"eligible": True, "total": 0.7}},
+                {"candidate_index": 4, "rank": 4, "valid": False, "reason": "robot_footprint_collision", "score": None}]}
+    states = {values[2] for _, values in view.candidate_rows(base, None)}
+    assert states <= {"검사 통과", "검사 탈락", "선택·발행"}
+    assert len(list(view.candidate_rows(base, None))) == 4                       # no extra row for the retained previous path
+    published = dict(base, executed_source="model", executed_candidate_index=1)
+    assert "선택·발행" in {values[2] for _, values in view.candidate_rows(published, None)}

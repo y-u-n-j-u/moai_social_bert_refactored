@@ -162,10 +162,12 @@ def candidate_rows(report, max_rejected=None):
             tag, state, reason = "rejected", "검사 탈락", reason_text(row.get("reason"))
         elif index is not None and index == chosen:
             sent = report.get("executed_source") == "model" and index == published
-            tag, state = ("selected", "선택·발행") if sent else ("replaced", "선택 후 교체")
-            reason = reason_text(selection_reason)
+            if sent:
+                tag, state, reason = "selected", "선택·발행", reason_text(selection_reason)
+            else:                      # operator request 11-09: only three results are shown; a pick that was replaced stays "검사 통과"
+                tag, state, reason = "valid", "검사 통과", "모델이 골랐지만 다른 경로가 발행됨"
         elif score.get("eligible") is False:
-            tag, state, reason = "excluded", "선택 제외", "시작 방향 제한 초과"
+            tag, state, reason = "valid", "검사 통과", "시작 방향 제한 초과로 선택 제외"
         else:
             tag, state, reason = "valid", "검사 통과", "다른 경로가 선택됨"
             total = score.get("total")
@@ -176,14 +178,6 @@ def candidate_rows(report, max_rejected=None):
                     reason = "동점에서 앞선 입력 경로 우선"
         yield tag, (candidate_name(index), row.get("rank", "—"), state,
                     *(cost_text(score.get(key)) for key in COSTS), reason)
-
-    if retained:
-        score = retained.get("score") or {}
-        sent = report.get("executed_source") == "retained"
-        state = "발행" if sent else "비교 옵션"
-        reason = reason_text(report.get("decision_reason")) if sent else "이전 경로 검사 통과"
-        yield "replaced", ("이전 경로", "—", state,
-                           *(cost_text(score.get(key)) for key in COSTS), reason)
 
 
 class EvidenceSubscriber(Node):
@@ -232,11 +226,10 @@ class SelectionView:
         self.source = tk.StringVar(value="선택 증거 수신 대기")
         self.choice = tk.StringVar(value="모델 후보 선택")
         self.decision = tk.StringVar(value=f"{TOPIC} 구독 중")
-        for var, size, color, weight in ((self.source, 10, "#a9bfd4", "normal"),
-                                         (self.choice, 17, "white", "bold"),
-                                         (self.decision, 11, "#cfe0ef", "normal")):
-            tk.Label(summary, textvariable=var, background="#172638", foreground=color,
-                     font=("TkDefaultFont", size, weight), anchor="w").pack(fill="x", pady=2)
+        # operator request 11-09: above the table only the model choice line is shown (self.source / self.decision are still
+        # updated but not displayed)
+        tk.Label(summary, textvariable=self.choice, background="#172638", foreground="white",
+                 font=("TkDefaultFont", 17, "bold"), anchor="w").pack(fill="x", pady=2)
 
         table = ttk.Frame(root, padding=(16, 12, 16, 0))
         table.pack(fill="both", expand=True)
