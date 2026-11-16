@@ -277,6 +277,7 @@ class SelectionView:
         self.displayed_rows = ()
         self.held_rows = []
         self.held_report = None
+        self.shown_seq = None
         self.hold = TableHold()
         self.hold_note = ""
         root.title("Jackal Candidate Decisions")
@@ -332,7 +333,16 @@ class SelectionView:
             stale = "  |  새 데이터 없음 · 마지막 수신 표시" if time.monotonic() - self.node.received_at > 3.0 else ""
             sec, ns = divmod(report["stamp_ns"], 1_000_000_000)
             self.source.set(f"{mode}  |  ROS {sec}.{ns:09d}{stale}{self.hold_note}")
-            if report is not self.displayed:
+            if report is not self.displayed and "display_set" in report:
+                # operator 11-16: the bridge decides which candidate set is shown (the same one RViz draws); the window only draws it
+                if report.get("display_seq") != self.shown_seq:
+                    self.show_report(report, report["display_set"])
+                    self.shown_seq = report.get("display_seq")
+                else:
+                    self.render(report)             # the row of the path the robot really follows is refreshed every cycle
+                self.hold_note = ""
+                self.displayed = report
+            elif report is not self.displayed:
                 now = time.monotonic()
                 if self.hold.should_refresh(report, now):
                     self.show_report(report)
@@ -345,7 +355,8 @@ class SelectionView:
                 self.displayed = report
         self.root.after(40, self.refresh)
 
-    def show_report(self, report):
+    def show_report(self, report, shown=None):
+        shown = shown if shown is not None else report      # the candidate set that is shown (display_set), by default this cycle's own
         chosen = report.get("selected_candidate_index")
         source = report.get("executed_source")
         sent = report.get("executed_candidate_index")
@@ -358,15 +369,17 @@ class SelectionView:
         self.choice.set("모델 선택")                                   # operator request 11-09: only these words, no explanation
         self.decision.set(f"추종기에 발행  {published_text}  |  {reason_text(decision_reason)}")
         limit = MAX_REJECTED_ROWS if MAX_REJECTED_ROWS > 0 else None
-        hidden = hidden_rejected(report, limit)
+        hidden = hidden_rejected(shown, limit)
         if hidden:
             self.decision.set(self.decision.get() + f"   (검사 탈락 {hidden}개 더 있음, 표에는 {limit}개만 표시)")
-        self.held_report = report
-        self.held_rows = list(candidate_rows(report, limit))
+        self.held_report = shown
+        self.held_rows = list(candidate_rows(shown, limit))
         self.render(report)
 
     def render(self, report):
-        rows = tuple(table_rows(self.held_rows, self.held_report is report, published_row(report)))
+        held = self.held_report or {}
+        same_cycle = held is report or (held.get("stamp_ns") is not None and held.get("stamp_ns") == report.get("stamp_ns"))
+        rows = tuple(table_rows(self.held_rows, same_cycle, published_row(report)))
         if rows != self.displayed_rows:
             self.rows.delete(*self.rows.get_children())
             for tag, values in rows:

@@ -407,6 +407,8 @@ class RealJackalSpubertBridgeNode(Node):
         self.never_hold = bool(self.declare_parameter("never_hold", False).value)
         self.never_hold_max_age_s = float(self.declare_parameter("never_hold_max_age_s", 6.0).value)
         self._moving_path = None
+        self._display_seq = 0
+        self._display_set = None
         self._moving_path_s = -math.inf
         self.show_guidance_marker = bool(self.declare_parameter("show_guidance_marker", False).value)
         self.mgp_fallback_shape_search = bool(self.declare_parameter("mgp_fallback_shape_search", True).value)
@@ -1353,6 +1355,7 @@ class RealJackalSpubertBridgeNode(Node):
                 "decision_reason": reason,
                 "executed_path": [[float(x), float(y)] for x, y in points],
             }
+            self._decide_candidate_display(evidence)
             self._record("selection_evidence", evidence)
             self.selection_evidence_pub.publish(String(data=diagnostic_json(evidence)))
             self._publish_selection_markers(message.header, evidence)
@@ -1370,20 +1373,10 @@ class RealJackalSpubertBridgeNode(Node):
         lifetime = Duration(seconds=max(1.2, 2.0 * self.replan_period)).to_msg()
         source = evidence["executed_source"]
         chosen = evidence["selected_candidate_index"]
-        now_s = self._now_s()
-        generation = int(evidence.get("goal_generation", 0))
-        # Display only: the candidate lines are redrawn when the robot has reached the goal sample (MGP) of the candidate that was
-        # selected from the shown set (candidate_hold_until_reach), not at every replan; the planner and the evidence topic are unaffected.
+        # Display only: the candidate lines are redrawn when the bridge replaced the shown set (display_refresh, see _decide_candidate_display).
         fallback_rows = evidence.get("fallback_candidates") or []
         chosen_fallback = evidence.get("selected_fallback_index")
-        robot_pose = evidence.get("robot_pose")
-        if robot_pose:
-            refresh = self._candidate_hold.decide(
-                now_s, robot_pose[:2], generation,
-                display_mgp([*evidence["candidates"], *fallback_rows], chosen if chosen is not None else chosen_fallback),
-            )
-        else:
-            refresh = True                      # no robot position yet (start-up): draw the set as it is, nothing to hold
+        refresh = bool(evidence.get("display_refresh", True))
 
         def add(marker):
             marker.header = header
@@ -1694,6 +1687,39 @@ class RealJackalSpubertBridgeNode(Node):
             ),
         })
         return True
+
+    DISPLAY_SET_KEYS = ("candidates", "fallback_candidates", "selected_candidate_index", "selected_fallback_index", "executed_source",
+                        "executed_candidate_index", "selection_reason", "fallback_selection_reason", "decision_reason",
+                        "published_path_index", "goal_generation", "stamp_ns")
+
+    def _decide_candidate_display(self, evidence: dict) -> None:
+        """One decision for every display (RViz lines and the candidate window): is the shown candidate set replaced by this cycle's set?
+
+        operator 11-16: the window and RViz decided separately and started at different cycles, so they showed different sets. Now the bridge decides
+        (the set stays until the robot has reached the goal sample of its selected candidate, see CandidateDisplayHold) and puts the set that is
+        shown into every evidence message as ``display_set`` (without the path points), with ``display_seq`` (counts the replacements) and
+        ``display_refresh`` (true when this very cycle's set is the new one). Both displays only draw that set."""
+        fallback_rows = evidence.get("fallback_candidates") or []
+        chosen = evidence.get("selected_candidate_index")
+        pose = evidence.get("robot_pose")
+        if pose:
+            refresh = self._candidate_hold.decide(
+                self._now_s(), pose[:2], int(evidence.get("goal_generation", 0)),
+                display_mgp([*evidence.get("candidates", []), *fallback_rows],
+                            chosen if chosen is not None else evidence.get("selected_fallback_index")),
+            )
+        else:
+            refresh = True                      # no robot position yet (start-up): show the set as it is, nothing to hold
+        if refresh or self._display_set is None:
+            refresh = True
+            self._display_seq += 1
+            light = {key: evidence.get(key) for key in self.DISPLAY_SET_KEYS}
+            for key in ("candidates", "fallback_candidates"):
+                light[key] = [{k: v for k, v in row.items() if k not in ("path", "collision")} for row in (evidence.get(key) or [])]
+            self._display_set = light
+        evidence["display_refresh"] = bool(refresh)
+        evidence["display_seq"] = self._display_seq
+        evidence["display_set"] = self._display_set
 
     def _published_path_index(self, source, candidate_index, details):
         """C number of the path handed to the tracker: the candidate's own number for a model / selected fallback candidate, otherwise (previous,

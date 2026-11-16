@@ -266,3 +266,26 @@ def test_never_hold_does_not_move_on_sensor_holds_old_paths_or_when_off(bridge):
     node._moving_path_s = node.now_s - 60.0
     node._hold("adaptive_guidance_failed:x")
     assert node.path_pub.messages[-1].poses == []                       # too old
+
+
+def test_the_bridge_puts_the_shown_candidate_set_into_every_evidence_message_and_holds_it(bridge):
+    node = bridge
+    node._candidate_hold.enabled = True
+    make_all_model_candidates_fail(node)
+    node.mgp_fallback = True
+    node._on_timer()
+    first = evidence_of(node)
+    assert first["display_refresh"] is True and first["display_seq"] >= 1
+    shown = first["display_set"]
+    assert [c["candidate_index"] for c in shown["candidates"]] == [c["candidate_index"] for c in first["candidates"]]
+    assert all("path" not in row for row in shown["candidates"] + shown["fallback_candidates"])      # light: no path points
+    # the next cycle: the robot has not reached the goal sample, so the shown set stays and the sequence number does not change
+    node.now_s += 1.0
+    node._last_predict_s = -1e9
+    for candidate in node._runtime.candidates:
+        candidate.candidate_index += 100
+    node._on_timer()
+    second = evidence_of(node)
+    assert second["display_refresh"] is False and second["display_seq"] == first["display_seq"]
+    assert [c["candidate_index"] for c in second["display_set"]["candidates"]] == [c["candidate_index"] for c in shown["candidates"]]
+    assert [c["candidate_index"] for c in second["candidates"]] != [c["candidate_index"] for c in shown["candidates"]]     # this cycle's own set differs
