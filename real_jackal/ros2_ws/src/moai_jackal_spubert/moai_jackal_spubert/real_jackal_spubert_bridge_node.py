@@ -410,6 +410,9 @@ class RealJackalSpubertBridgeNode(Node):
         self._display_seq = 0
         self._display_set = None
         self._moving_path_s = -math.inf
+        # 11-16 (operator): the spheres were the safe goal samples within 1 m of the guidance point (0-6 of them, from another cycle than the candidate lines),
+        # not the goal samples of the shown C paths. They are off; each shown C path now has its own goal dot (same colour as its line).
+        self.show_mgp_samples = bool(self.declare_parameter("show_mgp_samples", False).value)
         self.show_guidance_marker = bool(self.declare_parameter("show_guidance_marker", False).value)
         self.mgp_fallback_shape_search = bool(self.declare_parameter("mgp_fallback_shape_search", True).value)
         self.mgp_fallback_lateral_m = float(self.declare_parameter("mgp_fallback_lateral_m", 0.6).value)
@@ -1174,7 +1177,7 @@ class RealJackalSpubertBridgeNode(Node):
         if self.show_guidance_marker:                                  # 11-09 (operator): the yellow guidance point is not drawn
             array.markers.append(guidance_marker)
         if result is not None:
-            for index, point in enumerate(result.candidate_goals_world):
+            for index, point in enumerate(result.candidate_goals_world if self.show_mgp_samples else ()):
                 marker = Marker()
                 marker.header.frame_id = frame_id
                 marker.header.stamp = self.get_clock().now().to_msg()
@@ -1391,6 +1394,18 @@ class RealJackalSpubertBridgeNode(Node):
                     return
                 fresh.append(self._line_marker(frame, namespace, index, path, color, width))
 
+            def goal_dot(ident, goal, color):
+                """A small ball at the goal sample (MGP) of a shown C path, in the colour of its line."""
+                if not goal or len(goal) < 2 or not all(math.isfinite(float(v)) for v in goal[:2]):
+                    return
+                dot = Marker()
+                dot.ns, dot.id, dot.type, dot.action = "candidate_goal", ident, Marker.SPHERE, Marker.ADD
+                dot.pose.position.x, dot.pose.position.y, dot.pose.position.z = float(goal[0]), float(goal[1]), 0.10
+                dot.pose.orientation.w = 1.0
+                dot.scale.x = dot.scale.y = dot.scale.z = 0.16
+                dot.color = ColorRGBA(r=color[0], g=color[1], b=color[2], a=0.95)
+                fresh.append(dot)
+
             def candidate_label(index, x, y, candidate, color, prefix="C"):
                 marker = Marker()
                 marker.ns = "selection_candidate_id"
@@ -1421,6 +1436,7 @@ class RealJackalSpubertBridgeNode(Node):
                     color = (0.20, 0.60, 1.0, 0.82)
                 # operator 11-16: green is ONLY the path the robot really follows (drawn below, every cycle); a selected candidate is blue like the others
                 line("model_candidates", index, row["path"], color, 0.028)
+                goal_dot(index, row.get("goal"), color)
                 if row["path"] and all(math.isfinite(v) for v in row["path"][-1]):
                     x, y = row["path"][-1]
                     candidate_label(index, x, y, candidate, color)
@@ -1437,6 +1453,7 @@ class RealJackalSpubertBridgeNode(Node):
                 else:
                     color, width = (0.20, 0.60, 1.0, 0.82), 0.028
                 fresh.append(self._line_marker(frame, "fallback_candidates", number, path, color, width))
+                goal_dot(100 + number, row.get("goal"), color)
                 x, y = path[-1]
                 candidate_label(100 + number, x, y, row["candidate_index"], color)
             self._held_candidate_markers = fresh

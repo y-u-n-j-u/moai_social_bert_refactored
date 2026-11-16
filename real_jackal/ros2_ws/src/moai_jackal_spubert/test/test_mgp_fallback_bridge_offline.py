@@ -289,3 +289,23 @@ def test_the_bridge_puts_the_shown_candidate_set_into_every_evidence_message_and
     assert second["display_refresh"] is False and second["display_seq"] == first["display_seq"]
     assert [c["candidate_index"] for c in second["display_set"]["candidates"]] == [c["candidate_index"] for c in shown["candidates"]]
     assert [c["candidate_index"] for c in second["candidates"]] != [c["candidate_index"] for c in shown["candidates"]]     # this cycle's own set differs
+
+
+def test_every_shown_c_path_has_one_goal_dot_in_its_colour_and_the_old_sample_spheres_are_off(bridge):
+    node = bridge
+    node.rejected_display_max = 0
+    node._runtime.candidates = [NS(
+        selected_goal_valid=True, trajectory_map_safe=True, execution_valid=True,
+        path_world=[(0.2 * (i + 1), 0.01 * rank) for i in range(12)], candidate_rank=rank, candidate_index=rank + 10,
+        selected_goal_world=GOALS[rank], candidate_goals_world=list(GOALS), candidate_safe_mask=(True,) * 5,
+    ) for rank in range(4)]
+    node.map_collision = False
+    node._on_timer()
+    array = node.selection_marker_pub.messages[-1]
+    dots = [m for m in array.markers if getattr(m, "ns", "") == "candidate_goal"]
+    lines = [m for m in array.markers if getattr(m, "ns", "") == "model_candidates"]
+    assert len(dots) == len(lines) >= 1
+    assert {(round(d.color.r, 2), round(d.color.g, 2), round(d.color.b, 2)) for d in dots} <= \
+           {(round(l.color.r, 2), round(l.color.g, 2), round(l.color.b, 2)) for l in lines}      # same colours as the lines
+    for message in node.marker_pub.messages:                                                      # the runtime markers have no goal-sample spheres
+        assert not [m for m in message.markers if getattr(m, "ns", "") == "mgp_candidates"]
