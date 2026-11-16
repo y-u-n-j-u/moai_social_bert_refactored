@@ -255,3 +255,25 @@ terminator 창 하나가 10칸으로 나뉘어 열린다. **각 칸에는 명령
 6. 정지 이유를 보는 작은 창(선택): 컨테이너에서 `DISPLAY=:0 python3 /root/drive_hud.py`(CPU 약 15%).
 
 주의: 컨테이너 안에서 `pkill -f`나 `awk /패턴/`을 `bash -c`에 직접 쓰면 자기 자신을 종료시킨다. 스크립트 파일로 만들어 `[x]` 패턴으로 쓴다.
+
+## 14. 실시간 주행 스크립트 `--live`와 RViz 정리 (2026-11-16)
+
+시작: `cd ~/capstone_navi/real_jackal/field_scripts && ./open_jackal_terminals.bash --live` (부팅 후 `xhost +SI:localuser:root`는 먼저). 터미널 한 창에 9칸이 열리고, 설정 칸은 **Enter 없이 순서대로 자동 실행**된다.
+
+| 칸 | 하는 일 | 시작 조건 |
+|---|---|---|
+| 1 HOST | 네트워크(`sudo` 비밀번호를 이 칸에 한 번 입력) + 컨테이너 시작(이미 켜져 있으면 건너뜀) | 바로 |
+| 2 SENSORS | 라이다, LIO, 카메라 + YOLO + 사람 추적, 스캔, Nav2, 로봇 위치 표시. 끝나면 스캔/LIO/사람 추적이 나오는지 확인하고 "stack ready" | 1번 완료 |
+| 3 RVIZ | 지도만 있는 RViz | 2번 완료 |
+| 4 BRIDGE | **저장소의 브릿지 코드와 설정을 컨테이너에 복사한 뒤** 브릿지 + 추종기 시작(움직임은 꺼진 상태) | 2번 완료 |
+| 6 STATUS | 상태 표시(읽기 전용) | 바로 |
+| 7 CHECK / 8 RUN / 9 STOP / 10 AFTER | **수동**. RUN(`monitor_run.bash`)은 e-stop 담당자가 준비된 뒤 Enter | |
+
+- 앞 단계가 실패하면 뒤 칸은 "waiting for: …"로 계속 기다린다. 실패한 칸을 고치고 그 칸만 다시 실행하면 이어진다.
+- RViz에서: 빨간 `2D Pose Estimate`로 위치를 찍고 방향까지 끌기 → 초록 `2D Goal Pose` → 7번 CHECK → "run".
+- 브릿지 칸이 코드를 복사하므로 오래된 이미지로 올려도 최신 브릿지가 쓰인다(새 이미지 `drive-1032`를 만들면 불필요).
+
+RViz 변경(`real_jackal_ped_map.rviz`):
+- 카메라(Camera Image)와 Instance Mask, Detection Image 패널을 뺐다. 지도 화면만 남는다(왼쪽 Displays/도구 속성 패널은 유지).
+- **로봇의 현재 위치**를 하늘색 원(반지름 0.34m, 몸체)과 흰 화살표(방향)로 표시한다(`robot_marker.py`, TF `map→base_link`, 10Hz). 지나온 경로(odom 궤적)가 아니고, TF가 1초보다 오래되면 사라진다.
+- 카메라 패널이 없으므로 `rviz_retry.bash`의 "카메라를 구독하지 않으면 재시작" 검사는 설정에 카메라가 있을 때만 한다. RViz가 멈췄는지 보는 CPU 기준은 400틱에서 150틱으로 낮췄다(패널이 줄어 CPU가 줄 수 있어서).

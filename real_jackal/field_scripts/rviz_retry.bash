@@ -30,15 +30,17 @@ for try in 1 2 3 4 5 6 7 8; do
   fi
   sleep 5
   TICKS=$(awk '{print $14+$15}' /proc/$PID/stat 2>/dev/null)   # CPU time of RViz so far (100 ticks = 1 s)
-  if [ -z "$TICKS" ] || [ "$TICKS" -lt 400 ]; then               # a hung RViz (deadlock at start) uses almost no CPU
+  if [ -z "$TICKS" ] || [ "$TICKS" -lt 150 ]; then               # a hung RViz (deadlock at start) uses almost no CPU
     echo "$(date +%T) try $try: RViz hung or died (cpu ticks=${TICKS:-none}) - restarting" >> "$R/rviz_retry.log"
     kill $PID 2>/dev/null; sleep 1; kill -9 $PID 2>/dev/null; wait $PID 2>/dev/null
     continue
   fi
   # 11-08: an RViz that looked healthy (CPU ok, config loaded) once never subscribed to the camera / mask topics: both Image panels
   # stayed on "No Image". If the camera is publishing but RViz is not among its subscribers within ~25 s, start over.
+  # 11-16: the map-only config has no Image displays, so RViz never subscribes to the camera: only check it when the config shows the camera.
   CAM=/camera/camera/color/image_raw; SUBSCRIBED=0; HAVE_CAM=0
   for k in 1 2 3 4 5 6; do
+    grep -q "$CAM" "$CFG" || break
     INFO=$(timeout 8 ros2 topic info -v $CAM 2>/dev/null)
     grep -q "Publisher count: [1-9]" <<< "$INFO" || break                      # no camera running (e.g. dry-run without it): nothing to check
     HAVE_CAM=1

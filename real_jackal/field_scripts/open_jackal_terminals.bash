@@ -11,6 +11,8 @@
 #   open_jackal_terminals.bash --only status   # a single terminal (names below)
 #   open_jackal_terminals.bash --dry-run       # print what would be opened
 #   open_jackal_terminals.bash --ped           # pedestrian PERCEPTION test (robot stands still, low load): 7 panes
+#   open_jackal_terminals.bash --live          # LIVE DRIVE: the set-up panes run by themselves in order (network+container ->
+#                                              # sensors/people/Nav2 -> RViz + bridge); only RUN (the robot moves) stays manual
 #   CONTAINER_NAME=moai_jackal_spubert open_jackal_terminals.bash
 #
 # Pane names: host sensors nav rviz trail | status check run stop after
@@ -23,11 +25,13 @@ STAB="${STABILITY_REPO:-$HOME/capstone_navi_stability_20260916}"
 ONLY=""
 DRY=0
 PED=0
+LIVE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --only) shift; ONLY="${1:-}" ;;
     --dry-run) DRY=1 ;;
     --ped) PED=1 ;;
+    --live) LIVE=1 ;;
     -h|--help) sed -n 2,20p "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
@@ -73,7 +77,7 @@ tab_script host    "1 HOST: network + container" host \
   "sudo bash $REPO/real_jackal/scripts/configure_jackal_network.bash up && { if docker inspect -f '{{.State.Running}}' $CONTAINER 2>/dev/null | grep -Fxq true; then echo 'container $CONTAINER is already running - nothing to start'; else (cd $STAB && CAPSTONE_CALIB=$REPO/spu_deploy_docker/context/calib IMAGE=$IMAGE CONTAINER_NAME=$CONTAINER MOAI_ENABLE_GUI=1 ./real_jackal/docker/run_stability_container.bash); fi; }" 0
 tab_script sensors "2 SENSORS + PEOPLE + NAV2" host \
   "Lidar, LIO (FAST-LIVO), RealSense + YOLO + people tracker, scan, Nav2 map/AMCL, robot trail (start_ped_map.bash, repo copy). Restart about every hour (LIO CPU grows)." \
-  "for f in start_ped_map.bash ped_overlay.py odom_trail.py rviz_retry.bash real_jackal_ped_map.rviz; do docker cp $REPO/real_jackal/field_scripts/\$f $CONTAINER:/root/\$f; done; docker exec -it $CONTAINER bash --noprofile --norc /root/start_ped_map.bash" 0
+  "for f in start_ped_map.bash ped_overlay.py odom_trail.py robot_marker.py rviz_retry.bash real_jackal_ped_map.rviz; do docker cp $REPO/real_jackal/field_scripts/\$f $CONTAINER:/root/\$f; done; docker exec -it $CONTAINER bash --noprofile --norc /root/start_ped_map.bash" 0
 tab_script nav     "3 BRIDGE (people rules)" host \
   "Bridge + tracker only, with the people-only rules config (repo copy). Nav2 comes from pane 2. Re-run after a config change; the goal must be set again." \
   "docker cp $REPO/real_jackal/field_scripts/start_bridge_only.bash $CONTAINER:/root/start_bridge_only.bash; docker cp $REPO/real_jackal/ros2_ws/src/moai_jackal_spubert/config/real_jackal_social005.yaml $CONTAINER:/root/real_jackal_social005_human05.yaml; docker exec -it $CONTAINER bash --noprofile --norc /root/start_bridge_only.bash" 0
@@ -100,7 +104,7 @@ tab_script after   "10 AFTER THE RUN" container \
   'pkill -INT -f "ros2 bag reco[r]d"; sleep 5; ls -dt /root/jackal_logs/drive_latest/bag_[0-9]* | grep -v "\.log" | head -3' 0
 
 PED_STATUS='while true; do clear; date; uptime | sed "s/.*load/load/"; echo "--- top CPU:"; ps -eo pcpu,rss,args --sort=-pcpu | head -7 | cut -c1-110; echo "--- GPU:"; nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader 2>/dev/null || echo "(nvidia-smi not available here)"; source /root/jackal_runtime/scripts/jackal_ros_env.bash >/dev/null 2>&1; echo "--- tracks now:"; timeout 3 ros2 topic echo /ped_tracking --once --field tracks 2>/dev/null | grep -c "^- id" | sed "s/^/ pedestrians tracked: /"; sleep 2; done'
-CP_PED="for f in start_ped_test.bash start_ped_map.bash start_bag_ped.bash ped_overlay.py selection_view.py real_jackal_ped.rviz real_jackal_ped_map.rviz rviz_retry.bash; do docker cp $REPO/real_jackal/field_scripts/\$f $CONTAINER:/root/\$f; done"
+CP_PED="for f in start_ped_test.bash start_ped_map.bash start_bag_ped.bash ped_overlay.py robot_marker.py selection_view.py real_jackal_ped.rviz real_jackal_ped_map.rviz rviz_retry.bash; do docker cp $REPO/real_jackal/field_scripts/\$f $CONTAINER:/root/\$f; done"
 tab_script pedsensors "2 PED SENSORS (lidar + camera + YOLO + tracker)" host \
   "Perception only - no FAST-LIVO/Nav2/bridge, the robot cannot move. Copies the new scripts into the container first." \
   "$CP_PED; docker exec -it $CONTAINER bash --noprofile --norc /root/start_ped_map.bash" 0
@@ -120,7 +124,28 @@ tab_script pedkill "7 KILL ALL" host \
   "Stops every process of the test (the container stays)." \
   "$REPO/real_jackal/field_scripts/kill_all.sh" 0
 
+# --live: the set-up panes start by themselves, each one waiting for the flag file of the step before it (host -> stack -> rviz + bridge).
+# They are plain host panes, so a flag file in $DIR is visible to all of them. RUN is never automatic.
+W() { echo "until [ -f $DIR/$1.ok ]; do echo 'waiting for: $1 ...'; sleep 3; done;"; }
+CP_LIVE="for f in start_ped_map.bash ped_overlay.py odom_trail.py robot_marker.py rviz_retry.bash selection_view.py real_jackal_ped_map.rviz start_bridge_only.bash; do docker cp $REPO/real_jackal/field_scripts/\$f $CONTAINER:/root/\$f; done"
+PKG="$REPO/real_jackal/ros2_ws/src/moai_jackal_spubert"
+SYNC_BRIDGE="docker cp $PKG/moai_jackal_spubert/. $CONTAINER:/root/moai_stability_ws/build/moai_jackal_spubert/moai_jackal_spubert/; docker cp $PKG/config/real_jackal_social005.yaml $CONTAINER:/root/real_jackal_social005_human05.yaml"
+READY='source /root/jackal_runtime/scripts/jackal_ros_env.bash >/dev/null 2>&1; source /root/moai_stability_ws/install/setup.bash; for i in $(seq 1 60); do if timeout 4 ros2 topic echo --once /scan >/dev/null 2>&1 && timeout 4 ros2 topic echo --once /aft_mapped_to_init --field header >/dev/null 2>&1 && timeout 4 ros2 topic echo --once /ped_tracking --field header >/dev/null 2>&1; then echo "scan, LIO odometry and people tracker are publishing"; exit 0; fi; echo "warming up ($i/60) ..."; done; echo "NOT ready after 5 min - check the log in the run folder"; exit 1'
+tab_script livehost "1 HOST: network + container" host \
+  "Runs by itself. sudo asks for your password once (network). Then the container is started if it is not running." \
+  "{ sudo bash $REPO/real_jackal/scripts/configure_jackal_network.bash up && { if docker inspect -f '{{.State.Running}}' $CONTAINER 2>/dev/null | grep -Fxq true; then echo 'container $CONTAINER is already running'; else (cd $STAB && CAPSTONE_CALIB=$REPO/spu_deploy_docker/context/calib IMAGE=$IMAGE CONTAINER_NAME=$CONTAINER MOAI_ENABLE_GUI=1 ./real_jackal/docker/run_stability_container.bash); fi; }; } && docker inspect -f '{{.State.Running}}' $CONTAINER | grep -Fxq true && touch $DIR/container.ok && echo 'container ready' || echo 'HOST step failed - later panes keep waiting; fix it and run this pane again'" 1
+tab_script livestack "2 SENSORS + PEOPLE + NAV2" host \
+  "Runs by itself after pane 1: lidar, LIO, camera + YOLO + people tracker, scan, Nav2, robot marker. Takes about 1-2 minutes." \
+  "$(W container) $CP_LIVE; docker exec -it $CONTAINER bash --noprofile --norc /root/start_ped_map.bash; docker exec -i $CONTAINER bash --noprofile --norc -c '$READY' && touch $DIR/stack.ok && echo 'stack ready: RViz and the bridge start now'" 1
+tab_script liverviz "3 RVIZ (map only)" host \
+  "Runs by itself after pane 2: the map with the robot position, people, paths and candidates (no camera panels). Then: 2D Pose Estimate (drag to the heading), then 2D Goal Pose." \
+  "$(W stack) $CP_LIVE; docker exec -it $CONTAINER bash --noprofile --norc /root/rviz_retry.bash /root/real_jackal_ped_map.rviz" 1
+tab_script livebridge "4 BRIDGE (people rules)" host \
+  "Runs by itself after pane 2. First copies the repo's bridge code and config into the container (an older image would not have them), then starts the bridge + tracker. Motion stays OFF until RUN." \
+  "$(W stack) $SYNC_BRIDGE; $CP_LIVE; docker exec -it $CONTAINER bash --noprofile --norc /root/start_bridge_only.bash" 1
+
 ALL="host sensors nav rviz trail status check run stop after"
+if [ "$LIVE" = 1 ]; then ALL="livehost livestack liverviz livebridge status check run stop after"; fi
 if [ "$PED" = 1 ]; then ALL="host pedsensors pedrviz pedstatus pedbag pedafter pedkill"; fi
 LIST="${ONLY:-$ALL}"
 for n in $LIST; do [ -f "$DIR/$n.sh" ] || { echo "unknown pane: $n (choose from: $ALL)" >&2; exit 2; }; done
