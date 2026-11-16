@@ -267,7 +267,9 @@ terminator 창 하나가 10칸으로 나뉘어 열린다. **각 칸에는 명령
 | 3 RVIZ | 지도만 있는 RViz | 2번 완료 |
 | 4 BRIDGE | **저장소의 브릿지 코드와 설정을 컨테이너에 복사한 뒤** 브릿지 + 추종기 시작(움직임은 꺼진 상태) | 2번 완료 |
 | 6 STATUS | 상태 표시(읽기 전용) | 바로 |
-| 7 CHECK / 8 RUN / 9 STOP / 10 AFTER | **수동**. RUN(`monitor_run.bash`)은 e-stop 담당자가 준비된 뒤 Enter | |
+| 7 CHECK / 8 RUN / 9 AFTER | **수동**. RUN(`monitor_run.bash`)은 컨트롤러를 잡은 분이 준비된 뒤 Enter. 9 AFTER는 주행 후 녹화를 닫음 | |
+
+`--live`에는 STOP 칸이 없다(11-16 사용자 결정: 컨트롤러의 비상정지가 정지 수단). 컴퓨터에서 정지가 필요하면 저에게 말하거나 `ros2 service call /spu_bert/enable_motion std_srvs/srv/SetBool "{data: false}"`.
 
 - 앞 단계가 실패하면 뒤 칸은 "waiting for: …"로 계속 기다린다. 실패한 칸을 고치고 그 칸만 다시 실행하면 이어진다.
 - RViz에서: 빨간 `2D Pose Estimate`로 위치를 찍고 방향까지 끌기 → 초록 `2D Goal Pose` → 7번 CHECK → "run".

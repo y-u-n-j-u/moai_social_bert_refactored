@@ -145,7 +145,11 @@ tab_script livebridge "4 BRIDGE (people rules)" host \
   "$(W stack) $SYNC_BRIDGE; $CP_LIVE; docker exec -it $CONTAINER bash --noprofile --norc /root/start_bridge_only.bash" 1
 
 ALL="host sensors nav rviz trail status check run stop after"
-if [ "$LIVE" = 1 ]; then ALL="livehost livestack liverviz livebridge status check run stop after"; fi
+# 11-16 (operator): no STOP pane in --live: the controller's emergency stop is the stop. AFTER is renumbered to 9.
+tab_script liveafter "9 AFTER THE RUN" container \
+  "Stop the rosbag cleanly (never open a live bag), then analyse it." \
+  'pkill -INT -f "ros2 bag reco[r]d"; sleep 5; ls -dt /root/jackal_logs/drive_latest/bag_[0-9]* | grep -v "\.log" | head -3' 0
+if [ "$LIVE" = 1 ]; then ALL="livehost livestack liverviz livebridge status check run liveafter"; fi
 if [ "$PED" = 1 ]; then ALL="host pedsensors pedrviz pedstatus pedbag pedafter pedkill"; fi
 LIST="${ONLY:-$ALL}"
 for n in $LIST; do [ -f "$DIR/$n.sh" ] || { echo "unknown pane: $n (choose from: $ALL)" >&2; exit 2; }; done
