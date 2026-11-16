@@ -121,3 +121,49 @@ def test_a_passed_candidate_says_which_other_path_was_published(view):
     for source, text in (("retained", "이전 경로가 선택됨"), ("fallback", "대체 경로가 선택됨"), ("recovery", "복구 경로가 선택됨")):
         rows = list(view.candidate_rows({**base, "executed_source": source}, None))
         assert rows[0][1][-1] == text and rows[0][1][2] == "검사 통과"
+
+
+def _row(index, valid=True, total=0.5):
+    return {"candidate_index": index, "rank": index + 1, "valid": valid, "reason": "valid" if valid else "robot_footprint_collision",
+            "score": {"eligible": True, "total": total} if valid else None}
+
+
+def test_the_previous_path_gets_its_own_selected_row_so_a_selection_is_always_visible(view):
+    report = {"executed_source": "retained", "selected_candidate_index": None, "executed_candidate_index": None,
+              "selection_reason": "minimum_weighted_cost", "published_path_index": 20,
+              "candidates": [_row(0), _row(1), _row(2)]}
+    live = view.published_row(report)
+    assert live[0] == "selected" and live[1][0] == "C20" and live[1][2] == "선택·발행" and live[1][-1] == "이전 경로 유지"
+    held = list(view.candidate_rows(report, None))
+    rows = view.table_rows(held, True, live)
+    assert rows[0] == live and sum(1 for tag, _ in rows if tag == "selected") == 1
+    assert [v[2] for tag, v in rows[1:]] == ["검사 통과"] * 3
+    assert len({v[0] for _, v in rows}) == len(rows)                      # no number twice
+
+
+def test_a_published_model_candidate_keeps_its_full_row_and_is_not_listed_twice(view):
+    report = {"executed_source": "model", "selected_candidate_index": 1, "executed_candidate_index": 1, "published_path_index": 1,
+              "selection_reason": "minimum_weighted_cost", "candidates": [_row(0, total=0.9), _row(1, total=0.3), _row(2, False)]}
+    live = view.published_row(report)
+    assert live[1][0] == "C1" and live[1][2] == "선택·발행" and live[1][3] != "—"          # costs of the candidate are kept
+    rows = view.table_rows(list(view.candidate_rows(report, None)), True, live)
+    assert [v[0] for _, v in rows].count("C1") == 1 and rows[0][0] == "selected"
+
+
+def test_held_rows_from_an_older_cycle_never_show_a_second_selected_row(view):
+    old = {"executed_source": "model", "selected_candidate_index": 3, "executed_candidate_index": 3, "published_path_index": 3,
+           "selection_reason": "minimum_weighted_cost", "candidates": [_row(3, total=0.2), _row(4, total=0.6)]}
+    new = {"executed_source": "retained", "selected_candidate_index": None, "executed_candidate_index": None, "published_path_index": 5,
+           "selection_reason": "minimum_weighted_cost", "candidates": [_row(0), _row(1)]}
+    held = list(view.candidate_rows(old, None))
+    rows = view.table_rows(held, False, view.published_row(new))            # the table is held, the published row is live
+    assert sum(1 for tag, _ in rows if tag == "selected") == 1 and rows[0][1][0] == "C5"
+    assert any(v[0] == "C3" and v[2] == "검사 통과" for _, v in rows)            # the old pick is shown as a plain passed candidate
+    assert view.published_row({"executed_source": "hold", "candidates": []}) is None
+
+
+def test_the_table_with_the_live_row_still_has_at_most_five_rows(view):
+    report = {"executed_source": "retained", "selected_candidate_index": None, "executed_candidate_index": None, "published_path_index": 9,
+              "selection_reason": "minimum_weighted_cost", "candidates": [_row(i) for i in range(8)]}
+    rows = view.table_rows(list(view.candidate_rows(report, None)), True, view.published_row(report))
+    assert len(rows) == 5 and rows[0][1][0] == "C9"

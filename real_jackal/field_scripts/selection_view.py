@@ -164,6 +164,38 @@ def row_result(row, chosen, sent, selection_reason, winning_cost, selector, unif
     return "valid", "검사 통과", reason
 
 
+PUBLISHED_TEXT = {"retained": "이전 경로 유지", "recovery": "복구 경로 발행", "fallback": "대체 경로 발행", "model": "모델 경로 발행"}
+
+
+def published_row(report):
+    """The row of the path the robot really follows in this cycle (operator 11-16: always one 선택·발행 row, the green line in RViz).
+
+    A model or fallback candidate that was published keeps its full row; the previous / recovery / route-prefix path has no scores."""
+    source = report.get("executed_source")
+    for tag, values in candidate_rows(report, None):
+        if tag == "selected":
+            return tag, values
+    number = report.get("published_path_index")
+    if source in ("retained", "recovery", "fallback", "model") and number is not None:
+        return "selected", (candidate_name(number), "—", "선택·발행", "—", "—", "—", "—", "—", PUBLISHED_TEXT[source])
+    return None
+
+
+def table_rows(held_rows, same_cycle, live):
+    """Held candidate rows plus the live published row on top. The held rows come from an older cycle unless ``same_cycle``: then
+    their own selected row is kept, otherwise it is shown as a plain passed candidate. A held row with the live row's name is dropped
+    (no candidate number appears twice)."""
+    rows = []
+    for tag, values in held_rows:
+        if tag == "selected" and not same_cycle:
+            tag, values = "valid", (*values[:2], "검사 통과", *values[3:-1], "이전 주기에 선택됨")
+        rows.append((tag, values))
+    if live is not None:
+        rows = [row for row in rows if row[1][0] != live[1][0] and not (same_cycle and row[0] == "selected")]
+        rows.insert(0, live)
+    return cap_rows(rows, MAX_ROWS)
+
+
 MAX_ROWS = int(os.environ.get("SELECTION_VIEW_MAX_ROWS", "5"))          # operator request 11-09: never more than 5 candidates in the table
 
 
@@ -243,6 +275,8 @@ class SelectionView:
         self.node = node
         self.displayed = None
         self.displayed_rows = ()
+        self.held_rows = []
+        self.held_report = None
         self.hold = TableHold()
         self.hold_note = ""
         root.title("Jackal Candidate Decisions")
@@ -307,6 +341,7 @@ class SelectionView:
                 else:
                     distance = self.hold.distance(report)
                     self.hold_note = ("  |  표 고정 중" + (f" · 목표 샘플까지 {distance:.1f}m" if distance is not None else ""))
+                    self.render(report)             # operator 11-16: the row of the path the robot really follows is refreshed every cycle
                 self.displayed = report
         self.root.after(40, self.refresh)
 
@@ -326,7 +361,12 @@ class SelectionView:
         hidden = hidden_rejected(report, limit)
         if hidden:
             self.decision.set(self.decision.get() + f"   (검사 탈락 {hidden}개 더 있음, 표에는 {limit}개만 표시)")
-        rows = tuple(cap_rows(candidate_rows(report, limit), MAX_ROWS))
+        self.held_report = report
+        self.held_rows = list(candidate_rows(report, limit))
+        self.render(report)
+
+    def render(self, report):
+        rows = tuple(table_rows(self.held_rows, self.held_report is report, published_row(report)))
         if rows != self.displayed_rows:
             self.rows.delete(*self.rows.get_children())
             for tag, values in rows:

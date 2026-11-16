@@ -637,16 +637,20 @@ def test_sharp_swerve_is_skipped_when_a_straighter_valid_candidate_exists(bridge
     assert markers[0].action == Marker.DELETEALL
     assert all(marker.header == path.header for marker in markers)
     labels = {marker.text: marker for marker in markers[1:]
-              if marker.type == Marker.TEXT_VIEW_FACING}
+              if marker.type == Marker.TEXT_VIEW_FACING and marker.ns == "selection_candidate_id"}
     assert set(labels) == {"C10", "C11"}
-    assert all(marker.ns == "selection_candidate_id" for marker in labels.values())
     assert (labels["C11"].pose.position.x, labels["C11"].pose.position.y) == straight[-1]
     lines = {(marker.points[-1].x, marker.points[-1].y): marker for marker in markers[1:]
              if marker.ns == "model_candidates"}
     selected, excluded = lines[straight[-1]], lines[swerve[-1]]
-    assert selected.color.g > selected.color.r
-    assert excluded.color.r > excluded.color.g
-    assert selected.scale.x > excluded.scale.x
+    assert excluded.color.r > excluded.color.g                       # excluded by the start direction limit: red
+    assert selected.color.b > selected.color.g                       # operator 11-16: a candidate is never green, even the selected one
+    # the one green line is the published path (the selected model path), labelled with its candidate number
+    green = [m for m in markers[1:] if m.type == Marker.LINE_STRIP and m.color.g > 0.9 and m.color.r < 0.3 and m.color.b < 0.5]
+    assert len(green) == 1 and green[0].ns == "published_path" and green[0].scale.x > selected.scale.x
+    assert (green[0].points[-1].x, green[0].points[-1].y) == straight[-1]
+    published_label = [m for m in markers[1:] if m.ns == "published_path_id"]
+    assert len(published_label) == 1 and published_label[0].text == "C11"
 
 
 # --- sharp model path -> gentler fallback; always-on executed-source label ---
