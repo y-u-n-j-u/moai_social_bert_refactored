@@ -200,7 +200,20 @@ PY
 # GTK_IM_MODULE=ibus: without it GTK talks to ibus through XIM and Ctrl+Shift+V (paste) can be swallowed by the Korean input method
 CMD=(env GDK_BACKEND=x11 GTK_IM_MODULE=ibus terminator --no-dbus -g "$DIR/terminator.conf" -l jackal -T "Jackal drive")
 if [ $DRY -eq 1 ]; then echo "${CMD[*]}"; echo "(dry run - layout in $DIR/terminator.conf)"; exit 0; fi
-"${CMD[@]}" >/dev/null 2>&1 &
+# 11-16: terminator sometimes hangs while it builds the layout (100 % CPU, not one pane starts a shell, nothing can be typed).
+# Watch it: when no pane has started after ~10 s, close it and open it again (up to 3 tries).
+N_PANES=$(wc -w <<< "$LIST")
+TRY=1
+while true; do
+  "${CMD[@]}" >/dev/null 2>&1 &
+  TPID=$!
+  for _ in $(seq 1 20); do sleep 0.5; [ "$(pgrep -P "$TPID" | wc -l)" -ge "$N_PANES" ] && break; done
+  [ "$(pgrep -P "$TPID" | wc -l)" -ge 1 ] && break
+  echo "터미널 창이 먹통이라 닫고 다시 엽니다 ($TRY/3)"
+  kill "$TPID" 2>/dev/null || true; sleep 1; kill -9 "$TPID" 2>/dev/null || true
+  TRY=$((TRY + 1))
+  [ "$TRY" -le 3 ] || { echo "3번 다시 열었지만 먹통입니다. 이 스크립트를 한 번 더 실행해 보세요." >&2; exit 1; }
+done
 echo "opened: $LIST   (scripts in $DIR)"
 # GNOME on Wayland ignores the window position that terminator asks for, but a move request to a mapped X11 window
 # is honoured: place the terminal on the left part of the screen (RViz opens on the right, see its Window Geometry).
