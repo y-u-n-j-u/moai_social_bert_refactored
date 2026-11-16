@@ -198,7 +198,13 @@ open(d + "/terminator.conf", "w").write("\n".join(out) + "\n")
 PY
 # --no-dbus: an already running terminator would take the new window over and ignore our layout file
 # GTK_IM_MODULE=ibus: without it GTK talks to ibus through XIM and Ctrl+Shift+V (paste) can be swallowed by the Korean input method
-CMD=(env GDK_BACKEND=x11 GTK_IM_MODULE=ibus terminator --no-dbus -g "$DIR/terminator.conf" -l jackal -T "Jackal drive")
+# 11-16: terminator_safe.py = terminator + a time limit on the loop in paned.py that sometimes never ends (100 % CPU, the window stops at 4 panes, no input).
+SAFE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/terminator_safe.py"
+if [ -f "$SAFE" ] && [ -x /usr/bin/python3 ]; then
+  CMD=(env GDK_BACKEND=x11 GTK_IM_MODULE=ibus /usr/bin/python3 "$SAFE" --no-dbus -g "$DIR/terminator.conf" -l jackal -T "Jackal drive")
+else
+  CMD=(env GDK_BACKEND=x11 GTK_IM_MODULE=ibus terminator --no-dbus -g "$DIR/terminator.conf" -l jackal -T "Jackal drive")
+fi
 if [ $DRY -eq 1 ]; then echo "${CMD[*]}"; echo "(dry run - layout in $DIR/terminator.conf)"; exit 0; fi
 # 11-16: terminator sometimes hangs while it builds the layout (100 % CPU, not one pane starts a shell, nothing can be typed).
 # Watch it: when no pane has started after ~10 s, close it and open it again (up to 3 tries).
