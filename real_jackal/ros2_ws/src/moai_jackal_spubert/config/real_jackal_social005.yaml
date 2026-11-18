@@ -216,6 +216,8 @@ safe_path_tracker:
     human_hold_range_m: 1.5
     # Pivot only for a really large heading error; below it keep >= minimum_turn_speed and
     # drive a curve. Obstacle slow-down (stop 0.45 m / slow 1.0 m) still scales this down.
-    rotate_in_place_angle: 1.35
+    # 11-18 (operator: the robot stops only by the controller): 3.2 rad (> pi) = never pivot in place; with a large heading error it keeps minimum_turn_speed and curves.
+    # (bag_102943: at 38 s the tracker pivoted at v=0.00 for ~1 s with the old 1.35 rad.)
+    rotate_in_place_angle: 3.2
     minimum_turn_speed: 0.08
     angular_gain: 1.00
