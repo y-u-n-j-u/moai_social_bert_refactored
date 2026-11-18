@@ -155,11 +155,12 @@ safe_path_tracker:
     motion_enabled: false
     require_tracks_heartbeat: true
     control_rate_hz: 10.0
-    lookahead_distance: 1.00
+    # 11-18 (operator): speed 0.25 -> 0.40 m/s (all earlier drives were 0.25); acceleration 0.35 -> 0.50 and lookahead 1.0 -> 1.2 m go with it
+    lookahead_distance: 1.20
     goal_tolerance: 0.70
-    maximum_linear_speed: 0.25
+    maximum_linear_speed: 0.40
     maximum_angular_speed: 0.55
-    maximum_linear_acceleration: 0.35
+    maximum_linear_acceleration: 0.50
     maximum_angular_acceleration: 0.60
     # the bridge publishes a path about every 1.0 s (replan 0.8 s + jitter); 1.2 s left 0.2 s of margin
     # and under CPU load the robot stopped every few seconds (61 gaps > 1.2 s in 150 s). Obstacle stop,
