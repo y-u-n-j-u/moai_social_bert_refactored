@@ -134,6 +134,11 @@ real_jackal_spubert_bridge:
     scan_timeout_sec: 1.00
     never_hold: true
     never_hold_max_age_s: 6.0
+    # 11-18 (operator): the robot stops only by the controller. When every path was rejected and the last planned path is too old, follow the Nav2 (global)
+    # route ahead (3 m), pushed sideways to the offset that keeps the most distance to the tracked people; no footprint veto, scan slow-down stays.
+    never_hold_route: true
+    never_hold_route_length_m: 3.0
+    never_hold_route_speed_mps: 0.40
     tracks_timeout_sec: 1.00
     minimum_track_score: 0.30
     diagnostics_path: /root/jackal_logs/spubert_real_jackal_diagnostics.jsonl

@@ -25,6 +25,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 from .navigation_core import (
     same_frame_id,
+    estimate_velocity,
     interpolate_polyline,
     transform_xy,
     validate_candidate_path,
@@ -406,6 +407,16 @@ class RealJackalSpubertBridgeNode(Node):
         # after it was planned. Sensor/goal holds (stale odometry or scan, goal reached, waiting for a goal) are not planning failures and stay.
         self.never_hold = bool(self.declare_parameter("never_hold", False).value)
         self.never_hold_max_age_s = float(self.declare_parameter("never_hold_max_age_s", 6.0).value)
+        # 11-18 (operator): "the robot stops only when the controller stops it; when every path was rejected follow the global path (avoiding people)".
+        # With never_hold_route, a planning failure that the last planned path cannot cover (older than never_hold_max_age_s, or none) publishes the
+        # Nav2 route ahead (never_hold_route_length_m), pushed sideways to the offset that keeps most distance to the tracked people; no footprint veto.
+        self.never_hold_route = bool(self.declare_parameter("never_hold_route", False).value)
+        self.never_hold_route_length_m = float(self.declare_parameter("never_hold_route_length_m", 3.0).value)
+        self.never_hold_route_speed_mps = float(self.declare_parameter("never_hold_route_speed_mps", 0.4).value)
+        self.never_hold_people_cap_m = float(self.declare_parameter("never_hold_people_cap_m", 2.0).value)
+        self._follow_route = None
+        self._follow_goal = None
+        self._follow_route_s = -math.inf
         self._moving_path = None
         self._display_seq = 0
         self._display_set = None
@@ -664,6 +675,8 @@ class RealJackalSpubertBridgeNode(Node):
             return
 
         route = self._route_in_frame(odom_frame)
+        if route is not None:
+            self._follow_route, self._follow_goal, self._follow_route_s = list(route), goal_xy, now      # for never_hold_route
         if route is None:
             if self.require_global_path:
                 if not self._route_pending and now - self._last_route_request_s > 1.0:
@@ -1330,7 +1343,7 @@ class RealJackalSpubertBridgeNode(Node):
     ) -> None:
         message = self._path_message(frame_id, points)
         self.path_pub.publish(message)
-        if source in ("model", "fallback", "retained") and len(points) >= 2 and not str(reason).startswith("keep_moving"):
+        if source in ("model", "fallback", "retained") and len(points) >= 2 and not str(reason).startswith(("keep_moving", "never_hold_route")):
             self._moving_path, self._moving_path_s = [tuple(p) for p in points], self._now_s()      # a path that really was planned/validated now
         try:
             stamp = message.header.stamp
@@ -2094,6 +2107,8 @@ class RealJackalSpubertBridgeNode(Node):
             self._recovery_active = False
             self._hold(reason)
             return
+        if self._never_hold_publish(reason, odom_frame):            # 11-18: keep driving (last path, else the global route) instead of holding / sweeping
+            return
         if self._blocked_since_s is None:
             self._blocked_since_s = now
         blocked_duration = now - self._blocked_since_s
@@ -2247,7 +2262,7 @@ class RealJackalSpubertBridgeNode(Node):
         if not publish_empty:
             return
         frame = self._latest_odom.header.frame_id if self._latest_odom is not None else "odom"
-        if self._keep_moving(reason, frame or "odom"):
+        if self._never_hold_publish(reason, frame or "odom"):
             return
         self._publish_decided_path(frame or "odom", [], "hold", reason)
         # Retain freshly published rejection evidence briefly; clear stale
@@ -2257,6 +2272,68 @@ class RealJackalSpubertBridgeNode(Node):
 
     NEVER_HOLD_REASONS = ("adaptive_guidance_failed", "all_candidates_rejected", "recovery_blocked", "inference_error",
                           "rolling_map_unavailable", "waiting_for_nav2_global_path", "goal_transform_unavailable")
+
+    def _never_hold_publish(self, reason: str, frame: str) -> bool:
+        """Planning failure: keep following the last planned path, else (never_hold_route) the Nav2 route; False = a real hold."""
+        if not self.never_hold or not reason.startswith(self.NEVER_HOLD_REASONS):
+            return False
+        if self._keep_moving(reason, frame):
+            return True
+        return self.never_hold_route and self._follow_global_route(reason, frame)
+
+    def _people_positions_at(self, seconds: float):
+        """Tracked people (latest position + constant velocity) ``seconds`` ahead, in the odom frame."""
+        result = []
+        for history in self._human_histories.values():
+            if not history:
+                continue
+            vx, vy = estimate_velocity(list(history), self.prediction_dt)
+            t = min(max(seconds, 0.0), 3.0)
+            result.append((history[-1][0] + vx * t, history[-1][1] + vy * t))
+        return result
+
+    def _follow_global_route(self, reason: str, frame: str) -> bool:
+        """Last resort: publish the Nav2 route ahead of the robot, pushed sideways to the offset that stays farthest from the tracked people."""
+        now = self._now_s()
+        robot = self._robot_pose()
+        route = self._follow_route
+        if robot is None or not route or now - self._follow_route_s > 30.0:
+            return False
+        count = max(int(self.pred_len), 1)
+        spacing = max(self.never_hold_route_length_m, 0.5) / count
+        start = (robot[0], robot[1])
+        base = route_prefix_points(route, start, count, spacing)
+        if not base or len(base) < 4:
+            return False
+        footprint_radius = self.robot_radius + self.static_safety_margin
+        speed = max(self.never_hold_route_speed_mps, 0.1)
+        best = None
+        for offset in (0.0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75):          # 0 first: ties keep the route itself
+            path = shift_path_laterally(base, start, offset)
+            if not path:
+                continue
+            nearest = math.inf
+            for k, point in enumerate(path):
+                for px, py in self._people_positions_at((k + 1) * spacing / speed):
+                    nearest = min(nearest, math.hypot(point[0] - px, point[1] - py))
+            dense = interpolate_polyline([start, *path], 0.1)
+            blocked = 1.0 if self.map_provider.path_collision_cost(dense, radius=footprint_radius, weight=1.0) > 0.0 else 0.0
+            score = min(nearest, self.never_hold_people_cap_m) - 0.4 * abs(offset) - blocked
+            if best is None or score > best[0] + 1e-9:
+                best = (score, offset, path, nearest, blocked)
+        if best is None:
+            return False
+        _, offset, path, nearest, blocked = best
+        self._blocked_since_s = None
+        self._recovery_active = False
+        self._publish_decided_path(frame, path, "fallback", f"never_hold_route:{reason[:50]}", fallback_kind="route_follow")
+        if self._follow_goal is not None:
+            self.goal_pub.publish(self._point_pose(frame, self._follow_goal))
+        self._status(
+            f"path_valid never_hold_route shift={offset:+.2f} human_min={nearest if math.isfinite(nearest) else float('inf'):.2f} "
+            f"map_blocked={int(blocked)} points={len(path)} trigger={reason[:40]}"
+        )
+        return True
 
     def _keep_moving(self, reason: str, frame: str) -> bool:
         """Planning failure: publish the rest of the last planned path (from the robot's nearest point on it) instead of an empty path."""

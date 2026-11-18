@@ -309,3 +309,62 @@ def test_every_shown_c_path_has_one_goal_dot_in_its_colour_and_the_old_sample_sp
            {(round(l.color.r, 2), round(l.color.g, 2), round(l.color.b, 2)) for l in lines}      # same colours as the lines
     for message in node.marker_pub.messages:                                                      # the runtime markers have no goal-sample spheres
         assert not [m for m in message.markers if getattr(m, "ns", "") == "mgp_candidates"]
+
+
+def _route_node(node):
+    from collections import deque
+    node.never_hold = True
+    node.never_hold_route = True
+    node._moving_path = None                                   # no recent planned path: only the global route is left
+    node._follow_route = [(0.5 * i, 0.0) for i in range(0, 41)]
+    node._follow_route_s = node.now_s
+    node._follow_goal = (20.0, 0.0)
+    node._human_histories = {}
+    return deque
+
+
+def test_when_every_path_failed_and_no_planned_path_is_left_the_global_route_is_followed(bridge):
+    node = bridge
+    _route_node(node)
+    node._hold("all_candidates_rejected:robot_footprint_collision")
+    poses = node.path_pub.messages[-1].poses
+    assert len(poses) >= 4 and poses[-1][0] > 1.5                        # a real path ahead, not an empty hold
+    ev = evidence_of(node)
+    assert ev["executed_source"] == "fallback" and ev["fallback_kind"] == "route_follow" and ev["decision_reason"].startswith("never_hold_route")
+
+
+def test_the_global_route_is_pushed_away_from_a_person_standing_on_it(bridge):
+    node = bridge
+    deque = _route_node(node)
+    node._human_histories = {1: deque([(1.5, 0.1)] * 8, maxlen=8)}      # a person slightly left of the route, 1.5 m ahead
+    node._hold("adaptive_guidance_failed:no point")
+    path = node.path_pub.messages[-1].poses
+    assert len(path) >= 4
+    assert path[-1][1] < -0.3                                            # shifted to the right, away from the person (left = +y)
+
+
+def test_no_route_or_the_option_off_or_a_sensor_hold_is_still_a_hold(bridge):
+    node = bridge
+    _route_node(node)
+    node.never_hold_route = False
+    node._hold("all_candidates_rejected:x")
+    assert node.path_pub.messages[-1].poses == []                       # option off: the old behaviour
+    node.never_hold_route = True
+    node._hold("odom_missing_or_stale")
+    assert node.path_pub.messages[-1].poses == []                       # a sensor failure is not a planning failure
+    node._follow_route = None
+    node._hold("all_candidates_rejected:x")
+    assert node.path_pub.messages[-1].poses == []                       # no route known
+    node._follow_route = [(0.5 * i, 0.0) for i in range(0, 41)]
+    node._follow_route_s = node.now_s - 100.0
+    node._hold("all_candidates_rejected:x")
+    assert node.path_pub.messages[-1].poses == []                       # route older than 30 s
+
+
+def test_a_long_block_follows_the_route_instead_of_the_recovery_sweep(bridge):
+    node = bridge
+    _route_node(node)
+    node._blocked_since_s = node.now_s - 60.0                           # blocked for a minute: this used to start the in-place recovery sweep
+    node._blocked_hold("all_candidates_rejected:x", node.now_s, 0.0, 0.0, 0.0, "odom")
+    assert len(node.path_pub.messages[-1].poses) >= 4
+    assert evidence_of(node)["executed_source"] == "fallback" and node._recovery_active is False
